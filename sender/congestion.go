@@ -28,6 +28,17 @@ type TokenBucket struct {
 	// lastSend is the time of the last packet dispatch
 	lastSend time.Time
 
+	// EWMA smoothed effective rate (dampens jitter)
+	smoothedRate float64
+	ewmaAlpha    float64 // weight of new sample (0.3 = moderate smoothing)
+	ewmaInit     bool
+
+	// Consecutive decrease signals required before acting
+	decreaseStreak int
+
+	// Peak observed rate for recovery reference
+	peakRate float64
+
 	// bytesSent tracks bytes sent in the current measurement window
 	bytesSent atomic.Int64
 
@@ -40,9 +51,10 @@ type TokenBucket struct {
 // NewTokenBucket creates a rate controller starting at initialRate bytes/sec.
 func NewTokenBucket(initialRate float64, cc protocol.CongestionConfig) *TokenBucket {
 	return &TokenBucket{
-		rate:     initialRate,
-		cc:       cc,
-		lastSend: time.Now(),
+		rate:      initialRate,
+		cc:        cc,
+		lastSend:  time.Now(),
+		ewmaAlpha: 0.3, // 0.3 = moderate smoothing (reacts in ~3 samples)
 	}
 }
 
@@ -106,7 +118,9 @@ func spinUntil(target time.Time) {
 }
 
 // OnHeartbeat processes a heartbeat from the receiver and adjusts the
-// sending rate according to the spec §6C rate adjustment algorithm.
+// sending rate according to the spec §6C rate adjustment algorithm,
+// with EWMA smoothing to dampen jitter and a consecutive-decrease
+// requirement to prevent single-heartbeat crashes.
 //
 // Returns the new rate in bytes/sec.
 func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
@@ -114,9 +128,24 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	defer tb.mu.Unlock()
 
 	// Effective rate = min(network, storage) per spec
-	effectiveRate := float64(hb.NetworkDeliveryRate)
-	if float64(hb.StorageFlushRate) < effectiveRate {
-		effectiveRate = float64(hb.StorageFlushRate)
+	rawEffective := float64(hb.NetworkDeliveryRate)
+	if float64(hb.StorageFlushRate) < rawEffective {
+		rawEffective = float64(hb.StorageFlushRate)
+	}
+
+	// EWMA smoothing: dampens single-heartbeat jitter on real networks.
+	// smoothed = alpha * new_sample + (1-alpha) * old_smoothed
+	if !tb.ewmaInit {
+		tb.smoothedRate = rawEffective
+		tb.ewmaInit = true
+	} else {
+		tb.smoothedRate = tb.ewmaAlpha*rawEffective + (1-tb.ewmaAlpha)*tb.smoothedRate
+	}
+	effectiveRate := tb.smoothedRate
+
+	// Track peak for reference
+	if effectiveRate > tb.peakRate {
+		tb.peakRate = effectiveRate
 	}
 
 	oldRate := tb.rate
@@ -125,20 +154,30 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	case effectiveRate >= tb.cc.IncreaseThreshold*oldRate:
 		// Link and receiver keeping up — probe upward
 		tb.rate = oldRate * tb.cc.IncreaseMultiplier
+		tb.decreaseStreak = 0
 		tb.increases.Add(1)
-		log.Printf("[congestion] INCREASE: %.2f MB/s -> %.2f MB/s (effective=%.2f MB/s)",
-			oldRate/1e6, tb.rate/1e6, effectiveRate/1e6)
+		log.Printf("[congestion] INCREASE: %.2f -> %.2f MB/s (smoothed=%.2f raw=%.2f)",
+			oldRate/1e6, tb.rate/1e6, effectiveRate/1e6, rawEffective/1e6)
 
 	case effectiveRate >= tb.cc.HoldThreshold*oldRate:
 		// Minor variance — hold steady
+		tb.decreaseStreak = 0
 		tb.holds.Add(1)
 
 	default:
-		// Congestion or receiver backpressure — decrease to just above measured capacity
-		tb.rate = effectiveRate * tb.cc.DecreaseHeadroom
-		tb.decreases.Add(1)
-		log.Printf("[congestion] DECREASE: %.2f MB/s -> %.2f MB/s (effective=%.2f MB/s)",
-			oldRate/1e6, tb.rate/1e6, effectiveRate/1e6)
+		// Potential congestion signal — but require consecutive confirmation
+		tb.decreaseStreak++
+
+		if tb.decreaseStreak >= 2 {
+			// Confirmed congestion: decrease to smoothed effective + headroom
+			tb.rate = effectiveRate * tb.cc.DecreaseHeadroom
+			tb.decreases.Add(1)
+			log.Printf("[congestion] DECREASE: %.2f -> %.2f MB/s (smoothed=%.2f raw=%.2f, streak=%d)",
+				oldRate/1e6, tb.rate/1e6, effectiveRate/1e6, rawEffective/1e6, tb.decreaseStreak)
+		} else {
+			// First signal — hold and wait for confirmation
+			tb.holds.Add(1)
+		}
 	}
 
 	// Apply max rate cap if configured

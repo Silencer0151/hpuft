@@ -94,8 +94,17 @@ func (r *Receiver) Run() error {
 		break
 	}
 
-	// --- Phase 2: Allocate buffer and disk writer ---
+	// --- Phase 2: Validate and allocate buffer ---
 	chunkSize := protocol.MaxPayload
+
+	// Guard against corrupted SESSION_REQ (e.g., from proxy packet loss)
+	const maxFileSize = 1 << 40 // 1 TB sanity limit
+	if reqPayload.FileSize == 0 || reqPayload.FileSize > maxFileSize {
+		return fmt.Errorf("invalid file size in SESSION_REQ: %d bytes (max %d)", reqPayload.FileSize, maxFileSize)
+	}
+	if len(reqPayload.FileName) == 0 {
+		return fmt.Errorf("empty filename in SESSION_REQ")
+	}
 
 	recvBuf := NewReceiveBuffer(reqPayload.FileSize, chunkSize)
 	defer recvBuf.Close()
