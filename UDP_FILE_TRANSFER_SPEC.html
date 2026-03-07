@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HP-UDP Design Specification v2.0</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #e0e0e0;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+            background-color: #121212;
+        }
+        h1 {
+            color: #5dade2;
+            border-bottom: 2px solid #2980b9;
+            padding-bottom: 0.5rem;
+        }
+        h2 {
+            color: #85c1e9;
+            margin-top: 2.5rem;
+            border-bottom: 1px solid #333;
+            padding-bottom: 0.3rem;
+        }
+        h3 {
+            color: #aed6f1;
+            margin-top: 1.5rem;
+        }
+        h4 {
+            color: #d4e6f1;
+            margin-top: 1.2rem;
+        }
+        p, li {
+            font-size: 1.05rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            background-color: #1e1e1e;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        th {
+            background-color: #2c3e50;
+            font-weight: 600;
+            color: #ecf0f1;
+        }
+        tr:hover {
+            background-color: #2a2a2a;
+        }
+        code {
+            background-color: #2d2d2d;
+            color: #f8f8f2;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 0.95em;
+        }
+        pre {
+            background-color: #2d2d2d;
+            color: #f8f8f2;
+            padding: 1rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+        blockquote {
+            background-color: #1a252f;
+            border-left: 4px solid #5dade2;
+            margin: 1.5rem 0;
+            padding: 1rem 1.5rem;
+            font-style: italic;
+        }
+        .mission-statement {
+            font-size: 1.15rem;
+            font-weight: 500;
+            color: #ecf0f1;
+            padding: 1rem;
+            background: #1f2933;
+            border-radius: 6px;
+            border-left: 4px solid #8e44ad;
+        }
+        .version-badge {
+            display: inline-block;
+            background: #8e44ad;
+            color: #fff;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+        }
+        .changelog {
+            background-color: #1a252f;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 1rem 1.5rem;
+            margin: 1rem 0;
+        }
+        .changelog li {
+            font-size: 0.95rem;
+            margin-bottom: 0.3rem;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v2.0</span></h1>
+
+    <div class="changelog">
+        <strong>Changelog from v1.0:</strong>
+        <ul>
+            <li>Specified SessionID generation and collision handling for 0-RTT.</li>
+            <li>Added receiver-side inactivity timeout and sender failure recovery.</li>
+            <li>Defined initial sending rate: configurable + default calibration burst.</li>
+            <li>Added upward congestion probe mechanism (multiplicative increase).</li>
+            <li>Separated flow control (receiver capacity) from congestion control (network capacity).</li>
+            <li>Added receiver-side linger timeout for teardown resilience.</li>
+            <li>Clarified MTU hard cap: 1400 total, 1376 max payload.</li>
+            <li>Widened SequenceNum and BlockGroup to 64-bit (8 bytes each). Header is now 24 bytes, naturally aligned for 64-bit systems.</li>
+            <li>Introduced adaptive FEC ratio based on observed loss.</li>
+            <li>Made heartbeat interval rate-proportional.</li>
+            <li>Specified FEC tail block handling for partial final groups.</li>
+            <li>Added explicit note on security scope.</li>
+        </ul>
+    </div>
+
+    <h2>1. The Motivation (The "Why")</h2>
+    <div class="mission-statement">
+        The development of HP-UDP is driven by a singular goal: to engineer the fastest possible file transfer protocol that mathematically guarantees perfect data integrity across volatile network conditions.
+    </div>
+    <p>While TCP is the foundational workhorse of the internet, its general-purpose congestion algorithms inherently throttle performance on Long Fat Networks (LFNs). HP-UDP was built to prove that it is possible to outperform TCP in raw throughput by replacing reactive safety nets with proactive, domain-specific algorithms.</p>
+    <p>This protocol democratizes high-speed data movement, giving developers and engineers the ability to send and receive massive files cleanly, reliably, and at maximum hardware limits. It is a rigorous demonstration of advanced systems engineering, built to prove what is possible when legacy constraints are stripped away.</p>
+
+    <h2>2. Architectural Overview</h2>
+    <p>HP-UDP is an application-layer file transfer mechanism built on top of UDP. The design is lean, avoids unnecessary overhead, and focuses intently on its primary goal of speed while ensuring the reliability required for production use.</p>
+    <p>The architecture is built upon five core pillars:</p>
+    <ul>
+        <li><strong>Ultra-Fast Initiation:</strong> A 0-RTT Optimistic Handshake with calibration burst.</li>
+        <li><strong>Reliable Data Transfer:</strong> Adaptive Forward Error Correction (FEC) for proactive loss recovery.</li>
+        <li><strong>Adaptive Throughput:</strong> Dual-metric congestion and flow control via rate-proportional Heartbeat Pacing.</li>
+        <li><strong>Guaranteed Integrity:</strong> Graceful Teardown linked to pipelined, full-file checksum verification.</li>
+        <li><strong>Resilient Session Management:</strong> Timeout-driven cleanup on both sender and receiver with linger states.</li>
+    </ul>
+
+    <blockquote>
+        <strong>Note on Security Scope:</strong> HP-UDP v2.0 intentionally omits authentication, encryption, and anti-spoofing mechanisms. The design priority is to prove a bulletproof reliable file transfer mechanism over UDP. Security layers (session tokens, HMAC headers, DTLS integration) are deferred to a future revision once the core transfer engine is validated.
+    </blockquote>
+
+    <h2>3. Packet Wire Format (Custom Header)</h2>
+    <p>The protocol utilizes a tightly packed, fixed-width <strong>24-byte</strong> binary header for every datagram. The header is naturally aligned for 64-bit systems (three 8-byte words). The hard MTU cap is <strong>1400 bytes total</strong> (header + payload), yielding a maximum payload of <strong>1376 bytes</strong>. This ensures safe passage within standard 1500-byte ethernet MTUs without IP-level fragmentation.</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Byte Offset</th>
+                <th>Size</th>
+                <th>Field Name</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>0x00</code></td>
+                <td>1 Byte</td>
+                <td><code>PacketType</code></td>
+                <td>
+                    <code>0x00</code> SESSION_REQ,
+                    <code>0x01</code> DATA,
+                    <code>0x02</code> PARITY,
+                    <code>0x03</code> HEARTBEAT,
+                    <code>0x04</code> SESSION_REJECT,
+                    <code>0x05</code> TRANSFER_COMPLETE,
+                    <code>0x06</code> ACK_CLOSE.
+                </td>
+            </tr>
+            <tr>
+                <td><code>0x01</code></td>
+                <td>4 Bytes</td>
+                <td><code>SessionID</code></td>
+                <td>Client-generated random identifier for the active transfer (see §4 for collision handling).</td>
+            </tr>
+            <tr>
+                <td><code>0x05</code></td>
+                <td>8 Bytes</td>
+                <td><code>SequenceNum</code></td>
+                <td>Strictly incrementing 64-bit chunk identifier. Eliminates rollover concerns up to ~16 EB file sizes.</td>
+            </tr>
+            <tr>
+                <td><code>0x0D</code></td>
+                <td>8 Bytes</td>
+                <td><code>BlockGroup</code></td>
+                <td>64-bit identifier for the FEC block this packet belongs to. Aligned with SequenceNum address space.</td>
+            </tr>
+            <tr>
+                <td><code>0x15</code></td>
+                <td>2 Bytes</td>
+                <td><code>PayloadLen</code></td>
+                <td>Size of the raw data payload (max 1376 bytes).</td>
+            </tr>
+            <tr>
+                <td><code>0x17</code></td>
+                <td>1 Byte</td>
+                <td><code>Flags</code></td>
+                <td>Bitmask: <code>0x01</code> = End of File, <code>0x02</code> = Calibration Burst.</td>
+            </tr>
+            <tr>
+                <td><code>0x18</code></td>
+                <td>Variable</td>
+                <td><code>Payload</code></td>
+                <td>Raw file bytes, FEC parity data, or protocol metadata.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>4. Connection Establishment: 0-RTT Optimistic Handshake</h2>
+
+    <p>To eliminate latency before data transmission begins, the protocol uses a Zero Round-Trip Time (0-RTT) handshake with a controlled calibration burst to safely probe unknown link capacity.</p>
+
+    <h3>A. SessionID Generation</h3>
+    <p>The <strong>client</strong> generates the SessionID as a cryptographically random 32-bit integer (e.g., via <code>/dev/urandom</code> or <code>crypto/rand</code>). This keeps the handshake 0-RTT since no server round-trip is required for ID assignment.</p>
+    <ul>
+        <li><strong>Collision Handling:</strong> The server maintains a set of active SessionIDs. If an incoming <code>SESSION_REQ</code> carries a SessionID that is already in use, the server responds with a <code>SESSION_REJECT</code> (Type <code>0x04</code>) containing a reason code. The client generates a new random SessionID and retransmits the <code>SESSION_REQ</code>. At typical concurrency levels (hundreds of concurrent transfers), 32-bit random IDs yield negligible collision probability (~1 in 10 million at 200 concurrent sessions).</li>
+        <li><strong>Stale Session Protection:</strong> SessionIDs are held in a reserved pool for 10 seconds after session purge to prevent late-arriving packets from a completed transfer from being misattributed to a new session reusing the same ID.</li>
+    </ul>
+
+    <h3>B. Handshake Sequence</h3>
+    <ul>
+        <li><strong>Step 1 (The Request):</strong> The client transmits <code>Packet 0</code> (<code>SESSION_REQ</code>). The payload contains: <code>FileSize</code> (8 bytes), <code>xxHash64</code> checksum (8 bytes), <code>InitialRate</code> (4 bytes, 0 = use calibration mode), and <code>FileName</code> (variable, null-terminated).</li>
+        <li><strong>Step 2 (The Calibration Burst):</strong> Without waiting for acknowledgment, the client immediately begins transmitting <code>DATA</code> packets with the <code>Calibration</code> flag (<code>0x02</code>) set. The burst consists of a configurable number of packets (default: 50) sent at a conservative spacing of 1ms apart (~1.376 MB/s). This probes the link without risking saturation on any reasonable connection.</li>
+        <li><strong>Step 3 (The Alignment):</strong> The server parses the request, allocates the memory ring buffer, and begins accepting incoming data. If the server cannot allocate resources in time, initial calibration packets are dropped — these will be detected and recovered via the standard Heartbeat/NACK mechanism (§6).</li>
+        <li><strong>Step 4 (Steady State):</strong> Upon receiving the first Heartbeat response (§6), the sender transitions out of calibration mode. It clears the <code>Calibration</code> flag and sets its sending rate based on the reported metrics. From this point, the adaptive congestion controller (§6) governs the sending rate.</li>
+    </ul>
+
+    <h4>Configurable Initial Rate Override</h4>
+    <p>If the <code>InitialRate</code> field in <code>SESSION_REQ</code> is non-zero, the sender skips calibration mode and begins transmitting at the specified bytes-per-second rate immediately. This is intended for known environments (e.g., a dedicated 10 Gbps LAN) where the operator can confidently set the initial rate. The adaptive congestion controller still takes over after the first Heartbeat.</p>
+
+    <h2>5. Core Reliability Mechanisms</h2>
+
+    <h3>A. Sequence Buffering (Zero-Blocking Receiver)</h3>
+    <p>The receiver will never halt reading from the network socket. Incoming data is immediately mapped into memory.</p>
+    <ul>
+        <li><strong>Memory Architecture:</strong> The receiver allocates a contiguous ring buffer based on the initial <code>FileSize</code>.</li>
+        <li><strong>Placement:</strong> As datagrams arrive, their <code>SequenceNum</code> dictates their exact memory offset. Out-of-order packets are slotted into their correct positions seamlessly.</li>
+        <li><strong>Disk I/O:</strong> An asynchronous worker thread reads contiguous blocks from the buffer and writes them to disk using zero-copy optimizations.</li>
+    </ul>
+
+    <h3>B. Adaptive Forward Error Correction (FEC)</h3>
+    <p>To eliminate latency penalties from round-trip retransmissions, the protocol proactively embeds mathematical redundancy that adapts to observed network conditions.</p>
+
+    <h4>Block Grouping</h4>
+    <p>Data packets are organized into sequential <code>BlockGroups</code>. The default block size is 100 data packets per group.</p>
+
+    <h4>Dynamic Parity Ratio</h4>
+    <p>The parity packet count per block is dynamically adjusted based on the observed packet loss rate, reported via Heartbeat metrics (§6).</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Observed Loss Rate</th>
+                <th>Parity Ratio</th>
+                <th>Parity Packets per 100-Packet Block</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>&lt; 0.5%</td><td>2%</td><td>2</td></tr>
+            <tr><td>0.5% – 2%</td><td>5%</td><td>5</td></tr>
+            <tr><td>2% – 5%</td><td>10%</td><td>10</td></tr>
+            <tr><td>5% – 10%</td><td>15%</td><td>15</td></tr>
+            <tr><td>&gt; 10%</td><td>20%</td><td>20</td></tr>
+        </tbody>
+    </table>
+    <p>The sender initializes at <strong>5% parity</strong> during calibration and adjusts after the first Heartbeat containing loss data. Adjustments are applied on <strong>block group boundaries</strong> — mid-block changes are not permitted, as this would invalidate the Reed-Solomon coding parameters for that group.</p>
+
+    <h4>Parity Generation</h4>
+    <p>Parity packets are generated using <strong>Reed-Solomon erasure coding</strong>. For a block of <code>k</code> data packets with <code>m</code> parity packets, any <code>k</code> of the <code>k+m</code> total packets are sufficient to reconstruct the original data.</p>
+
+    <h4>On-the-Fly Recovery</h4>
+    <p>If the receiver detects missing packets within a completed block group (all expected sequence numbers accounted for or timed out), it attempts FEC reconstruction immediately. Only packets that cannot be recovered via FEC are reported as NACKs in the next Heartbeat.</p>
+
+    <h4>Tail Block Handling</h4>
+    <p>The final block group of a file transfer will almost certainly contain fewer than 100 data packets. The FEC parameters adapt as follows:</p>
+    <ul>
+        <li>The tail block size <code>k_tail</code> equals the remaining packet count after the last full block.</li>
+        <li>The parity count <code>m_tail</code> is calculated using the current adaptive parity ratio, with a <strong>minimum of 2 parity packets</strong> regardless of block size (even a 1-packet tail block gets 2 parity packets). This ensures the most loss-vulnerable portion of the transfer — the tail — has adequate redundancy.</li>
+        <li>The sender sets the <code>EndOfFile</code> flag (<code>0x01</code>) on the final data packet and the final parity packet of the tail block. This signals to the receiver that no further block groups will follow.</li>
+    </ul>
+
+    <h2>6. Adaptive Congestion and Flow Control: Heartbeat Pacing</h2>
+
+    <p>HP-UDP separates <strong>congestion control</strong> (network path capacity) from <strong>flow control</strong> (receiver processing capacity) and uses the minimum of the two as the effective sending rate. Both are driven by real-time Heartbeat feedback from the receiver.</p>
+
+    <h3>A. The Heartbeat Packet</h3>
+    <p>The receiver periodically sends a <code>HEARTBEAT</code> (Type <code>0x03</code>) packet to the sender. The heartbeat interval is <strong>rate-proportional</strong> rather than fixed:</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Current Effective Send Rate</th>
+                <th>Heartbeat Interval</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>&lt; 10 MB/s</td><td>100ms</td></tr>
+            <tr><td>10 – 100 MB/s</td><td>50ms</td></tr>
+            <tr><td>100 MB/s – 1 GB/s</td><td>25ms</td></tr>
+            <tr><td>&gt; 1 GB/s</td><td>10ms</td></tr>
+        </tbody>
+    </table>
+    <p>The receiver infers the current send rate from the observed packet arrival rate and selects the corresponding interval.</p>
+
+    <h3>B. Heartbeat Payload</h3>
+    <p>The Heartbeat payload contains dual metrics and a NACK array:</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Field</th>
+                <th>Size</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>NetworkDeliveryRate</code></td>
+                <td>4 Bytes</td>
+                <td>Bytes per second successfully received from the socket into the ring buffer. Reflects network path capacity.</td>
+            </tr>
+            <tr>
+                <td><code>StorageFlushRate</code></td>
+                <td>4 Bytes</td>
+                <td>Bytes per second flushed from the ring buffer to disk. Reflects receiver I/O capacity.</td>
+            </tr>
+            <tr>
+                <td><code>LossRate</code></td>
+                <td>2 Bytes</td>
+                <td>Packet loss percentage for the current reporting window, encoded as basis points (e.g., 150 = 1.50%). Used to drive adaptive FEC.</td>
+            </tr>
+            <tr>
+                <td><code>HighestContiguous</code></td>
+                <td>8 Bytes</td>
+                <td>The highest <code>SequenceNum</code> such that all packets 0..N have been received or FEC-recovered. Allows sender to track receiver progress.</td>
+            </tr>
+            <tr>
+                <td><code>NACKCount</code></td>
+                <td>2 Bytes</td>
+                <td>Number of unrecoverable sequence numbers in the NACK array that follows.</td>
+            </tr>
+            <tr>
+                <td><code>NACKArray</code></td>
+                <td>8 Bytes × N</td>
+                <td>Array of 64-bit <code>SequenceNum</code> values that were not recoverable via FEC and require retransmission.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>C. Sender-Side Rate Control: Token Bucket with Dual Inputs</h3>
+    <p>The sender maintains a Token Bucket algorithm whose fill rate is governed by the <strong>minimum</strong> of the two reported capacities:</p>
+    <pre>EffectiveRate = min(NetworkDeliveryRate, StorageFlushRate)</pre>
+    <p>This ensures the sender never outpaces either the network path or the receiver's ability to persist data.</p>
+
+    <h4>Rate Adjustment Algorithm</h4>
+    <p>Let <code>S</code> = current send rate, <code>E</code> = reported <code>EffectiveRate</code>. On each Heartbeat reception:</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Condition</th>
+                <th>Action</th>
+                <th>Rationale</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>E &ge; 0.95 × S</code></td>
+                <td><strong>Increase:</strong> <code>S = S × 1.5</code></td>
+                <td>Link and receiver are keeping up. Probe upward aggressively. FEC absorbs transient loss during probing, making this safe without the RTT penalty TCP pays.</td>
+            </tr>
+            <tr>
+                <td><code>0.85 × S &le; E &lt; 0.95 × S</code></td>
+                <td><strong>Hold:</strong> <code>S = S</code> (no change)</td>
+                <td>Minor variance, likely transient. Avoid oscillation.</td>
+            </tr>
+            <tr>
+                <td><code>E &lt; 0.85 × S</code></td>
+                <td><strong>Decrease:</strong> <code>S = E × 1.05</code></td>
+                <td>Set rate to just above the measured capacity. The 5% headroom prevents underutilization while immediately relieving congestion or receiver backpressure.</td>
+            </tr>
+        </tbody>
+    </table>
+    <p>These thresholds are initial values intended to be tuned through empirical testing. All three thresholds (0.95, 0.85, 1.5× multiplier) should be treated as configurable parameters in the implementation.</p>
+
+    <h3>D. NACK-Driven Retransmission</h3>
+    <p>When the sender receives a NACK array in a Heartbeat, it immediately re-queues the identified packets at high priority. Retransmitted packets carry their original <code>SequenceNum</code> and <code>BlockGroup</code> but are injected ahead of new data in the token bucket queue.</p>
+
+    <h2>7. Session Timeout and Failure Recovery</h2>
+
+    <h3>A. Receiver Inactivity Timeout</h3>
+    <p>If the receiver does not receive any packets (data, parity, or retransmission) for a period of <strong>5 consecutive expected heartbeat intervals</strong>, it declares the session dead:</p>
+    <ul>
+        <li>The ring buffer is freed.</li>
+        <li>Any partially written file is deleted from disk (or retained with a <code>.partial</code> suffix if configured for resume support in a future version).</li>
+        <li>The SessionID is moved to the reserved pool for the standard 10-second stale protection window.</li>
+        <li>A warning is logged with the last received <code>SequenceNum</code> and <code>HighestContiguous</code> for diagnostics.</li>
+    </ul>
+
+    <h3>B. Sender Inactivity Timeout</h3>
+    <p>If the sender does not receive a Heartbeat for <strong>5 consecutive expected heartbeat intervals</strong>, it assumes the receiver has failed or the return path is broken:</p>
+    <ul>
+        <li>The sender pauses transmission and enters a <strong>Probe state</strong>, sending a single DATA packet every 500ms.</li>
+        <li>If no Heartbeat arrives within <strong>10 seconds</strong> of entering Probe state, the sender tears down the session and frees resources.</li>
+        <li>If a Heartbeat does arrive during the Probe state, normal transmission resumes from the last unacknowledged sequence number.</li>
+    </ul>
+
+    <h2>8. Graceful Teardown (The Final Handshake)</h2>
+    <p>To prevent "tail drop" issues where the final packets are lost and the connection deadlocks, the protocol implements a synchronized teardown with timeout-driven cleanup on both sides.</p>
+
+    <h3>A. Normal Teardown Sequence</h3>
+    <ul>
+        <li><strong>The EOF Signal:</strong> The sender sets the <code>EndOfFile</code> flag (<code>0x01</code>) on the final data packet and the final parity packet of the tail block. It stops reading new data but keeps the socket open, listening for Heartbeats.</li>
+        <li><strong>The Verification (Pipelined Hashing):</strong> The receiver continuously updates a streaming <code>xxHash64</code> as contiguous blocks are flushed from the ring buffer to disk. Upon receiving the EOF-flagged packets and verifying the completed hash against the <code>SESSION_REQ</code> metadata, it sends a <code>TRANSFER_COMPLETE</code> (Type <code>0x05</code>) packet.</li>
+        <li><strong>The Sender Linger (Zombie State):</strong> The sender receives <code>TRANSFER_COMPLETE</code>, responds with <code>ACK_CLOSE</code> (Type <code>0x06</code>), frees heavy memory allocations, and enters a <strong>3-second Linger state</strong>. Duplicate <code>TRANSFER_COMPLETE</code> packets arriving in this window are answered with a repeat <code>ACK_CLOSE</code>.</li>
+        <li><strong>The Receiver Linger:</strong> After sending <code>TRANSFER_COMPLETE</code>, the receiver enters its own <strong>3-second Linger state</strong>. If <code>ACK_CLOSE</code> is not received within this window, the receiver retransmits <code>TRANSFER_COMPLETE</code> up to <strong>3 times</strong> at 1-second intervals. If no <code>ACK_CLOSE</code> is received after all retries, the receiver considers the transfer successful (the file hash was verified) and performs a unilateral teardown.</li>
+        <li><strong>The Purge:</strong> After the Linger timeout expires on either side, the SessionID is moved to the reserved pool (10-second stale protection), and all local file descriptors are closed.</li>
+    </ul>
+
+    <h3>B. Hash Mismatch</h3>
+    <p>If the receiver completes all data reception but the <code>xxHash64</code> does not match the expected value from <code>SESSION_REQ</code>:</p>
+    <ul>
+        <li>The receiver sends a <code>SESSION_REJECT</code> (Type <code>0x04</code>) with a reason code indicating hash failure.</li>
+        <li>The partially written file is deleted.</li>
+        <li>The sender receives the rejection, tears down the session, and may optionally retry the entire transfer.</li>
+    </ul>
+
+    <h2>9. Development Phases</h2>
+    <ol>
+        <li><strong>Phase 1 (Go Prototype):</strong> Validate the FEC mathematics, the Heartbeat state machine, adaptive FEC tuning, calibration burst logic, and the Token Bucket pacing with dual-metric feedback using Go's concurrent design. Output must prove 100% file integrity under simulated packet loss at varying rates (0%, 1%, 5%, 10%, 15%).</li>
+        <li><strong>Phase 2 (C Productionization):</strong> Translate the validated logic into C. Optimize the sequence buffer using direct <code>mmap()</code> memory allocation and bypass the standard network stack to maximize hardware limits and minimize CPU overhead.</li>
+    </ol>
+
+    <h2>Appendix A: Protocol Constants (Defaults)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Parameter</th>
+                <th>Default Value</th>
+                <th>Configurable</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>MTU Hard Cap</td><td>1400 bytes (total)</td><td>No</td></tr>
+            <tr><td>Max Payload</td><td>1376 bytes</td><td>No</td></tr>
+            <tr><td>Header Size</td><td>24 bytes (3 × 64-bit aligned)</td><td>No</td></tr>
+            <tr><td>FEC Block Size</td><td>100 data packets</td><td>Yes</td></tr>
+            <tr><td>FEC Initial Parity</td><td>5%</td><td>Yes</td></tr>
+            <tr><td>FEC Tail Min Parity</td><td>2 packets</td><td>Yes</td></tr>
+            <tr><td>Calibration Burst Size</td><td>50 packets</td><td>Yes</td></tr>
+            <tr><td>Calibration Burst Spacing</td><td>1ms per packet</td><td>Yes</td></tr>
+            <tr><td>Increase Threshold</td><td>0.95</td><td>Yes</td></tr>
+            <tr><td>Hold Threshold</td><td>0.85</td><td>Yes</td></tr>
+            <tr><td>Increase Multiplier</td><td>1.5×</td><td>Yes</td></tr>
+            <tr><td>Decrease Headroom</td><td>1.05×</td><td>Yes</td></tr>
+            <tr><td>Inactivity Timeout</td><td>5 × heartbeat interval</td><td>Yes</td></tr>
+            <tr><td>Sender Probe Interval</td><td>500ms</td><td>Yes</td></tr>
+            <tr><td>Sender Probe Timeout</td><td>10 seconds</td><td>Yes</td></tr>
+            <tr><td>Linger Duration (both sides)</td><td>3 seconds</td><td>Yes</td></tr>
+            <tr><td>Receiver Teardown Retries</td><td>3</td><td>Yes</td></tr>
+            <tr><td>Stale SessionID Reservation</td><td>10 seconds</td><td>Yes</td></tr>
+        </tbody>
+    </table>
+
+</body>
+</html>
