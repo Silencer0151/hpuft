@@ -9,9 +9,14 @@ import (
 )
 
 // TokenBucket controls the sending rate using a token-based pacer with
-// dual-metric feedback from receiver heartbeats. It supports sub-millisecond
-// inter-packet pacing via busy-wait spin when delays are too short for
-// the OS scheduler (typically < 1ms on Windows, < 100µs on Linux).
+// dual-metric feedback from receiver heartbeats.
+//
+// Pacing uses a deficit accumulator instead of per-packet spin-waits.
+// The sender runs at wire speed until accumulated debt reaches ≥1ms, then
+// sleeps for exactly that debt. This avoids the sub-millisecond timing
+// problem on Windows (and Go's asynchronous goroutine preemption) where
+// spin loops and time.Sleep(<1ms) both overshoot by ~1ms, capping
+// effective throughput at ~1.4 MB/s regardless of the configured target.
 type TokenBucket struct {
 	mu sync.Mutex
 
@@ -24,8 +29,15 @@ type TokenBucket struct {
 	// congestion control config
 	cc protocol.CongestionConfig
 
-	// lastSend is the time of the last packet dispatch
+	// lastSend is updated after each Pace call (after any sleep)
+	// so that elapsed reflects only loop overhead, not sleep time.
 	lastSend time.Time
+
+	// tokens is the current byte credit balance (negative = debt).
+	// Credits accrue at `rate` bytes/sec over elapsed time;
+	// each Pace call debits the packet size. When debt exceeds the
+	// 1ms sleep threshold, we call time.Sleep and reset to zero.
+	tokens float64
 
 	// EWMA smoothed effective rate (dampens jitter)
 	smoothedRate float64
@@ -80,52 +92,68 @@ func (tb *TokenBucket) Rate() float64 {
 	return tb.rate
 }
 
-// Pace blocks until enough time has elapsed to send a packet of the given
-// size at the current rate. Uses busy-wait spin for sub-millisecond precision.
+// Pace rate-limits packet sends using a deficit accumulator.
+//
+// Each call accrues byte credits for the time elapsed since the last call,
+// then debits the packet size. Credits are capped at a 2ms burst budget so
+// idle periods don't bank excessive credit. When the deficit is large enough
+// to justify a sleep (≥1ms — the minimum reliable OS sleep granularity on
+// Windows), we sleep and reset the deficit to zero; small deficits are
+// carried forward and will trigger a sleep once they accumulate enough.
+//
+// This produces the correct long-term average rate without relying on
+// sub-millisecond timer precision or busy-wait spin loops, both of which
+// are unreliable under Go's asynchronous goroutine preemption on Windows.
 func (tb *TokenBucket) Pace(packetBytes int) {
 	tb.mu.Lock()
 	rate := tb.rate
-	lastSend := tb.lastSend
-	tb.mu.Unlock()
 
 	if rate <= 0 {
-		return // no pacing
+		tb.mu.Unlock()
+		tb.bytesSent.Add(int64(packetBytes))
+		return
 	}
 
-	// Calculate required inter-packet interval
-	interval := time.Duration(float64(packetBytes) / rate * float64(time.Second))
+	// Accrue credits for time elapsed since the last Pace call.
+	// lastSend is set after any sleep so elapsed reflects only loop
+	// overhead, keeping the measurement uncontaminated by sleep time.
+	now := time.Now()
+	tb.tokens += rate * now.Sub(tb.lastSend).Seconds()
 
-	// How long since last send?
-	elapsed := time.Since(lastSend)
-	remaining := interval - elapsed
+	// Cap tokens at 2ms of burst budget to prevent large backlogs
+	// during idle periods (e.g., between calibration and steady state).
+	if maxBurst := rate * 0.002; tb.tokens > maxBurst {
+		tb.tokens = maxBurst
+	}
 
-	if remaining > 0 {
-		if remaining > 2*time.Millisecond {
-			// For longer waits, sleep most of it then spin the rest
-			time.Sleep(remaining - time.Millisecond)
-			spinUntil(lastSend.Add(interval))
+	// Debit this packet.
+	tb.tokens -= float64(packetBytes)
+
+	// If in deficit, compute the sleep needed to honour the target rate.
+	var sleepDur time.Duration
+	if tb.tokens < 0 {
+		sleepDur = time.Duration(-tb.tokens / rate * float64(time.Second))
+		if sleepDur >= time.Millisecond {
+			// Large enough for a reliable OS sleep — clear the deficit.
+			tb.tokens = 0
 		} else {
-			// Sub-ms: busy-wait spin for precision
-			spinUntil(lastSend.Add(interval))
+			// Too small to sleep reliably; carry it forward.
+			sleepDur = 0
 		}
 	}
 
+	tb.mu.Unlock()
+	tb.bytesSent.Add(int64(packetBytes))
+
+	if sleepDur > 0 {
+		time.Sleep(sleepDur)
+	}
+
+	// Update lastSend AFTER any sleep so the next call's elapsed only
+	// measures loop overhead, not how long we slept.
 	tb.mu.Lock()
 	tb.lastSend = time.Now()
 	tb.mu.Unlock()
-
-	tb.bytesSent.Add(int64(packetBytes))
-}
-
-// spinUntil busy-waits until the target time.
-// Gosched is intentionally NOT called here. On Windows (and other platforms
-// with coarse scheduler quanta), Gosched can block the goroutine for >1ms,
-// which defeats the purpose of sub-millisecond inter-packet pacing. The
-// heartbeat goroutine is I/O-blocked (conn.Read) and does not compete for
-// CPU, so starvation is not a concern during active packet sends.
-func spinUntil(target time.Time) {
-	for time.Now().Before(target) {
-	}
 }
 
 // OnHeartbeat processes a heartbeat from the receiver and adjusts the
