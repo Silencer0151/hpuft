@@ -30,6 +30,10 @@ type HeartbeatGenerator struct {
 	lastFlushBytes uint64
 	lastBeatTime   time.Time
 
+	// lastNetworkRate holds the network delivery rate (bytes/sec) from the
+	// most recent heartbeat, used to select the next heartbeat interval.
+	lastNetworkRate uint32
+
 	// Current interval (rate-proportional)
 	interval time.Duration
 
@@ -172,6 +176,7 @@ func (hg *HeartbeatGenerator) sendHeartbeat() {
 	}
 
 	hg.lastBeatTime = now
+	hg.lastNetworkRate = networkRate
 
 	// Build and send heartbeat
 	payload := protocol.HeartbeatPayload{
@@ -205,16 +210,12 @@ func (hg *HeartbeatGenerator) sendHeartbeat() {
 // computeInterval determines the heartbeat interval based on observed
 // receive rate, per spec §6A.
 func (hg *HeartbeatGenerator) computeInterval() time.Duration {
-	// Use the last window's bytes to estimate rate
-	// Since we already swapped the counter, use network rate from last beat
-	// We'll approximate from the buffer stats
-	stats := hg.buf.Stats()
-	if stats.PacketsReceived == 0 {
+	hg.mu.Lock()
+	rate := hg.lastNetworkRate
+	hg.mu.Unlock()
+
+	if rate == 0 {
 		return 100 * time.Millisecond
 	}
-
-	// Rough estimate: total bytes received / total elapsed time
-	// For a more accurate measure, we'd track cumulative bytes,
-	// but for interval selection this is sufficient
-	return protocol.HeartbeatInterval(uint64(hg.writer.BytesWritten()))
+	return protocol.HeartbeatInterval(uint64(rate))
 }

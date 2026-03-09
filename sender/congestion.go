@@ -42,6 +42,12 @@ type TokenBucket struct {
 	// atCeiling suppresses log spam when rate is auto-capped
 	atCeiling bool
 
+	// heartbeatCount tracks how many heartbeats have been received.
+	// The auto-ceiling is not applied during the warmup phase (first few
+	// heartbeats) because early delivery-rate measurements reflect cold-start
+	// conditions, not actual link capacity.
+	heartbeatCount int
+
 	// bytesSent tracks bytes sent in the current measurement window
 	bytesSent atomic.Int64
 
@@ -138,6 +144,8 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 
+	tb.heartbeatCount++
+
 	// Effective rate = min(network, storage) per spec
 	rawEffective := float64(hb.NetworkDeliveryRate)
 	if float64(hb.StorageFlushRate) < rawEffective {
@@ -198,21 +206,25 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		tb.rate = tb.maxRate
 	}
 
-	// Auto-ceiling: cap at 2x peak observed delivery rate.
-	// There's no point targeting exabytes when the hardware delivers 41 MB/s.
-	// The peak delivery rate is the best estimate of actual link capacity.
-	// need to allow some headroom above the peak to account for measurement jitter and FEC bursts
-	// potential problems: the hard limit could mask real improvements in link capacity if the receiver's processing rate is the bottleneck, but in practice this should be rare and the ceiling can be raised or removed via config if needed
+	// Auto-ceiling: cap at 4x peak observed delivery rate.
+	// This prevents unbounded probing on clean links while still leaving
+	// enough headroom for the rate to grow naturally ahead of measurements.
+	// The ceiling is skipped for the first 3 heartbeats because early
+	// delivery-rate samples reflect cold-start conditions (the calibration
+	// burst window), not actual link capacity — applying the ceiling then
+	// would lock the sender far below what the link can sustain.
+	const ceilingWarmupHeartbeats = 3
+	const ceilingMultiplier = 4.0
 	wasCapped := false
-	if tb.peakRate > 0 && tb.rate > tb.peakRate*2 {
-		tb.rate = tb.peakRate * 2
+	if tb.heartbeatCount > ceilingWarmupHeartbeats && tb.peakRate > 0 && tb.rate > tb.peakRate*ceilingMultiplier {
+		tb.rate = tb.peakRate * ceilingMultiplier
 		wasCapped = true
 	}
 
 	if wasCapped && !tb.atCeiling {
 		tb.atCeiling = true
-		log.Printf("[congestion] CEILING: rate capped at %.2f MB/s (2x peak delivery %.2f MB/s)",
-			tb.rate/1e6, tb.peakRate/1e6)
+		log.Printf("[congestion] CEILING: rate capped at %.2f MB/s (%.0fx peak delivery %.2f MB/s)",
+			tb.rate/1e6, ceilingMultiplier, tb.peakRate/1e6)
 	} else if !wasCapped {
 		tb.atCeiling = false
 	}

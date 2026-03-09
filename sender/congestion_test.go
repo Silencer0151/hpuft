@@ -137,8 +137,10 @@ func TestContinuousIncreaseOnCleanLink(t *testing.T) {
 	}
 
 	actual := tb.Rate()
-	// Should hit the auto-ceiling at 2x peak delivery (20 MB/s), not 57.7 MB/s
-	expectedCeiling := 20_000_000.0
+	// Should hit the auto-ceiling at 4x peak delivery (40 MB/s), not 57.7 MB/s.
+	// The ceiling uses a 4x multiplier to avoid the cold-start false-throttle
+	// that 2x caused on the first heartbeat.
+	expectedCeiling := 40_000_000.0
 	if actual < expectedCeiling*0.99 || actual > expectedCeiling*1.01 {
 		t.Fatalf("after 10 increases: rate = %.2f MB/s, want ~%.2f MB/s (ceiling)",
 			actual/1e6, expectedCeiling/1e6)
