@@ -103,19 +103,26 @@ func TestCalibrationPacketSentAfterInactive(t *testing.T) {
 }
 
 func TestStartingRate(t *testing.T) {
-	cfg := protocol.DefaultCalibrationConfig() // 1ms spacing
 	chunkSize := protocol.MaxPayload
 
-	// With explicit rate
+	// With explicit rate — always honoured regardless of spacing
+	cfg := protocol.DefaultCalibrationConfig()
 	rate := StartingRate(cfg, 10_000_000, chunkSize)
 	if rate != 10_000_000 {
 		t.Fatalf("explicit rate: got %f, want 10000000", rate)
 	}
 
-	// With calibration (rate = chunkSize / spacing)
-	rate = StartingRate(cfg, 0, chunkSize)
-	expected := float64(chunkSize) / cfg.BurstSpacing.Seconds()
+	// Wire-speed probe mode (BurstSpacing=0) — should return 50 MB/s
+	rate = StartingRate(cfg, 0, chunkSize) // default has BurstSpacing=0
+	if rate != 50_000_000 {
+		t.Fatalf("probe mode starting rate: got %f, want 50000000", rate)
+	}
+
+	// Fixed-spacing mode — rate = chunkSize / spacing
+	fixedCfg := protocol.CalibrationConfig{BurstSize: 50, BurstSpacing: 1_000_000} // 1ms
+	rate = StartingRate(fixedCfg, 0, chunkSize)
+	expected := float64(chunkSize) / fixedCfg.BurstSpacing.Seconds()
 	if rate != expected {
-		t.Fatalf("calibration rate: got %f, want %f", rate, expected)
+		t.Fatalf("fixed-spacing rate: got %f, want %f", rate, expected)
 	}
 }

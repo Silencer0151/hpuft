@@ -29,9 +29,14 @@ func NewCalibrationState(cfg protocol.CalibrationConfig, initialRate uint32) *Ca
 		return &CalibrationState{active: false}
 	}
 
-	log.Printf("[calibration] burst: %d packets at %v spacing (%.2f MB/s probe rate)",
-		cfg.BurstSize, cfg.BurstSpacing,
-		float64(protocol.MaxPayload)/cfg.BurstSpacing.Seconds()/1e6)
+	if cfg.BurstSpacing == 0 {
+		log.Printf("[calibration] burst: %d packets at wire speed (link-capacity probe)",
+			cfg.BurstSize)
+	} else {
+		log.Printf("[calibration] burst: %d packets at %v spacing (%.2f MB/s probe rate)",
+			cfg.BurstSize, cfg.BurstSpacing,
+			float64(protocol.MaxPayload)/cfg.BurstSpacing.Seconds()/1e6)
+	}
 
 	return &CalibrationState{
 		active:    true,
@@ -89,7 +94,7 @@ func (cs *CalibrationState) OnHeartbeat() {
 }
 
 // Pace applies the appropriate inter-packet delay for the current phase.
-// During calibration, uses fixed BurstSpacing and returns true.
+// During calibration, uses fixed BurstSpacing (or none if zero) and returns true.
 // After calibration, returns false (caller should use token bucket).
 func (cs *CalibrationState) Pace() bool {
 	cs.mu.Lock()
@@ -100,16 +105,24 @@ func (cs *CalibrationState) Pace() bool {
 	if !active {
 		return false
 	}
-	time.Sleep(spacing)
+	if spacing > 0 {
+		time.Sleep(spacing)
+	}
 	return true
 }
 
 // StartingRate returns the initial rate in bytes/sec for the token bucket.
 // If an explicit InitialRate was configured, returns that.
-// Otherwise returns the calibration probe rate.
+// If BurstSpacing is zero (wire-speed probe mode), returns a high initial rate
+// so the token bucket does not artificially throttle while waiting for the
+// first heartbeat — congestion control will bring it down if needed.
+// Otherwise returns the configured probe rate.
 func StartingRate(cfg protocol.CalibrationConfig, initialRate uint32, chunkSize int) float64 {
 	if initialRate > 0 {
 		return float64(initialRate)
+	}
+	if cfg.BurstSpacing == 0 {
+		return 50_000_000 // 50 MB/s: permissive start, CC adjusts on first heartbeat
 	}
 	return float64(chunkSize) / cfg.BurstSpacing.Seconds()
 }
