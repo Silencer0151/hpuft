@@ -1,3 +1,5 @@
 *.exe
 testdata/
 received/
+./hpuft-receiver
+./hpuft-sender
