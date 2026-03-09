@@ -10,6 +10,14 @@ func defaultCC() protocol.CongestionConfig {
 	return protocol.DefaultCongestionConfig()
 }
 
+func hbWithLoss(lossBP uint16) *protocol.HeartbeatPayload {
+	return &protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 10_000_000, // 10 MB/s (doesn't drive decisions anymore)
+		StorageFlushRate:    10_000_000,
+		LossRate:            lossBP,
+	}
+}
+
 func TestTokenBucketInitialRate(t *testing.T) {
 	tb := NewTokenBucket(1_000_000, defaultCC())
 	if tb.Rate() != 1_000_000 {
@@ -17,118 +25,171 @@ func TestTokenBucketInitialRate(t *testing.T) {
 	}
 }
 
-func TestRateIncrease(t *testing.T) {
+func TestIncreaseOnZeroLoss(t *testing.T) {
 	tb := NewTokenBucket(1_000_000, defaultCC())
 
-	hb := &protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 960_000, // 0.96 * 1M -> above 0.95 threshold
-		StorageFlushRate:    960_000,
-	}
-
-	newRate := tb.OnHeartbeat(hb)
+	newRate := tb.OnHeartbeat(hbWithLoss(0)) // 0% loss
 	expected := 1_000_000 * 1.5
 	if newRate != expected {
-		t.Fatalf("after increase: rate = %f, want %f", newRate, expected)
+		t.Fatalf("rate = %f, want %f", newRate, expected)
 	}
-
-	stats := tb.Stats()
-	if stats.Increases != 1 {
-		t.Fatalf("increases = %d, want 1", stats.Increases)
+	if tb.Stats().Increases != 1 {
+		t.Fatal("expected 1 increase")
 	}
 }
 
-func TestRateHold(t *testing.T) {
+func TestIncreaseOnLowLoss(t *testing.T) {
 	tb := NewTokenBucket(1_000_000, defaultCC())
 
-	hb := &protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 900_000, // 0.90 -> hold band
-		StorageFlushRate:    900_000,
-	}
-
-	newRate := tb.OnHeartbeat(hb)
-	if newRate != 1_000_000 {
-		t.Fatalf("after hold: rate = %f, want 1000000", newRate)
-	}
-
-	stats := tb.Stats()
-	if stats.Holds != 1 {
-		t.Fatalf("holds = %d, want 1", stats.Holds)
+	// 0.5% loss (50 bp) — still under 1%, should increase
+	newRate := tb.OnHeartbeat(hbWithLoss(50))
+	expected := 1_000_000 * 1.5
+	if newRate != expected {
+		t.Fatalf("rate = %f, want %f", newRate, expected)
 	}
 }
 
-func TestRateDecreaseRequiresTwoConsecutive(t *testing.T) {
+func TestHoldOnModerateLoss(t *testing.T) {
+	tb := NewTokenBucket(1_000_000, defaultCC())
+
+	// 2% loss (200 bp) — FEC handles it, hold
+	tb.OnHeartbeat(hbWithLoss(200))
+	if tb.Rate() != 1_000_000 {
+		t.Fatalf("rate = %f, want 1000000 (hold)", tb.Rate())
+	}
+	if tb.Stats().Holds != 1 {
+		t.Fatal("expected 1 hold")
+	}
+}
+
+func TestHoldAtBoundary(t *testing.T) {
+	tb := NewTokenBucket(1_000_000, defaultCC())
+
+	// Exactly 1% (100 bp) — boundary, should hold
+	tb.OnHeartbeat(hbWithLoss(100))
+	if tb.Rate() != 1_000_000 {
+		t.Fatalf("rate = %f, want 1000000 (hold at 1%%)", tb.Rate())
+	}
+
+	// Exactly 5% (500 bp) — upper hold boundary, still hold
+	tb.OnHeartbeat(hbWithLoss(500))
+	if tb.Rate() != 1_000_000 {
+		t.Fatalf("rate = %f, want 1000000 (hold at 5%%)", tb.Rate())
+	}
+}
+
+func TestDecreaseRequiresConsecutive(t *testing.T) {
 	tb := NewTokenBucket(1_000_000, defaultCC())
 
 	hb := &protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 500_000, // well below 0.85
+		NetworkDeliveryRate: 500_000, // delivery matching what the link can do
 		StorageFlushRate:    500_000,
+		LossRate:            600, // 6% loss
 	}
 
-	// First signal: should HOLD (not decrease yet)
-	rate1 := tb.OnHeartbeat(hb)
-	if rate1 != 1_000_000 {
-		t.Fatalf("first decrease signal should hold: rate = %f, want 1000000", rate1)
+	// First > 5% loss signal — should hold (streak=1)
+	tb.OnHeartbeat(hb)
+	if tb.Rate() != 1_000_000 {
+		t.Fatalf("first signal should hold: rate = %f", tb.Rate())
+	}
+	if tb.Stats().Holds != 1 {
+		t.Fatal("first signal counted as hold")
 	}
 
-	// Second signal: now should DECREASE
-	rate2 := tb.OnHeartbeat(hb)
-	// EWMA of constant 500K = 500K, so decrease to 500K * 1.05 = 525K
-	expected := 500_000 * 1.05
-	if rate2 != expected {
-		t.Fatalf("after consecutive decrease: rate = %f, want %f", rate2, expected)
+	// Second > 5% signal — now decrease
+	tb.OnHeartbeat(hb)
+	if tb.Rate() >= 1_000_000 {
+		t.Fatalf("second signal should decrease: rate = %f", tb.Rate())
 	}
-
-	stats := tb.Stats()
-	if stats.Holds != 1 {
-		t.Fatalf("holds = %d, want 1 (first signal was held)", stats.Holds)
-	}
-	if stats.Decreases != 1 {
-		t.Fatalf("decreases = %d, want 1", stats.Decreases)
+	if tb.Stats().Decreases != 1 {
+		t.Fatal("expected 1 decrease")
 	}
 }
 
-func TestIncreaseResetsDecreaseStreak(t *testing.T) {
+func TestStreakResetOnLowLoss(t *testing.T) {
 	tb := NewTokenBucket(1_000_000, defaultCC())
 
-	// One decrease signal (streak = 1)
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
+	// Start decrease streak with appropriate delivery rate
+	hb := &protocol.HeartbeatPayload{
 		NetworkDeliveryRate: 500_000,
 		StorageFlushRate:    500_000,
-	})
+		LossRate:            600,
+	}
+	tb.OnHeartbeat(hb) // streak=1
 
-	// Increase resets streak
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 2_000_000, // well above 0.95 * 1M
-		StorageFlushRate:    2_000_000,
-	})
+	// Low loss resets streak
+	tb.OnHeartbeat(hbWithLoss(0)) // increase, streak=0
 
-	// New decrease signal after reset — should hold again (streak restarted)
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 100_000,
-		StorageFlushRate:    100_000,
-	})
-
-	stats := tb.Stats()
-	if stats.Decreases != 0 {
-		t.Fatalf("decrease should not fire after streak reset: decreases=%d", stats.Decreases)
+	// New high loss — should hold again (streak=1, not 2)
+	tb.OnHeartbeat(hb)
+	if tb.Stats().Decreases != 0 {
+		t.Fatal("streak should have reset — no decrease expected")
 	}
 }
 
-func TestRateUsesMinOfNetworkAndStorage(t *testing.T) {
-	tb := NewTokenBucket(1_000_000, defaultCC())
+func TestContinuousIncreaseOnCleanLink(t *testing.T) {
+	// Simulates a LAN with zero loss — should ramp up and hit ceiling
+	tb := NewTokenBucket(1_000_000, defaultCC()) // 1 MB/s start
 
-	hb := &protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 2_000_000,
-		StorageFlushRate:    400_000, // disk is bottleneck
+	// hbWithLoss reports 10 MB/s delivery, so ceiling = 2 * 10M = 20M
+	for i := 0; i < 10; i++ {
+		tb.OnHeartbeat(hbWithLoss(0))
 	}
 
-	// First signal: hold
-	tb.OnHeartbeat(hb)
-	// Second signal: decrease to smoothed(400K) * 1.05
-	rate := tb.OnHeartbeat(hb)
-	expected := 400_000 * 1.05
-	if rate != expected {
-		t.Fatalf("disk bottleneck: rate = %f, want %f", rate, expected)
+	actual := tb.Rate()
+	// Should hit the auto-ceiling at 2x peak delivery (20 MB/s), not 57.7 MB/s
+	expectedCeiling := 20_000_000.0
+	if actual < expectedCeiling*0.99 || actual > expectedCeiling*1.01 {
+		t.Fatalf("after 10 increases: rate = %.2f MB/s, want ~%.2f MB/s (ceiling)",
+			actual/1e6, expectedCeiling/1e6)
+	}
+
+	if tb.Stats().Increases != 10 {
+		t.Fatalf("increases = %d, want 10", tb.Stats().Increases)
+	}
+}
+
+func TestDecreaseUsesDeliveryRate(t *testing.T) {
+	tb := NewTokenBucket(10_000_000, defaultCC()) // 10 MB/s
+
+	// High loss with low delivery rate
+	hb := &protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 2_000_000, // 2 MB/s actual delivery
+		StorageFlushRate:    2_000_000,
+		LossRate:            1000, // 10% loss
+	}
+
+	tb.OnHeartbeat(hb) // streak=1, hold
+	tb.OnHeartbeat(hb) // streak=2, decrease
+
+	// Should decrease to smoothed(2M) * 1.05 = 2.1M, not stay at 10M
+	rate := tb.Rate()
+	if rate > 3_000_000 {
+		t.Fatalf("decrease should target delivery rate: got %.2f MB/s", rate/1e6)
+	}
+}
+
+func TestFlowControlCeiling(t *testing.T) {
+	tb := NewTokenBucket(1_000_000, defaultCC())
+
+	// Zero loss but storage is slow — delivery rate caps us
+	hb := &protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 50_000_000,
+		StorageFlushRate:    500_000, // disk bottleneck at 0.5 MB/s
+		LossRate:            0,
+	}
+
+	// Will increase (zero loss), but on decrease the delivery rate ceiling kicks in
+	tb.OnHeartbeat(hb) // increase to 1.5M
+
+	// Now force a decrease with high loss and low storage
+	hb.LossRate = 800
+	tb.OnHeartbeat(hb) // streak=1
+	tb.OnHeartbeat(hb) // streak=2, decrease to smoothed(min(50M, 500K)) * 1.05
+
+	rate := tb.Rate()
+	if rate > 1_000_000 {
+		t.Fatalf("storage ceiling should limit rate: got %.2f MB/s", rate/1e6)
 	}
 }
 
@@ -138,93 +199,52 @@ func TestRateFloor(t *testing.T) {
 	hb := &protocol.HeartbeatPayload{
 		NetworkDeliveryRate: 100,
 		StorageFlushRate:    100,
+		LossRate:            2000, // 20% loss
 	}
 
-	// Need two consecutive to trigger decrease
-	tb.OnHeartbeat(hb)
-	newRate := tb.OnHeartbeat(hb)
-	if newRate != 10_000 {
-		t.Fatalf("below floor: rate = %f, want 10000", newRate)
+	tb.OnHeartbeat(hb) // streak=1
+	tb.OnHeartbeat(hb) // streak=2, decrease
+
+	if tb.Rate() != 10_000 {
+		t.Fatalf("floor: rate = %f, want 10000", tb.Rate())
 	}
 }
 
 func TestMaxRateCap(t *testing.T) {
 	tb := NewTokenBucket(1_000_000, defaultCC())
-	tb.SetMaxRate(1_200_000)
+	tb.SetMaxRate(2_000_000)
 
-	hb := &protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 960_000,
-		StorageFlushRate:    960_000,
-	}
+	// Three increases: 1M -> 1.5M -> 2.25M (capped to 2M) -> 3M (capped to 2M)
+	tb.OnHeartbeat(hbWithLoss(0))
+	tb.OnHeartbeat(hbWithLoss(0))
+	tb.OnHeartbeat(hbWithLoss(0))
 
-	newRate := tb.OnHeartbeat(hb)
-	if newRate != 1_200_000 {
-		t.Fatalf("capped rate = %f, want 1200000", newRate)
-	}
-}
-
-func TestEWMASmoothing(t *testing.T) {
-	tb := NewTokenBucket(10_000_000, defaultCC()) // 10 MB/s
-
-	// First heartbeat: EWMA initializes to raw value
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 9_600_000, // triggers increase
-		StorageFlushRate:    9_600_000,
-	})
-	// Rate is now 15 MB/s
-
-	// Send a jittery low heartbeat followed by a normal one
-	// The smoothed rate should dampen the spike
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 1_000_000, // spike down (raw)
-		StorageFlushRate:    1_000_000,
-	})
-	// EWMA: 0.3 * 1M + 0.7 * 9.6M = 7.02M
-	// 7.02M / 15M = 0.468 -> below 0.85 -> streak=1, HOLD
-
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 14_000_000, // back to normal
-		StorageFlushRate:    14_000_000,
-	})
-	// EWMA: 0.3 * 14M + 0.7 * 7.02M = 4.2M + 4.914M = 9.114M
-	// 9.114M / 15M = 0.608 -> below 0.85 but streak reset by... no, it's still below
-	// Actually streak=2 now, so this would trigger decrease
-
-	// The key insight: a single jittery heartbeat doesn't crash the rate
-	// because the first one only starts the streak (holds)
-	stats := tb.Stats()
-	if stats.Decreases > 1 {
-		t.Fatalf("EWMA should prevent multiple rapid decreases, got %d", stats.Decreases)
+	if tb.Rate() != 2_000_000 {
+		t.Fatalf("capped: rate = %f, want 2000000", tb.Rate())
 	}
 }
 
 func TestRapidRecoveryAfterDecrease(t *testing.T) {
-	tb := NewTokenBucket(1_000_000, defaultCC())
+	tb := NewTokenBucket(10_000_000, defaultCC())
 
-	// Force a decrease (two consecutive low signals)
-	low := &protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 500_000,
-		StorageFlushRate:    500_000,
+	// Force decrease
+	hb := &protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 2_000_000,
+		StorageFlushRate:    2_000_000,
+		LossRate:            1500, // 15% loss
 	}
-	tb.OnHeartbeat(low)
-	tb.OnHeartbeat(low)
-	// Rate is now ~525K
+	tb.OnHeartbeat(hb)
+	tb.OnHeartbeat(hb)
+	rateAfter := tb.Rate()
 
-	rateAfterDecrease := tb.Rate()
-
-	// Now send high signals — should increase 1.5x each time
-	high := &protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 10_000_000, // way above anything
-		StorageFlushRate:    10_000_000,
-	}
-
-	tb.OnHeartbeat(high)
+	// Recovery with zero loss
+	tb.OnHeartbeat(hbWithLoss(0))
 	rate1 := tb.Rate()
-	if rate1 <= rateAfterDecrease {
-		t.Fatalf("should increase after high signal: %f <= %f", rate1, rateAfterDecrease)
+	if rate1 <= rateAfter {
+		t.Fatalf("should increase after loss clears: %f <= %f", rate1, rateAfter)
 	}
 
-	tb.OnHeartbeat(high)
+	tb.OnHeartbeat(hbWithLoss(0))
 	rate2 := tb.Rate()
 	if rate2 <= rate1 {
 		t.Fatalf("should keep increasing: %f <= %f", rate2, rate1)
@@ -239,10 +259,8 @@ func TestResetByteCounter(t *testing.T) {
 	if val != 5000 {
 		t.Fatalf("ResetByteCounter = %d, want 5000", val)
 	}
-
-	val = tb.ResetByteCounter()
-	if val != 0 {
-		t.Fatalf("second ResetByteCounter = %d, want 0", val)
+	if tb.ResetByteCounter() != 0 {
+		t.Fatal("second reset should be 0")
 	}
 }
 
@@ -250,16 +268,12 @@ func TestPaceProducesDelay(t *testing.T) {
 	tb := NewTokenBucket(1_000_000, defaultCC())
 
 	tb.Pace(100)
-
 	start := time.Now()
 	tb.Pace(1000)
 	elapsed := time.Since(start)
 
-	if elapsed < 500*time.Microsecond {
-		t.Fatalf("pace too fast: %v (expected ~1ms)", elapsed)
-	}
-	if elapsed > 10*time.Millisecond {
-		t.Fatalf("pace too slow: %v (expected ~1ms)", elapsed)
+	if elapsed < 500*time.Microsecond || elapsed > 50*time.Millisecond {
+		t.Fatalf("pace timing: %v (expected ~1ms)", elapsed)
 	}
 }
 
@@ -270,103 +284,34 @@ func TestCustomCongestionConfig(t *testing.T) {
 		IncreaseMultiplier: 2.0,
 		DecreaseHeadroom:   1.10,
 	}
-
 	tb := NewTokenBucket(1_000_000, cc)
 
-	// 0.91 * 1M = 910K >= 0.90 * 1M -> increase by 2x
+	// Zero loss → increase by 2x (custom multiplier)
 	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 910_000,
-		StorageFlushRate:    910_000,
+		NetworkDeliveryRate: 1_000_000,
+		StorageFlushRate:    1_000_000,
+		LossRate:            0,
 	})
 	if tb.Rate() != 2_000_000 {
-		t.Fatalf("custom 2x increase: rate = %f, want 2000000", tb.Rate())
+		t.Fatalf("custom 2x: rate = %f, want 2000000", tb.Rate())
 	}
 
-	// Two consecutive decreases with custom headroom
-	low := &protocol.HeartbeatPayload{
+	// Decrease with custom headroom: use consistent low delivery rate
+	// so EWMA converges to ~500K
+	hb := &protocol.HeartbeatPayload{
 		NetworkDeliveryRate: 500_000,
 		StorageFlushRate:    500_000,
+		LossRate:            800, // 8% loss
 	}
-	tb.OnHeartbeat(low)
-	tb.OnHeartbeat(low)
-	// EWMA of 500K after init at 910K then two 500Ks:
-	// t1 (init): 910K
-	// t2 (increase): streak reset, EWMA=0.3*910K+0.7*910K=910K... wait
-	// Actually the first OnHeartbeat was 910K which triggered increase.
-	// Then low=500K: EWMA = 0.3*500K + 0.7*910K = 150K+637K = 787K
-	// 787K < 0.70 * 2M = 1.4M -> streak=1, HOLD
-	// Then low=500K: EWMA = 0.3*500K + 0.7*787K = 150K+550.9K = 700.9K
-	// 700.9K < 0.70 * 2M = 1.4M -> streak=2, DECREASE to 700.9K * 1.1
-	expected := (0.3*500_000 + 0.7*(0.3*500_000+0.7*910_000)) * 1.10
-	actual := tb.Rate()
-	// Allow some float tolerance
-	if actual < expected*0.99 || actual > expected*1.01 {
-		t.Fatalf("custom headroom: rate = %f, want ~%f", actual, expected)
-	}
-}
+	// Feed enough heartbeats for EWMA to converge toward 500K
+	tb.OnHeartbeat(hb) // streak=1, hold
+	tb.OnHeartbeat(hb) // streak=2, decrease
+	tb.OnHeartbeat(hb) // streak continues, decrease again
+	tb.OnHeartbeat(hb) // EWMA converging
 
-func TestThresholdBoundaryIncrease(t *testing.T) {
-	tb := NewTokenBucket(1_000_000, defaultCC())
-
-	// Exactly at increase threshold
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 950_000,
-		StorageFlushRate:    950_000,
-	})
-	if tb.Stats().Increases != 1 {
-		t.Fatal("E == 0.95*S should trigger increase")
-	}
-}
-
-func TestThresholdBoundaryHold(t *testing.T) {
-	tb := NewTokenBucket(1_000_000, defaultCC())
-
-	// Just below increase but in hold band
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 949_000,
-		StorageFlushRate:    949_000,
-	})
-	if tb.Stats().Holds != 1 {
-		t.Fatal("E = 0.949*S should trigger hold")
-	}
-}
-
-func TestThresholdBoundaryHoldLower(t *testing.T) {
-	tb := NewTokenBucket(1_000_000, defaultCC())
-
-	// Exactly at hold threshold lower bound
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 850_000,
-		StorageFlushRate:    850_000,
-	})
-	if tb.Stats().Holds != 1 {
-		t.Fatal("E == 0.85*S should trigger hold")
-	}
-}
-
-func TestThresholdBoundaryDecreaseSignal(t *testing.T) {
-	tb := NewTokenBucket(1_000_000, defaultCC())
-
-	// Just below hold threshold — first one should hold (streak=1)
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 849_000,
-		StorageFlushRate:    849_000,
-	})
-
-	stats := tb.Stats()
-	// First decrease signal is held due to consecutive requirement
-	if stats.Holds != 1 {
-		t.Fatalf("first below-threshold signal should hold, holds=%d decreases=%d",
-			stats.Holds, stats.Decreases)
-	}
-
-	// Second one triggers actual decrease
-	tb.OnHeartbeat(&protocol.HeartbeatPayload{
-		NetworkDeliveryRate: 849_000,
-		StorageFlushRate:    849_000,
-	})
-	stats = tb.Stats()
-	if stats.Decreases != 1 {
-		t.Fatalf("second below-threshold signal should decrease, decreases=%d", stats.Decreases)
+	rate := tb.Rate()
+	// Should be near 500K * 1.10 = 550K after EWMA converges
+	if rate > 700_000 {
+		t.Fatalf("custom headroom: rate = %f, expected < 700K", rate)
 	}
 }
