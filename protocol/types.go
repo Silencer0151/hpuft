@@ -199,8 +199,8 @@ type CalibrationConfig struct {
 // DefaultCalibrationConfig returns the spec defaults from Appendix A.
 func DefaultCalibrationConfig() CalibrationConfig {
 	return CalibrationConfig{
-		BurstSize:    50,
-		BurstSpacing: 1 * time.Millisecond,
+		BurstSize:    100,
+		BurstSpacing: 0, // 0 = send at wire speed to probe actual link capacity
 	}
 }
 

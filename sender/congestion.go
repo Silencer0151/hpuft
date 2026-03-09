@@ -3,7 +3,6 @@ package sender
 import (
 	"hpuft/protocol"
 	"log"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -118,11 +117,14 @@ func (tb *TokenBucket) Pace(packetBytes int) {
 	tb.bytesSent.Add(int64(packetBytes))
 }
 
-// spinUntil busy-waits until the target time. Yields the CPU occasionally
-// to avoid starving other goroutines.
+// spinUntil busy-waits until the target time.
+// Gosched is intentionally NOT called here. On Windows (and other platforms
+// with coarse scheduler quanta), Gosched can block the goroutine for >1ms,
+// which defeats the purpose of sub-millisecond inter-packet pacing. The
+// heartbeat goroutine is I/O-blocked (conn.Read) and does not compete for
+// CPU, so starvation is not a concern during active packet sends.
 func spinUntil(target time.Time) {
 	for time.Now().Before(target) {
-		runtime.Gosched()
 	}
 }
 
