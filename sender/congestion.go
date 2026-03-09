@@ -39,6 +39,9 @@ type TokenBucket struct {
 	// Peak observed rate for recovery reference
 	peakRate float64
 
+	// atCeiling suppresses log spam when rate is auto-capped
+	atCeiling bool
+
 	// bytesSent tracks bytes sent in the current measurement window
 	bytesSent atomic.Int64
 
@@ -118,9 +121,17 @@ func spinUntil(target time.Time) {
 }
 
 // OnHeartbeat processes a heartbeat from the receiver and adjusts the
-// sending rate according to the spec §6C rate adjustment algorithm,
-// with EWMA smoothing to dampen jitter and a consecutive-decrease
-// requirement to prevent single-heartbeat crashes.
+// sending rate. The algorithm is loss-driven rather than delivery-rate-ratio
+// driven, because delivery rate is bounded by send rate and can never exceed
+// it — making ratio-based increase thresholds unreachable under timing jitter.
+//
+// Decision logic:
+//   - Loss < 1%  → INCREASE (1.5x) — link has headroom, probe aggressively
+//   - Loss 1-5%  → HOLD — FEC is absorbing loss, stay the course
+//   - Loss > 5%  → DECREASE (consecutive confirmation required)
+//
+// The effective delivery rate (min of network, storage) acts as a ceiling:
+// we never increase above what the receiver can actually process.
 //
 // Returns the new rate in bytes/sec.
 func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
@@ -133,49 +144,51 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		rawEffective = float64(hb.StorageFlushRate)
 	}
 
-	// EWMA smoothing: dampens single-heartbeat jitter on real networks.
-	// smoothed = alpha * new_sample + (1-alpha) * old_smoothed
+	// EWMA smoothing on delivery rate for decrease targeting
 	if !tb.ewmaInit {
 		tb.smoothedRate = rawEffective
 		tb.ewmaInit = true
 	} else {
 		tb.smoothedRate = tb.ewmaAlpha*rawEffective + (1-tb.ewmaAlpha)*tb.smoothedRate
 	}
-	effectiveRate := tb.smoothedRate
 
-	// Track peak for reference
-	if effectiveRate > tb.peakRate {
-		tb.peakRate = effectiveRate
+	// Track peak observed delivery rate
+	if rawEffective > tb.peakRate {
+		tb.peakRate = rawEffective
 	}
 
 	oldRate := tb.rate
+	lossBP := hb.LossRate // basis points: 100 = 1.00%
 
 	switch {
-	case effectiveRate >= tb.cc.IncreaseThreshold*oldRate:
-		// Link and receiver keeping up — probe upward
-		tb.rate = oldRate * tb.cc.IncreaseMultiplier
+	case lossBP < 100:
+		// < 1% loss: link has headroom, probe upward
+		newRate := oldRate * tb.cc.IncreaseMultiplier
+		tb.rate = newRate
 		tb.decreaseStreak = 0
 		tb.increases.Add(1)
-		log.Printf("[congestion] INCREASE: %.2f -> %.2f MB/s (smoothed=%.2f raw=%.2f)",
-			oldRate/1e6, tb.rate/1e6, effectiveRate/1e6, rawEffective/1e6)
+		// Only log if rate actually changed (not capped at ceiling)
+		if !tb.atCeiling {
+			log.Printf("[congestion] INCREASE: %.2f -> %.2f MB/s (loss=%.2f%% delivery=%.2f)",
+				oldRate/1e6, tb.rate/1e6, float64(lossBP)/100, rawEffective/1e6)
+		}
 
-	case effectiveRate >= tb.cc.HoldThreshold*oldRate:
-		// Minor variance — hold steady
+	case lossBP <= 500:
+		// 1-5% loss: FEC is handling it, hold steady
 		tb.decreaseStreak = 0
 		tb.holds.Add(1)
 
 	default:
-		// Potential congestion signal — but require consecutive confirmation
+		// > 5% loss: potential congestion, require consecutive confirmation
 		tb.decreaseStreak++
 
 		if tb.decreaseStreak >= 2 {
-			// Confirmed congestion: decrease to smoothed effective + headroom
-			tb.rate = effectiveRate * tb.cc.DecreaseHeadroom
+			// Confirmed: drop to smoothed delivery rate + headroom
+			tb.rate = tb.smoothedRate * tb.cc.DecreaseHeadroom
 			tb.decreases.Add(1)
-			log.Printf("[congestion] DECREASE: %.2f -> %.2f MB/s (smoothed=%.2f raw=%.2f, streak=%d)",
-				oldRate/1e6, tb.rate/1e6, effectiveRate/1e6, rawEffective/1e6, tb.decreaseStreak)
+			log.Printf("[congestion] DECREASE: %.2f -> %.2f MB/s (loss=%.2f%% delivery=%.2f, streak=%d)",
+				oldRate/1e6, tb.rate/1e6, float64(lossBP)/100, rawEffective/1e6, tb.decreaseStreak)
 		} else {
-			// First signal — hold and wait for confirmation
 			tb.holds.Add(1)
 		}
 	}
@@ -183,6 +196,25 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	// Apply max rate cap if configured
 	if tb.maxRate > 0 && tb.rate > tb.maxRate {
 		tb.rate = tb.maxRate
+	}
+
+	// Auto-ceiling: cap at 2x peak observed delivery rate.
+	// There's no point targeting exabytes when the hardware delivers 41 MB/s.
+	// The peak delivery rate is the best estimate of actual link capacity.
+	// need to allow some headroom above the peak to account for measurement jitter and FEC bursts
+	// potential problems: the hard limit could mask real improvements in link capacity if the receiver's processing rate is the bottleneck, but in practice this should be rare and the ceiling can be raised or removed via config if needed
+	wasCapped := false
+	if tb.peakRate > 0 && tb.rate > tb.peakRate*2 {
+		tb.rate = tb.peakRate * 2
+		wasCapped = true
+	}
+
+	if wasCapped && !tb.atCeiling {
+		tb.atCeiling = true
+		log.Printf("[congestion] CEILING: rate capped at %.2f MB/s (2x peak delivery %.2f MB/s)",
+			tb.rate/1e6, tb.peakRate/1e6)
+	} else if !wasCapped {
+		tb.atCeiling = false
 	}
 
 	// Floor: never go below 10 KB/s (effectively a minimum viable rate)
