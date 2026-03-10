@@ -244,9 +244,17 @@ func (s *Sender) Send() error {
 
 	for seqNum < totalChunks {
 		// --- Priority: retransmit NACKed packets ---
+		// Cap retransmits per iteration so new data always makes forward progress.
+		// Without this, 100+ NACKs monopolize the link and seqNum never advances.
+		const maxNACKsPerIteration = 3
 		nackMu.Lock()
 		nacksToSend := nackQueue
-		nackQueue = nil
+		if len(nacksToSend) > maxNACKsPerIteration {
+			nacksToSend = nacksToSend[:maxNACKsPerIteration]
+			nackQueue = nackQueue[maxNACKsPerIteration:]
+		} else {
+			nackQueue = nil
+		}
 		nackMu.Unlock()
 
 		for _, nackSeq := range nacksToSend {

@@ -112,10 +112,10 @@ func TestStartingRate(t *testing.T) {
 		t.Fatalf("explicit rate: got %f, want 10000000", rate)
 	}
 
-	// Wire-speed probe mode (BurstSpacing=0) — should return 50 MB/s
+	// Wire-speed probe mode (BurstSpacing=0) — conservative 2 MB/s to avoid flooding WAN/satellite
 	rate = StartingRate(cfg, 0, chunkSize) // default has BurstSpacing=0
-	if rate != 50_000_000 {
-		t.Fatalf("probe mode starting rate: got %f, want 50000000", rate)
+	if rate != 2_000_000 {
+		t.Fatalf("probe mode starting rate: got %f, want 2000000", rate)
 	}
 
 	// Fixed-spacing mode — rate = chunkSize / spacing
