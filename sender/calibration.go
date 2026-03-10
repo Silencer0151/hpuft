@@ -122,7 +122,11 @@ func StartingRate(cfg protocol.CalibrationConfig, initialRate uint32, chunkSize 
 		return float64(initialRate)
 	}
 	if cfg.BurstSpacing == 0 {
-		return 50_000_000 // 50 MB/s: permissive start, CC adjusts on first heartbeat
+		// 2 MB/s (16 Mbps): conservative enough not to flood a satellite or WAN
+		// link on first contact, yet fast enough that LAN transfers ramp to full
+		// speed within a few heartbeat intervals (~500ms). CC probes upward from
+		// here via 1.5x multiplicative increase on each low-loss heartbeat.
+		return 2_000_000
 	}
 	return float64(chunkSize) / cfg.BurstSpacing.Seconds()
 }

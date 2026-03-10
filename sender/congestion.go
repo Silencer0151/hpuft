@@ -243,7 +243,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	// delivery-rate samples reflect cold-start conditions (the calibration
 	// burst window), not actual link capacity — applying the ceiling then
 	// would lock the sender far below what the link can sustain.
-	const ceilingWarmupHeartbeats = 3
+	const ceilingWarmupHeartbeats = 5
 	const ceilingMultiplier = 4.0
 	wasCapped := false
 	if tb.heartbeatCount > ceilingWarmupHeartbeats && tb.peakRate > 0 && tb.rate > tb.peakRate*ceilingMultiplier {
