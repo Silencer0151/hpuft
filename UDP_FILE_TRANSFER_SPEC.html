@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HP-UDP Design Specification v2.0</title>
+    <title>HP-UDP Design Specification v3.0</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -112,19 +112,41 @@
             font-size: 0.95rem;
             margin-bottom: 0.3rem;
         }
+        .lesson {
+            background-color: #1a2f1a;
+            border-left: 4px solid #27ae60;
+            margin: 1rem 0;
+            padding: 0.8rem 1.2rem;
+            font-size: 0.95rem;
+        }
+        .lesson strong {
+            color: #2ecc71;
+        }
     </style>
 </head>
 <body>
 
-    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v2.0</span></h1>
+    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v3.0</span></h1>
 
     <div class="changelog">
-        <strong>Changelog from v1.0:</strong>
+        <strong>Changelog from v2.0:</strong>
+        <ul>
+            <li><strong>§4 Calibration:</strong> Burst changed from 50 packets at 1ms spacing to 100 packets at wire speed. Starting rate changed from calibration-derived to 2 MB/s default (safe for satellite/WAN).</li>
+            <li><strong>§6 Congestion Control:</strong> Complete redesign. Now loss-driven instead of delivery-rate-ratio driven. Added EWMA smoothing, consecutive decrease requirement, auto-ceiling at 4× peak delivery with 5-heartbeat warmup.</li>
+            <li><strong>§6 Pacing:</strong> Replaced per-packet spin-wait with deficit accumulator model. Eliminates OS timer granularity and goroutine preemption issues.</li>
+            <li><strong>§6 Heartbeat Interval:</strong> Now based on last measured network delivery rate (bytes/sec), not cumulative bytes written.</li>
+            <li><strong>§6 NACK Retransmission:</strong> Capped at 3 per send-loop iteration to prevent forward-progress stalls on lossy links.</li>
+            <li><strong>§7 Inactivity Timeout:</strong> Added 5-second minimum floor to allow NACK retransmission cycles under loss.</li>
+            <li><strong>§4 SESSION_REQ Validation:</strong> Receiver validates file size (max 1 TB) and non-empty filename before allocation.</li>
+            <li><strong>§10 Lessons Learned:</strong> New section documenting empirical findings from LAN, WAN, and Starlink testing.</li>
+        </ul>
+    </div>
+
+    <div class="changelog">
+        <strong>Changelog from v1.0 (retained):</strong>
         <ul>
             <li>Specified SessionID generation and collision handling for 0-RTT.</li>
             <li>Added receiver-side inactivity timeout and sender failure recovery.</li>
-            <li>Defined initial sending rate: configurable + default calibration burst.</li>
-            <li>Added upward congestion probe mechanism (multiplicative increase).</li>
             <li>Separated flow control (receiver capacity) from congestion control (network capacity).</li>
             <li>Added receiver-side linger timeout for teardown resilience.</li>
             <li>Clarified MTU hard cap: 1400 total, 1376 max payload.</li>
@@ -132,7 +154,6 @@
             <li>Introduced adaptive FEC ratio based on observed loss.</li>
             <li>Made heartbeat interval rate-proportional.</li>
             <li>Specified FEC tail block handling for partial final groups.</li>
-            <li>Added explicit note on security scope.</li>
         </ul>
     </div>
 
@@ -147,15 +168,15 @@
     <p>HP-UDP is an application-layer file transfer mechanism built on top of UDP. The design is lean, avoids unnecessary overhead, and focuses intently on its primary goal of speed while ensuring the reliability required for production use.</p>
     <p>The architecture is built upon five core pillars:</p>
     <ul>
-        <li><strong>Ultra-Fast Initiation:</strong> A 0-RTT Optimistic Handshake with calibration burst.</li>
+        <li><strong>Ultra-Fast Initiation:</strong> A 0-RTT Optimistic Handshake with wire-speed calibration burst.</li>
         <li><strong>Reliable Data Transfer:</strong> Adaptive Forward Error Correction (FEC) for proactive loss recovery.</li>
-        <li><strong>Adaptive Throughput:</strong> Dual-metric congestion and flow control via rate-proportional Heartbeat Pacing.</li>
+        <li><strong>Adaptive Throughput:</strong> Loss-driven congestion control with deficit-accumulator pacing and rate-proportional Heartbeat feedback.</li>
         <li><strong>Guaranteed Integrity:</strong> Graceful Teardown linked to pipelined, full-file checksum verification.</li>
         <li><strong>Resilient Session Management:</strong> Timeout-driven cleanup on both sender and receiver with linger states.</li>
     </ul>
 
     <blockquote>
-        <strong>Note on Security Scope:</strong> HP-UDP v2.0 intentionally omits authentication, encryption, and anti-spoofing mechanisms. The design priority is to prove a bulletproof reliable file transfer mechanism over UDP. Security layers (session tokens, HMAC headers, DTLS integration) are deferred to a future revision once the core transfer engine is validated.
+        <strong>Note on Security Scope:</strong> HP-UDP v3.0 intentionally omits authentication, encryption, and anti-spoofing mechanisms. The design priority is to prove a bulletproof reliable file transfer mechanism over UDP. Security layers (session tokens, HMAC headers, DTLS integration) are deferred to a future revision once the core transfer engine is validated.
     </blockquote>
 
     <h2>3. Packet Wire Format (Custom Header)</h2>
@@ -226,7 +247,7 @@
 
     <h2>4. Connection Establishment: 0-RTT Optimistic Handshake</h2>
 
-    <p>To eliminate latency before data transmission begins, the protocol uses a Zero Round-Trip Time (0-RTT) handshake with a controlled calibration burst to safely probe unknown link capacity.</p>
+    <p>To eliminate latency before data transmission begins, the protocol uses a Zero Round-Trip Time (0-RTT) handshake with a wire-speed calibration burst to probe link capacity.</p>
 
     <h3>A. SessionID Generation</h3>
     <p>The <strong>client</strong> generates the SessionID as a cryptographically random 32-bit integer (e.g., via <code>/dev/urandom</code> or <code>crypto/rand</code>). This keeps the handshake 0-RTT since no server round-trip is required for ID assignment.</p>
@@ -235,16 +256,28 @@
         <li><strong>Stale Session Protection:</strong> SessionIDs are held in a reserved pool for 10 seconds after session purge to prevent late-arriving packets from a completed transfer from being misattributed to a new session reusing the same ID.</li>
     </ul>
 
-    <h3>B. Handshake Sequence</h3>
+    <h3>B. SESSION_REQ Validation</h3>
+    <p>Before allocating resources, the receiver validates the <code>SESSION_REQ</code> payload:</p>
+    <ul>
+        <li><strong>File Size:</strong> Must be non-zero and no larger than the configured maximum (default: 1 TB). Prevents out-of-memory crashes from corrupted or malicious packets.</li>
+        <li><strong>File Name:</strong> Must be non-empty. The receiver uses only the base filename (path separators stripped) to prevent path traversal.</li>
+    </ul>
+    <p>If validation fails, the receiver sends a <code>SESSION_REJECT</code> and logs a diagnostic warning.</p>
+
+    <h3>C. Handshake Sequence</h3>
     <ul>
         <li><strong>Step 1 (The Request):</strong> The client transmits <code>Packet 0</code> (<code>SESSION_REQ</code>). The payload contains: <code>FileSize</code> (8 bytes), <code>xxHash64</code> checksum (8 bytes), <code>InitialRate</code> (4 bytes, 0 = use calibration mode), and <code>FileName</code> (variable, null-terminated).</li>
-        <li><strong>Step 2 (The Calibration Burst):</strong> Without waiting for acknowledgment, the client immediately begins transmitting <code>DATA</code> packets with the <code>Calibration</code> flag (<code>0x02</code>) set. The burst consists of a configurable number of packets (default: 50) sent at a conservative spacing of 1ms apart (~1.376 MB/s). This probes the link without risking saturation on any reasonable connection.</li>
-        <li><strong>Step 3 (The Alignment):</strong> The server parses the request, allocates the memory ring buffer, and begins accepting incoming data. If the server cannot allocate resources in time, initial calibration packets are dropped — these will be detected and recovered via the standard Heartbeat/NACK mechanism (§6).</li>
-        <li><strong>Step 4 (Steady State):</strong> Upon receiving the first Heartbeat response (§6), the sender transitions out of calibration mode. It clears the <code>Calibration</code> flag and sets its sending rate based on the reported metrics. From this point, the adaptive congestion controller (§6) governs the sending rate.</li>
+        <li><strong>Step 2 (The Calibration Burst):</strong> Without waiting for acknowledgment, the client immediately begins transmitting <code>DATA</code> packets with the <code>Calibration</code> flag (<code>0x02</code>) set. The burst consists of 100 packets sent at <strong>wire speed</strong> (no inter-packet delay). This probes the actual link capacity rather than assuming a conservative rate. The token bucket is initialized at a default starting rate of 2 MB/s to provide a reasonable pacing floor while the first heartbeat is in transit.</li>
+        <li><strong>Step 3 (The Alignment):</strong> The server parses the request, validates the payload (§4B), allocates the memory ring buffer, and begins accepting incoming data. If the server cannot allocate resources in time, initial calibration packets are dropped — these will be detected and recovered via the standard Heartbeat/NACK mechanism (§6).</li>
+        <li><strong>Step 4 (Steady State):</strong> Upon receiving the first Heartbeat response (§6), the sender transitions out of calibration mode. It clears the <code>Calibration</code> flag and the loss-driven congestion controller (§6) governs the sending rate from this point forward.</li>
     </ul>
 
     <h4>Configurable Initial Rate Override</h4>
     <p>If the <code>InitialRate</code> field in <code>SESSION_REQ</code> is non-zero, the sender skips calibration mode and begins transmitting at the specified bytes-per-second rate immediately. This is intended for known environments (e.g., a dedicated 10 Gbps LAN) where the operator can confidently set the initial rate. The adaptive congestion controller still takes over after the first Heartbeat.</p>
+
+    <div class="lesson">
+        <strong>Implementation Note:</strong> The v2.0 spec used a conservative 1ms-spaced calibration burst (~1.38 MB/s probe rate). On a Gigabit LAN this made the ramp-up to full speed take ~9 heartbeat intervals (~1 second). On Starlink, a 50 MB/s starting rate overwhelmed the uplink and poisoned the peak delivery measurement. The current wire-speed burst with a 2 MB/s token bucket default balances both extremes: the burst itself discovers the link capacity, while the conservative token bucket prevents flooding during the ~100ms before the first heartbeat arrives.
+    </div>
 
     <h2>5. Core Reliability Mechanisms</h2>
 
@@ -283,7 +316,7 @@
     <p>The sender initializes at <strong>5% parity</strong> during calibration and adjusts after the first Heartbeat containing loss data. Adjustments are applied on <strong>block group boundaries</strong> — mid-block changes are not permitted, as this would invalidate the Reed-Solomon coding parameters for that group.</p>
 
     <h4>Parity Generation</h4>
-    <p>Parity packets are generated using <strong>Reed-Solomon erasure coding</strong>. For a block of <code>k</code> data packets with <code>m</code> parity packets, any <code>k</code> of the <code>k+m</code> total packets are sufficient to reconstruct the original data.</p>
+    <p>Parity packets are generated using <strong>Reed-Solomon erasure coding</strong> over GF(2<sup>8</sup>) with the irreducible polynomial <code>x<sup>8</sup> + x<sup>4</sup> + x<sup>3</sup> + x<sup>2</sup> + 1</code> (0x11d). For a block of <code>k</code> data packets with <code>m</code> parity packets, any <code>k</code> of the <code>k+m</code> total packets are sufficient to reconstruct the original data. The encoding uses a Vandermonde-derived matrix whose top <code>k</code> rows form an identity matrix, ensuring data packets pass through unchanged and only parity is computed.</p>
 
     <h4>On-the-Fly Recovery</h4>
     <p>If the receiver detects missing packets within a completed block group (all expected sequence numbers accounted for or timed out), it attempts FEC reconstruction immediately. Only packets that cannot be recovered via FEC are reported as NACKs in the next Heartbeat.</p>
@@ -296,16 +329,20 @@
         <li>The sender sets the <code>EndOfFile</code> flag (<code>0x01</code>) on the final data packet and the final parity packet of the tail block. This signals to the receiver that no further block groups will follow.</li>
     </ul>
 
-    <h2>6. Adaptive Congestion and Flow Control: Heartbeat Pacing</h2>
+    <h2>6. Adaptive Congestion and Flow Control</h2>
 
-    <p>HP-UDP separates <strong>congestion control</strong> (network path capacity) from <strong>flow control</strong> (receiver processing capacity) and uses the minimum of the two as the effective sending rate. Both are driven by real-time Heartbeat feedback from the receiver.</p>
+    <p>HP-UDP separates <strong>congestion control</strong> (network path capacity) from <strong>flow control</strong> (receiver processing capacity). The congestion controller is <strong>loss-driven</strong>: the primary signal is the observed packet loss rate, not the ratio of delivery rate to send rate. The delivery rate acts as a ceiling, not a decision driver.</p>
+
+    <div class="lesson">
+        <strong>Design Rationale (v3.0):</strong> The v2.0 spec used a delivery-rate-ratio algorithm where the sender increased only if <code>EffectiveRate &ge; 0.95 × SendRate</code>. In practice, this threshold was unreachable: delivery rate is bounded by send rate (the receiver cannot report receiving more than was sent), and timing jitter in heartbeat measurement windows made the ratio consistently fall below 0.95 even on a clean link. This caused the sender to spiral to the rate floor. Loss rate is the correct primary signal because it reflects whether the network has headroom independently of the send rate.
+    </div>
 
     <h3>A. The Heartbeat Packet</h3>
-    <p>The receiver periodically sends a <code>HEARTBEAT</code> (Type <code>0x03</code>) packet to the sender. The heartbeat interval is <strong>rate-proportional</strong> rather than fixed:</p>
+    <p>The receiver periodically sends a <code>HEARTBEAT</code> (Type <code>0x03</code>) packet to the sender. The heartbeat interval is <strong>rate-proportional</strong> based on the last measured <code>NetworkDeliveryRate</code>:</p>
     <table>
         <thead>
             <tr>
-                <th>Current Effective Send Rate</th>
+                <th>Last Measured Network Delivery Rate</th>
                 <th>Heartbeat Interval</th>
             </tr>
         </thead>
@@ -316,7 +353,10 @@
             <tr><td>&gt; 1 GB/s</td><td>10ms</td></tr>
         </tbody>
     </table>
-    <p>The receiver infers the current send rate from the observed packet arrival rate and selects the corresponding interval.</p>
+
+    <div class="lesson">
+        <strong>Implementation Note:</strong> The v2.0 spec described the interval as based on "current effective send rate" inferred from packet arrival rate. The implementation initially used cumulative bytes written to disk, which gave incorrect results (e.g., passing 136 MB to a function expecting bytes/sec). The correct approach is to track the <code>NetworkDeliveryRate</code> computed in each heartbeat and use that value directly for interval selection.
+    </div>
 
     <h3>B. Heartbeat Payload</h3>
     <p>The Heartbeat payload contains dual metrics and a NACK array:</p>
@@ -332,17 +372,17 @@
             <tr>
                 <td><code>NetworkDeliveryRate</code></td>
                 <td>4 Bytes</td>
-                <td>Bytes per second successfully received from the socket into the ring buffer. Reflects network path capacity.</td>
+                <td>Bytes per second successfully received from the socket into the ring buffer during the last heartbeat interval. Reflects network path capacity.</td>
             </tr>
             <tr>
                 <td><code>StorageFlushRate</code></td>
                 <td>4 Bytes</td>
-                <td>Bytes per second flushed from the ring buffer to disk. Reflects receiver I/O capacity.</td>
+                <td>Bytes per second flushed from the ring buffer to disk during the last heartbeat interval. Reflects receiver I/O capacity.</td>
             </tr>
             <tr>
                 <td><code>LossRate</code></td>
                 <td>2 Bytes</td>
-                <td>Packet loss percentage for the current reporting window, encoded as basis points (e.g., 150 = 1.50%). Used to drive adaptive FEC.</td>
+                <td>Packet loss percentage for the current reporting window, encoded as basis points (e.g., 150 = 1.50%). <strong>Primary signal for congestion control.</strong></td>
             </tr>
             <tr>
                 <td><code>HighestContiguous</code></td>
@@ -357,18 +397,16 @@
             <tr>
                 <td><code>NACKArray</code></td>
                 <td>8 Bytes × N</td>
-                <td>Array of 64-bit <code>SequenceNum</code> values that were not recoverable via FEC and require retransmission.</td>
+                <td>Array of 64-bit <code>SequenceNum</code> values that were not recoverable via FEC and require retransmission. Bounded to sequences between <code>HighestContiguous+1</code> and the highest received sequence number (never NACKs packets the sender hasn't transmitted yet).</td>
             </tr>
         </tbody>
     </table>
 
-    <h3>C. Sender-Side Rate Control: Token Bucket with Dual Inputs</h3>
-    <p>The sender maintains a Token Bucket algorithm whose fill rate is governed by the <strong>minimum</strong> of the two reported capacities:</p>
-    <pre>EffectiveRate = min(NetworkDeliveryRate, StorageFlushRate)</pre>
-    <p>This ensures the sender never outpaces either the network path or the receiver's ability to persist data.</p>
+    <h3>C. Loss-Driven Rate Adjustment Algorithm</h3>
+    <p>The sender adjusts its rate based on the <code>LossRate</code> reported in each Heartbeat. The delivery rate (<code>min(NetworkDeliveryRate, StorageFlushRate)</code>) serves as a ceiling for decreases — the sender targets just above the measured capacity when backing off.</p>
 
-    <h4>Rate Adjustment Algorithm</h4>
-    <p>Let <code>S</code> = current send rate, <code>E</code> = reported <code>EffectiveRate</code>. On each Heartbeat reception:</p>
+    <h4>Decision Logic</h4>
+    <p>Let <code>L</code> = reported <code>LossRate</code> in basis points. On each Heartbeat reception:</p>
     <table>
         <thead>
             <tr>
@@ -379,37 +417,82 @@
         </thead>
         <tbody>
             <tr>
-                <td><code>E &ge; 0.95 × S</code></td>
+                <td><code>L &lt; 100</code> (loss &lt; 1%)</td>
                 <td><strong>Increase:</strong> <code>S = S × 1.5</code></td>
-                <td>Link and receiver are keeping up. Probe upward aggressively. FEC absorbs transient loss during probing, making this safe without the RTT penalty TCP pays.</td>
+                <td>Link has headroom. FEC absorbs transient loss, so aggressive probing is safe.</td>
             </tr>
             <tr>
-                <td><code>0.85 × S &le; E &lt; 0.95 × S</code></td>
+                <td><code>100 &le; L &le; 500</code> (1% – 5%)</td>
                 <td><strong>Hold:</strong> <code>S = S</code> (no change)</td>
-                <td>Minor variance, likely transient. Avoid oscillation.</td>
+                <td>FEC is handling the loss. Maintain current rate without oscillation.</td>
             </tr>
             <tr>
-                <td><code>E &lt; 0.85 × S</code></td>
-                <td><strong>Decrease:</strong> <code>S = E × 1.05</code></td>
-                <td>Set rate to just above the measured capacity. The 5% headroom prevents underutilization while immediately relieving congestion or receiver backpressure.</td>
+                <td><code>L &gt; 500</code> (loss &gt; 5%), <strong>consecutive confirmation</strong></td>
+                <td><strong>Decrease:</strong> <code>S = smoothed(E) × 1.05</code></td>
+                <td>Set rate to just above the EWMA-smoothed effective delivery rate. Requires two consecutive above-threshold heartbeats to trigger (see §6D).</td>
             </tr>
         </tbody>
     </table>
-    <p>These thresholds are initial values intended to be tuned through empirical testing. All three thresholds (0.95, 0.85, 1.5× multiplier) should be treated as configurable parameters in the implementation.</p>
 
-    <h3>D. NACK-Driven Retransmission</h3>
-    <p>When the sender receives a NACK array in a Heartbeat, it immediately re-queues the identified packets at high priority. Retransmitted packets carry their original <code>SequenceNum</code> and <code>BlockGroup</code> but are injected ahead of new data in the token bucket queue.</p>
+    <h4>EWMA Smoothing</h4>
+    <p>Raw delivery rate measurements from individual heartbeats are noisy due to timing jitter, especially on high-latency links. The sender maintains an exponentially weighted moving average (EWMA) of the effective delivery rate:</p>
+    <pre>smoothed = α × raw_sample + (1 − α) × smoothed_previous</pre>
+    <p>The default smoothing factor is <code>α = 0.3</code>, which provides moderate dampening (converges in ~3 samples). The smoothed rate is used as the target when decreasing, preventing single-heartbeat noise from crashing the rate.</p>
+
+    <h4>Consecutive Decrease Requirement</h4>
+    <p>A single heartbeat reporting &gt; 5% loss may be a transient spike (e.g., a router briefly queuing). The sender requires <strong>two consecutive</strong> above-threshold heartbeats before executing a decrease. The first signal starts a "decrease streak" counter; the second confirms it. Any increase or hold resets the streak to zero.</p>
+
+    <h4>Auto-Ceiling</h4>
+    <p>On a clean link with zero loss, the 1.5× multiplicative increase would grow the target rate exponentially without bound (e.g., reaching exabytes/sec within seconds). While the actual throughput is always bounded by <code>conn.Write</code> speed, the unbounded target creates meaningless log output and wastes pacing computation. The sender caps the target rate at <strong>4× the peak observed delivery rate</strong>:</p>
+    <pre>if rate > peakDeliveryRate × 4:
+    rate = peakDeliveryRate × 4</pre>
+    <p>The ceiling is <strong>not applied during the first 5 heartbeats</strong> (the warmup phase), because early delivery-rate measurements reflect cold-start conditions (calibration burst timing, receiver allocation latency) rather than actual link capacity. Applying the ceiling too early locks the sender far below the link's real throughput.</p>
+
+    <div class="lesson">
+        <strong>Implementation Note:</strong> The warmup was originally 3 heartbeats. Starlink testing revealed that 3 was insufficient — the high RTT meant early heartbeats arrived during the calibration burst window and measured artificially low delivery rates. Extending to 5 heartbeats gives the CC enough time to establish a representative <code>peakRate</code> on high-latency links.
+    </div>
+
+    <h3>D. Deficit-Accumulator Pacing</h3>
+    <p>The sender must convert the target rate (bytes/sec) into inter-packet timing. The naive approach — computing a per-packet interval and sleeping for that duration — fails in practice because OS timer granularity (~1ms on Windows, ~100µs on Linux) and runtime preemption (Go's asynchronous goroutine preemption at safe points) make sub-millisecond sleeps unreliable.</p>
+
+    <p>Instead, the sender uses a <strong>deficit accumulator</strong>:</p>
+    <ul>
+        <li>A <code>tokens</code> balance (in bytes) accrues credit at the target rate over elapsed wall-clock time.</li>
+        <li>Each packet send debits <code>tokens</code> by the packet size.</li>
+        <li>Tokens are capped at a 2ms burst budget to prevent idle periods from banking excessive credit.</li>
+        <li>When the deficit grows large enough that the corresponding sleep would be &ge; 1ms (the minimum reliable OS sleep granularity), the sender calls <code>time.Sleep()</code> and resets the deficit to zero.</li>
+        <li>Deficits smaller than 1ms are carried forward — they accumulate across multiple packets and eventually trigger a single coarser sleep.</li>
+    </ul>
+
+    <p>This produces the correct long-term average rate without relying on sub-millisecond timer precision.</p>
+
+    <div class="lesson">
+        <strong>Design Rationale:</strong> The v2.0 spec described a "dynamic Token Bucket" with "microsecond interval between packet dispatches." The Go prototype initially used <code>runtime.Gosched()</code>-based busy-wait spin loops for sub-ms pacing. Go 1.14+ introduces asynchronous goroutine preemption that signals goroutines at safe points — even inside tight loops — causing the spin to overshoot to ~1ms per packet. At 1400 bytes/1ms = 1.4 MB/s, this created an artificial throughput ceiling regardless of the target rate. The deficit accumulator was developed to solve this without platform-specific timer hacks.
+    </div>
+
+    <h3>E. NACK-Driven Retransmission</h3>
+    <p>When the sender receives a NACK array in a Heartbeat, it queues the identified packets for retransmission. Retransmitted packets carry their original <code>SequenceNum</code> and <code>BlockGroup</code>.</p>
+
+    <p>Retransmissions are <strong>interleaved with forward progress</strong>: the sender processes at most <strong>3 NACKed packets per send-loop iteration</strong>, then sends the next new data packet. This prevents NACK storms (e.g., 169 NACKs on a satellite link) from monopolizing bandwidth and stalling <code>seqNum</code> advancement.</p>
+
+    <div class="lesson">
+        <strong>Implementation Note:</strong> The v2.0 spec stated that retransmissions are "injected ahead of new data." In practice, draining the entire NACK queue before sending any new data caused a fatal stall on Starlink: at 0.38 MB/s with 169 NACKs, each send-loop iteration spent ~0.62s on retransmits, and <code>seqNum</code> never advanced. The 3-per-iteration cap ensures the transfer always makes forward progress even under heavy loss.
+    </div>
 
     <h2>7. Session Timeout and Failure Recovery</h2>
 
     <h3>A. Receiver Inactivity Timeout</h3>
-    <p>If the receiver does not receive any packets (data, parity, or retransmission) for a period of <strong>5 consecutive expected heartbeat intervals</strong>, it declares the session dead:</p>
+    <p>If the receiver does not receive any packets (data, parity, or retransmission) for a period of <strong>5 consecutive expected heartbeat intervals</strong>, with a <strong>minimum floor of 5 seconds</strong>, it declares the session dead:</p>
     <ul>
         <li>The ring buffer is freed.</li>
         <li>Any partially written file is deleted from disk (or retained with a <code>.partial</code> suffix if configured for resume support in a future version).</li>
         <li>The SessionID is moved to the reserved pool for the standard 10-second stale protection window.</li>
         <li>A warning is logged with the last received <code>SequenceNum</code> and <code>HighestContiguous</code> for diagnostics.</li>
     </ul>
+
+    <div class="lesson">
+        <strong>Implementation Note:</strong> The 5-second floor was added after integration testing showed that at the lowest heartbeat tier (100ms), the computed timeout of 500ms was too aggressive — the natural gap between the sender finishing its data blast and NACK retransmissions arriving through a lossy proxy would trigger a false timeout. The floor gives the NACK retransmission cycle time to recover.
+    </div>
 
     <h3>B. Sender Inactivity Timeout</h3>
     <p>If the sender does not receive a Heartbeat for <strong>5 consecutive expected heartbeat intervals</strong>, it assumes the receiver has failed or the return path is broken:</p>
@@ -424,14 +507,17 @@
 
     <h3>A. Normal Teardown Sequence</h3>
     <ul>
-        <li><strong>The EOF Signal:</strong> The sender sets the <code>EndOfFile</code> flag (<code>0x01</code>) on the final data packet and the final parity packet of the tail block. It stops reading new data but keeps the socket open, listening for Heartbeats.</li>
+        <li><strong>The EOF Signal:</strong> The sender sets the <code>EndOfFile</code> flag (<code>0x01</code>) on the final data packet and the final parity packet of the tail block. It stops reading new data but keeps the socket open, listening for Heartbeats. The sender's heartbeat listener goroutine is stopped before entering teardown to prevent socket read contention.</li>
         <li><strong>The Verification (Pipelined Hashing):</strong> The receiver continuously updates a streaming <code>xxHash64</code> as contiguous blocks are flushed from the ring buffer to disk. Upon receiving the EOF-flagged packets and verifying the completed hash against the <code>SESSION_REQ</code> metadata, it sends a <code>TRANSFER_COMPLETE</code> (Type <code>0x05</code>) packet.</li>
-        <li><strong>The Sender Linger (Zombie State):</strong> The sender receives <code>TRANSFER_COMPLETE</code>, responds with <code>ACK_CLOSE</code> (Type <code>0x06</code>), frees heavy memory allocations, and enters a <strong>3-second Linger state</strong>. Duplicate <code>TRANSFER_COMPLETE</code> packets arriving in this window are answered with a repeat <code>ACK_CLOSE</code>.</li>
+        <li><strong>The Sender Linger (Zombie State):</strong> The sender receives <code>TRANSFER_COMPLETE</code>, responds with <code>ACK_CLOSE</code> (Type <code>0x06</code>), frees heavy memory allocations (including the chunk cache), and enters a <strong>3-second Linger state</strong>. Duplicate <code>TRANSFER_COMPLETE</code> packets arriving in this window are answered with a repeat <code>ACK_CLOSE</code>.</li>
         <li><strong>The Receiver Linger:</strong> After sending <code>TRANSFER_COMPLETE</code>, the receiver enters its own <strong>3-second Linger state</strong>. If <code>ACK_CLOSE</code> is not received within this window, the receiver retransmits <code>TRANSFER_COMPLETE</code> up to <strong>3 times</strong> at 1-second intervals. If no <code>ACK_CLOSE</code> is received after all retries, the receiver considers the transfer successful (the file hash was verified) and performs a unilateral teardown.</li>
         <li><strong>The Purge:</strong> After the Linger timeout expires on either side, the SessionID is moved to the reserved pool (10-second stale protection), and all local file descriptors are closed.</li>
     </ul>
 
-    <h3>B. Hash Mismatch</h3>
+    <h3>B. Teardown NACK Handling</h3>
+    <p>During the teardown wait (after all data is sent, before TRANSFER_COMPLETE arrives), the sender continues to process Heartbeat packets synchronously. If a Heartbeat contains NACKs, the sender retransmits the requested packets from its chunk cache and resets the read deadline. This ensures the receiver can complete even if some late packets were lost.</p>
+
+    <h3>C. Hash Mismatch</h3>
     <p>If the receiver completes all data reception but the <code>xxHash64</code> does not match the expected value from <code>SESSION_REQ</code>:</p>
     <ul>
         <li>The receiver sends a <code>SESSION_REJECT</code> (Type <code>0x04</code>) with a reason code indicating hash failure.</li>
@@ -441,9 +527,31 @@
 
     <h2>9. Development Phases</h2>
     <ol>
-        <li><strong>Phase 1 (Go Prototype):</strong> Validate the FEC mathematics, the Heartbeat state machine, adaptive FEC tuning, calibration burst logic, and the Token Bucket pacing with dual-metric feedback using Go's concurrent design. Output must prove 100% file integrity under simulated packet loss at varying rates (0%, 1%, 5%, 10%, 15%).</li>
-        <li><strong>Phase 2 (C Productionization):</strong> Translate the validated logic into C. Optimize the sequence buffer using direct <code>mmap()</code> memory allocation and bypass the standard network stack to maximize hardware limits and minimize CPU overhead.</li>
+        <li><strong>Phase 1 (Go Prototype) — COMPLETE:</strong> Validated FEC mathematics (GF(2<sup>8</sup>) Reed-Solomon), Heartbeat state machine, adaptive FEC tuning, wire-speed calibration burst, loss-driven congestion control with deficit-accumulator pacing, NACK retransmission with forward-progress interleaving. Proved 100% file integrity under simulated packet loss at 0%, 1%, 5%, 10%, 15%. Tested on LAN (1 Gbps Ethernet, 41 MB/s throughput) and WAN (Starlink satellite, variable latency/loss). 86 unit tests across protocol, sender, and receiver packages.</li>
+        <li><strong>Phase 2 (C Productionization):</strong> Translate the validated logic into C. Optimize the sequence buffer using direct <code>mmap()</code> memory allocation. Consider SIMD-accelerated Reed-Solomon (Intel ISA-L or hand-rolled AVX2). Bypass the standard network stack where possible to maximize hardware limits and minimize CPU overhead.</li>
     </ol>
+
+    <h2>10. Lessons Learned (Phase 1)</h2>
+
+    <p>The following empirical findings emerged during Phase 1 implementation and testing. They are documented here to guide the Phase 2 C port and future protocol revisions.</p>
+
+    <h3>A. Delivery-Rate-Ratio CC Is Fundamentally Broken</h3>
+    <p>The v2.0 algorithm increased the rate only when <code>EffectiveRate &ge; 0.95 × SendRate</code>. Since delivery rate is bounded by send rate and measurement windows never align perfectly, this ratio consistently falls below 0.95 even on a lossless link. The sender spirals to the rate floor. Loss rate is the correct primary signal.</p>
+
+    <h3>B. Sub-Millisecond Pacing Is Unreliable in Userspace</h3>
+    <p>Both <code>time.Sleep(&lt;1ms)</code> and busy-wait spin loops fail for sub-millisecond pacing on Windows (minimum ~1ms granularity) and on any platform using Go 1.14+ (asynchronous goroutine preemption interrupts tight loops at ~1ms intervals). The deficit accumulator sidesteps this entirely by sleeping only when the accumulated deficit justifies a ≥1ms sleep. The C port should use <code>clock_nanosleep()</code> or similar, but should still avoid relying on sub-millisecond precision for correctness.</p>
+
+    <h3>C. Calibration Burst Must Not Flood the Link</h3>
+    <p>A 50 MB/s starting rate on a Starlink connection (~10 Mbps effective uplink) caused massive packet loss during the first 100ms, which poisoned the <code>peakRate</code> measurement and locked the auto-ceiling at ~0.38 MB/s for the entire transfer. The starting rate must be conservative enough for the worst expected link (2 MB/s default), while the calibration burst itself runs at wire speed to discover the actual capacity.</p>
+
+    <h3>D. NACK Storms Stall Forward Progress</h3>
+    <p>On a satellite link with ~30ms RTT and 5% loss, each heartbeat reported ~169 NACKs. Processing all NACKs before each new data packet caused the send loop to spend its entire bandwidth on retransmissions, preventing <code>seqNum</code> from advancing. Capping retransmissions at 3 per iteration restored forward progress.</p>
+
+    <h3>E. Early Delivery-Rate Measurements Are Unreliable</h3>
+    <p>The first few heartbeats arrive during or immediately after the calibration burst, when the receiver is still allocating buffers and the network path hasn't stabilized. These measurements consistently underestimate actual link capacity. The auto-ceiling must skip a warmup phase (5 heartbeats) before locking in a peak rate.</p>
+
+    <h3>F. Socket Ownership During Teardown</h3>
+    <p>The sender's heartbeat listener goroutine and the teardown synchronous read loop compete for the same socket. If the goroutine is still running when the sender enters teardown, it consumes packets (including TRANSFER_COMPLETE) that the teardown loop needs. The goroutine must be stopped before entering teardown, and any queued NACKs must be drained synchronously.</p>
 
     <h2>Appendix A: Protocol Constants (Defaults)</h2>
     <table>
@@ -461,18 +569,29 @@
             <tr><td>FEC Block Size</td><td>100 data packets</td><td>Yes</td></tr>
             <tr><td>FEC Initial Parity</td><td>5%</td><td>Yes</td></tr>
             <tr><td>FEC Tail Min Parity</td><td>2 packets</td><td>Yes</td></tr>
-            <tr><td>Calibration Burst Size</td><td>50 packets</td><td>Yes</td></tr>
-            <tr><td>Calibration Burst Spacing</td><td>1ms per packet</td><td>Yes</td></tr>
-            <tr><td>Increase Threshold</td><td>0.95</td><td>Yes</td></tr>
-            <tr><td>Hold Threshold</td><td>0.85</td><td>Yes</td></tr>
+            <tr><td>Calibration Burst Size</td><td>100 packets</td><td>Yes</td></tr>
+            <tr><td>Calibration Burst Spacing</td><td>0 (wire speed)</td><td>Yes</td></tr>
+            <tr><td>Default Starting Rate</td><td>2 MB/s</td><td>Yes</td></tr>
+            <tr><td>EWMA Smoothing Factor (α)</td><td>0.3</td><td>Yes</td></tr>
+            <tr><td>Loss Threshold: Increase</td><td>&lt; 100 bp (1%)</td><td>Yes</td></tr>
+            <tr><td>Loss Threshold: Hold</td><td>100–500 bp (1–5%)</td><td>Yes</td></tr>
+            <tr><td>Loss Threshold: Decrease</td><td>&gt; 500 bp (5%)</td><td>Yes</td></tr>
+            <tr><td>Consecutive Decrease Signals</td><td>2</td><td>Yes</td></tr>
             <tr><td>Increase Multiplier</td><td>1.5×</td><td>Yes</td></tr>
             <tr><td>Decrease Headroom</td><td>1.05×</td><td>Yes</td></tr>
-            <tr><td>Inactivity Timeout</td><td>5 × heartbeat interval</td><td>Yes</td></tr>
+            <tr><td>Auto-Ceiling Multiplier</td><td>4× peak delivery rate</td><td>Yes</td></tr>
+            <tr><td>Ceiling Warmup Heartbeats</td><td>5</td><td>Yes</td></tr>
+            <tr><td>Deficit Accumulator Burst Cap</td><td>2ms of credit</td><td>Yes</td></tr>
+            <tr><td>Deficit Sleep Threshold</td><td>≥ 1ms</td><td>No (OS-dependent)</td></tr>
+            <tr><td>Max NACKs per Send Iteration</td><td>3</td><td>Yes</td></tr>
+            <tr><td>Rate Floor</td><td>10 KB/s</td><td>Yes</td></tr>
+            <tr><td>Inactivity Timeout</td><td>max(5 × heartbeat interval, 5s)</td><td>Yes</td></tr>
             <tr><td>Sender Probe Interval</td><td>500ms</td><td>Yes</td></tr>
             <tr><td>Sender Probe Timeout</td><td>10 seconds</td><td>Yes</td></tr>
             <tr><td>Linger Duration (both sides)</td><td>3 seconds</td><td>Yes</td></tr>
             <tr><td>Receiver Teardown Retries</td><td>3</td><td>Yes</td></tr>
             <tr><td>Stale SessionID Reservation</td><td>10 seconds</td><td>Yes</td></tr>
+            <tr><td>Max SESSION_REQ File Size</td><td>1 TB</td><td>Yes</td></tr>
         </tbody>
     </table>
 
