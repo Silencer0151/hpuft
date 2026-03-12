@@ -126,19 +126,17 @@
 </head>
 <body>
 
-    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v3.0</span></h1>
+    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v3.1</span></h1>
 
     <div class="changelog">
-        <strong>Changelog from v2.0:</strong>
+        <strong>Changelog from v3.0:</strong>
         <ul>
-            <li><strong>§4 Calibration:</strong> Burst changed from 50 packets at 1ms spacing to 100 packets at wire speed. Starting rate changed from calibration-derived to 2 MB/s default (safe for satellite/WAN).</li>
-            <li><strong>§6 Congestion Control:</strong> Complete redesign. Now loss-driven instead of delivery-rate-ratio driven. Added EWMA smoothing, consecutive decrease requirement, auto-ceiling at 4× peak delivery with 5-heartbeat warmup.</li>
-            <li><strong>§6 Pacing:</strong> Replaced per-packet spin-wait with deficit accumulator model. Eliminates OS timer granularity and goroutine preemption issues.</li>
-            <li><strong>§6 Heartbeat Interval:</strong> Now based on last measured network delivery rate (bytes/sec), not cumulative bytes written.</li>
-            <li><strong>§6 NACK Retransmission:</strong> Capped at 3 per send-loop iteration to prevent forward-progress stalls on lossy links.</li>
-            <li><strong>§7 Inactivity Timeout:</strong> Added 5-second minimum floor to allow NACK retransmission cycles under loss.</li>
-            <li><strong>§4 SESSION_REQ Validation:</strong> Receiver validates file size (max 1 TB) and non-empty filename before allocation.</li>
-            <li><strong>§10 Lessons Learned:</strong> New section documenting empirical findings from LAN, WAN, and Starlink testing.</li>
+            <li><strong>§4 Calibration:</strong> Burst reduced from 100 to 10 packets (packet train). Receiver measures inter-arrival dispersion and reports bottleneck bandwidth in the first heartbeat via new <code>DispersionNs</code> field.</li>
+            <li><strong>§6 RTT Measurement:</strong> DATA packets carry sender timestamps; heartbeats echo them back in new <code>EchoTimestamp</code> field. Sender computes RTT for rate-gating.</li>
+            <li><strong>§6 Phased Growth:</strong> Replaced single-phase 1.5× multiplicative increase with two-phase model: Phase 1 (probe, 1.25× per RTT) transitions permanently to Phase 2 (additive, +MaxPayload/RTT per RTT) upon first observation of 1–5% loss.</li>
+            <li><strong>§6 Decrease Formula:</strong> Changed from <code>E × 1.05</code> to <code>E × 0.85</code>. The old formula sustained congestion by targeting above the capacity that caused loss; the new formula drops below to drain router queues, relying on FEC to bridge the gap.</li>
+            <li><strong>§6 Rate Gating:</strong> Increases are limited to once per RTT. Decreases remain immediate. Prevents runaway probing on high-latency links.</li>
+            <li><strong>§9 Phase 2:</strong> Added <code>sendmmsg()</code>/<code>recvmmsg()</code> batching, <code>io_uring</code>, and throughput analysis explaining the Phase 1 FTP speed gap (~30 MB/s vs 93 MB/s due to per-packet syscall overhead).</li>
         </ul>
     </div>
 
@@ -267,16 +265,17 @@
     <h3>C. Handshake Sequence</h3>
     <ul>
         <li><strong>Step 1 (The Request):</strong> The client transmits <code>Packet 0</code> (<code>SESSION_REQ</code>). The payload contains: <code>FileSize</code> (8 bytes), <code>xxHash64</code> checksum (8 bytes), <code>InitialRate</code> (4 bytes, 0 = use calibration mode), and <code>FileName</code> (variable, null-terminated).</li>
-        <li><strong>Step 2 (The Calibration Burst):</strong> Without waiting for acknowledgment, the client immediately begins transmitting <code>DATA</code> packets with the <code>Calibration</code> flag (<code>0x02</code>) set. The burst consists of 100 packets sent at <strong>wire speed</strong> (no inter-packet delay). This probes the actual link capacity rather than assuming a conservative rate. The token bucket is initialized at a default starting rate of 2 MB/s to provide a reasonable pacing floor while the first heartbeat is in transit.</li>
-        <li><strong>Step 3 (The Alignment):</strong> The server parses the request, validates the payload (§4B), allocates the memory ring buffer, and begins accepting incoming data. If the server cannot allocate resources in time, initial calibration packets are dropped — these will be detected and recovered via the standard Heartbeat/NACK mechanism (§6).</li>
-        <li><strong>Step 4 (Steady State):</strong> Upon receiving the first Heartbeat response (§6), the sender transitions out of calibration mode. It clears the <code>Calibration</code> flag and the loss-driven congestion controller (§6) governs the sending rate from this point forward.</li>
+        <li><strong>Step 2 (The Calibration Packet Train):</strong> Without waiting for acknowledgment, the client immediately begins transmitting <code>DATA</code> packets with the <code>Calibration</code> flag (<code>0x02</code>) set. The burst consists of <strong>10 packets</strong> sent back-to-back at wire speed. This small packet train probes the link without flooding router buffers, even on constrained links like satellite. The token bucket is initialized at a default starting rate of 2 MB/s.</li>
+        <li><strong>Step 3 (Dispersion Measurement):</strong> The receiver timestamps the arrival of the first and last calibration-flagged packet. Although 10 packets are sent back-to-back at wire speed, they arrive <em>spread out</em> by the bottleneck link — if 10 packets arrive over 10ms, the bottleneck bandwidth is <code>(10 − 1) × 1376 / 0.010 = 1.24 MB/s</code>. The receiver reports this as the <code>DispersionNs</code> field in the first heartbeat, giving the sender a direct measurement of the path's bottleneck capacity before the first rate adjustment. The sender can use this to seed the CC's peak rate estimate.</li>
+        <li><strong>Step 4 (The Alignment):</strong> The server parses the request, validates the payload (§4B), allocates the memory ring buffer, and begins accepting incoming data. If the server cannot allocate resources in time, initial calibration packets are dropped — these will be detected and recovered via the standard Heartbeat/NACK mechanism (§6).</li>
+        <li><strong>Step 5 (Steady State):</strong> Upon receiving the first Heartbeat response (§6), the sender transitions out of calibration mode. It clears the <code>Calibration</code> flag. If the heartbeat includes a valid <code>DispersionNs</code>, the sender uses the derived bandwidth as the initial <code>peakRate</code> estimate. The loss-driven congestion controller (§6) governs the sending rate from this point forward.</li>
     </ul>
 
     <h4>Configurable Initial Rate Override</h4>
     <p>If the <code>InitialRate</code> field in <code>SESSION_REQ</code> is non-zero, the sender skips calibration mode and begins transmitting at the specified bytes-per-second rate immediately. This is intended for known environments (e.g., a dedicated 10 Gbps LAN) where the operator can confidently set the initial rate. The adaptive congestion controller still takes over after the first Heartbeat.</p>
 
     <div class="lesson">
-        <strong>Implementation Note:</strong> The v2.0 spec used a conservative 1ms-spaced calibration burst (~1.38 MB/s probe rate). On a Gigabit LAN this made the ramp-up to full speed take ~9 heartbeat intervals (~1 second). On Starlink, a 50 MB/s starting rate overwhelmed the uplink and poisoned the peak delivery measurement. The current wire-speed burst with a 2 MB/s token bucket default balances both extremes: the burst itself discovers the link capacity, while the conservative token bucket prevents flooding during the ~100ms before the first heartbeat arrives.
+        <strong>Design History:</strong> v2.0 used 50 packets at 1ms spacing (~1.38 MB/s probe). v3.0 changed to 100 packets at wire speed. Both had problems: the 1ms spacing made LAN ramp-up take too long, while 100 wire-speed packets (140 KB) instantly filled router buffers on Starlink and poisoned the initial peakRate measurement. The v3.1 packet train (10 packets) is small enough to avoid buffer overflow on any reasonable link, while the dispersion measurement extracts the same capacity information that 100 packets would provide.
     </div>
 
     <h2>5. Core Reliability Mechanisms</h2>
@@ -359,7 +358,7 @@
     </div>
 
     <h3>B. Heartbeat Payload</h3>
-    <p>The Heartbeat payload contains dual metrics and a NACK array:</p>
+    <p>The Heartbeat payload contains dual metrics, RTT echo, and a NACK array:</p>
     <table>
         <thead>
             <tr>
@@ -385,6 +384,16 @@
                 <td>Packet loss percentage for the current reporting window, encoded as basis points (e.g., 150 = 1.50%). <strong>Primary signal for congestion control.</strong></td>
             </tr>
             <tr>
+                <td><code>EchoTimestamp</code></td>
+                <td>8 Bytes</td>
+                <td>The sender timestamp (unix nanoseconds) from the most recently received DATA packet. The sender computes <code>RTT = now − EchoTimestamp</code>. Used to gate rate increases (§6C) and drive phased growth. If no DATA packets were received in the interval, echoes the previous value.</td>
+            </tr>
+            <tr>
+                <td><code>DispersionNs</code></td>
+                <td>8 Bytes</td>
+                <td>Calibration burst dispersion measurement: the time (nanoseconds) between the first and last received calibration-flagged packet. Zero outside of calibration. The sender uses this to compute bottleneck bandwidth: <code>BW = (BurstSize − 1) × MaxPayload / DispersionNs</code>. See §4C.</td>
+            </tr>
+            <tr>
                 <td><code>HighestContiguous</code></td>
                 <td>8 Bytes</td>
                 <td>The highest <code>SequenceNum</code> such that all packets 0..N have been received or FEC-recovered. Allows sender to track receiver progress.</td>
@@ -402,8 +411,25 @@
         </tbody>
     </table>
 
+    <h4>Sender Timestamps for RTT Measurement</h4>
+    <p>Each DATA and PARITY packet carries a <strong>sender timestamp</strong> (8 bytes, unix nanoseconds) appended to the standard header fields. This does not modify the fixed 24-byte header — the timestamp is the first 8 bytes of the payload metadata (prepended before file data, accounted for in <code>PayloadLen</code>). The receiver records the timestamp of each arriving packet and echoes the highest received value in the heartbeat's <code>EchoTimestamp</code> field. The sender computes RTT as <code>now − EchoTimestamp</code>.</p>
+
     <h3>C. Loss-Driven Rate Adjustment Algorithm</h3>
-    <p>The sender adjusts its rate based on the <code>LossRate</code> reported in each Heartbeat. The delivery rate (<code>min(NetworkDeliveryRate, StorageFlushRate)</code>) serves as a ceiling for decreases — the sender targets just above the measured capacity when backing off.</p>
+    <p>The sender adjusts its rate based on the <code>LossRate</code> reported in each Heartbeat. The delivery rate (<code>min(NetworkDeliveryRate, StorageFlushRate)</code>) serves as a ceiling for decreases. Rate increases are <strong>gated to once per RTT</strong> to prevent the sender from making dozens of upward adjustments before any feedback arrives (critical on high-latency links like satellite).</p>
+
+    <h4>RTT-Aware Rate Gating</h4>
+    <p>The sender tracks the time of its last rate increase. When a heartbeat signals an increase, the sender checks whether at least one RTT has elapsed since the previous increase. If not, the increase is suppressed (treated as a hold). Decreases are <strong>not gated</strong> — they are applied immediately upon consecutive loss signals to clear the pipe as fast as possible.</p>
+
+    <h4>Phased Growth Model</h4>
+    <p>The congestion controller operates in two phases, similar to TCP's slow start and congestion avoidance but adapted for loss-driven UDP with FEC:</p>
+
+    <p><strong>Phase 1 — Probe (Multiplicative Increase):</strong> While loss is &lt; 1%, the sender has never observed the link ceiling. It probes aggressively with multiplicative increase, applied once per RTT:</p>
+    <pre>S_new = S_current × 1.25</pre>
+    <p>This is more conservative than the v3.0 1.5× multiplier but is applied per RTT rather than per heartbeat, giving the network time to signal back before each step.</p>
+
+    <p><strong>Phase 2 — Congestion Avoidance (Additive Increase):</strong> Once the sender observes loss entering the 1%–5% hold zone for the first time, it has found the approximate ceiling of the link. The controller permanently transitions to Phase 2 and never returns to Phase 1 for this session. Probing uses additive increase, applied once per RTT:</p>
+    <pre>S_new = S_current + (MaxPayload / RTT)</pre>
+    <p>This adds approximately one packet per RTT of additional bandwidth, gently probing for headroom without risking a burst of loss.</p>
 
     <h4>Decision Logic</h4>
     <p>Let <code>L</code> = reported <code>LossRate</code> in basis points. On each Heartbeat reception:</p>
@@ -418,21 +444,25 @@
         <tbody>
             <tr>
                 <td><code>L &lt; 100</code> (loss &lt; 1%)</td>
-                <td><strong>Increase:</strong> <code>S = S × 1.5</code></td>
-                <td>Link has headroom. FEC absorbs transient loss, so aggressive probing is safe.</td>
+                <td><strong>Increase</strong> (once per RTT): Phase 1: <code>S × 1.25</code>. Phase 2: <code>S + MaxPayload/RTT</code>.</td>
+                <td>Link has headroom. FEC absorbs transient loss. RTT gating prevents runaway probing on high-latency paths.</td>
             </tr>
             <tr>
                 <td><code>100 &le; L &le; 500</code> (1% – 5%)</td>
-                <td><strong>Hold:</strong> <code>S = S</code> (no change)</td>
-                <td>FEC is handling the loss. Maintain current rate without oscillation.</td>
+                <td><strong>Hold:</strong> <code>S = S</code>. If first time entering this zone, <strong>transition to Phase 2</strong> permanently.</td>
+                <td>FEC is handling the loss. The link ceiling has been discovered. Switch to additive probing from this point forward.</td>
             </tr>
             <tr>
                 <td><code>L &gt; 500</code> (loss &gt; 5%), <strong>consecutive confirmation</strong></td>
-                <td><strong>Decrease:</strong> <code>S = smoothed(E) × 1.05</code></td>
-                <td>Set rate to just above the EWMA-smoothed effective delivery rate. Requires two consecutive above-threshold heartbeats to trigger (see §6D).</td>
+                <td><strong>Decrease:</strong> <code>S = smoothed(E) × 0.85</code></td>
+                <td>Drop to 85% of the EWMA-smoothed effective delivery rate. The 15% undershoot allows router queues to drain; FEC bridges the gap during recovery. Requires two consecutive above-threshold heartbeats to trigger (see below).</td>
             </tr>
         </tbody>
     </table>
+
+    <div class="lesson">
+        <strong>Design Rationale (v3.1):</strong> Three changes from v3.0. (1) The v3.0 decrease formula <code>E × 1.05</code> set the new rate <em>above</em> the rate that just caused severe loss, sustaining congestion. Dropping to <code>E × 0.85</code> gives queues time to drain. (2) The 1.5× multiplicative increase per heartbeat was replaced with 1.25× per RTT — on a Starlink link with 100ms heartbeats and 40ms RTT, the old algorithm made 2.5 increases per RTT, compounding to ~1.95× per RTT. (3) The permanent transition to additive increase after discovering the link ceiling prevents repeated boom-bust oscillation at the capacity boundary.
+    </div>
 
     <h4>EWMA Smoothing</h4>
     <p>Raw delivery rate measurements from individual heartbeats are noisy due to timing jitter, especially on high-latency links. The sender maintains an exponentially weighted moving average (EWMA) of the effective delivery rate:</p>
@@ -527,9 +557,20 @@
 
     <h2>9. Development Phases</h2>
     <ol>
-        <li><strong>Phase 1 (Go Prototype) — COMPLETE:</strong> Validated FEC mathematics (GF(2<sup>8</sup>) Reed-Solomon), Heartbeat state machine, adaptive FEC tuning, wire-speed calibration burst, loss-driven congestion control with deficit-accumulator pacing, NACK retransmission with forward-progress interleaving. Proved 100% file integrity under simulated packet loss at 0%, 1%, 5%, 10%, 15%. Tested on LAN (1 Gbps Ethernet, 41 MB/s throughput) and WAN (Starlink satellite, variable latency/loss). 86 unit tests across protocol, sender, and receiver packages.</li>
-        <li><strong>Phase 2 (C Productionization):</strong> Translate the validated logic into C. Optimize the sequence buffer using direct <code>mmap()</code> memory allocation. Consider SIMD-accelerated Reed-Solomon (Intel ISA-L or hand-rolled AVX2). Bypass the standard network stack where possible to maximize hardware limits and minimize CPU overhead.</li>
+        <li><strong>Phase 1 (Go Prototype) — COMPLETE:</strong> Validated FEC mathematics (GF(2<sup>8</sup>) Reed-Solomon), Heartbeat state machine, adaptive FEC tuning, wire-speed calibration burst, loss-driven congestion control with deficit-accumulator pacing, NACK retransmission with forward-progress interleaving. Proved 100% file integrity under simulated packet loss at 0%, 1%, 5%, 10%, 15%. Tested on LAN (1 Gbps Ethernet, 41 MB/s throughput) and WAN (Starlink satellite, variable latency/loss). 86 unit tests across protocol, sender, and receiver packages. Phase 1 throughput bottleneck identified: per-packet <code>conn.Write()</code> syscall overhead limits Go to ~30–41 MB/s on LAN versus 93 MB/s for FTP (which uses kernel-level TCP segmentation with a single large <code>write()</code>).</li>
+        <li><strong>Phase 2 (C Productionization):</strong> Translate the validated logic into C. Key optimizations:
+            <ul>
+                <li><strong>Syscall batching:</strong> Use <code>sendmmsg()</code> (Linux) or <code>GSO</code> (Generic Segmentation Offload) to submit multiple UDP packets per kernel transition. At 1376 bytes per packet and 93 MB/s target, the sender must dispatch ~67,000 packets/sec. Per-packet <code>sendto()</code> incurs ~15µs of context-switch overhead each, consuming ~1 second of CPU per second of transfer. <code>sendmmsg()</code> with batches of 16–64 packets amortizes this to ~1,000–4,000 syscalls/sec. On the receiver side, <code>recvmmsg()</code> provides the same benefit.</li>
+                <li><strong>Zero-copy receive:</strong> <code>mmap()</code>-backed ring buffer with <code>PACKET_RX_RING</code>/<code>AF_XDP</code> to avoid kernel-to-userspace copy on receive.</li>
+                <li><strong>SIMD Reed-Solomon:</strong> Intel ISA-L or hand-rolled AVX2/NEON for FEC encode/decode. The Go prototype achieves ~60 MB/s encode and ~100 MB/s reconstruct; SIMD should reach multi-GB/s.</li>
+                <li><strong>io_uring:</strong> Asynchronous disk I/O for the receiver's write path, eliminating the flush thread.</li>
+            </ul>
+        </li>
     </ol>
+
+    <div class="lesson">
+        <strong>Phase 1 Throughput Analysis:</strong> FTP achieves 93 MB/s on the same LAN because TCP's <code>write()</code> pushes megabytes at once — the kernel handles segmentation into ~1500-byte frames internally. HP-UDP's per-packet <code>conn.Write()</code> makes ~67,000 syscalls/sec at full speed, each costing a user-kernel context switch. This is not a fundamental protocol limitation — it's a syscall-overhead problem that <code>sendmmsg()</code> batching in Phase 2 will eliminate.
+    </div>
 
     <h2>10. Lessons Learned (Phase 1)</h2>
 
@@ -553,6 +594,9 @@
     <h3>F. Socket Ownership During Teardown</h3>
     <p>The sender's heartbeat listener goroutine and the teardown synchronous read loop compete for the same socket. If the goroutine is still running when the sender enters teardown, it consumes packets (including TRANSFER_COMPLETE) that the teardown loop needs. The goroutine must be stopped before entering teardown, and any queued NACKs must be drained synchronously.</p>
 
+    <h3>G. Per-Packet Syscall Overhead Is the Phase 1 Bottleneck</h3>
+    <p>FTP achieves 93 MB/s on the same Gigabit LAN where HP-UDP reaches ~30–41 MB/s. The difference is not the protocol or the language — it's the syscall pattern. FTP writes large buffers to a TCP socket; the kernel segments them into packets internally. HP-UDP calls <code>conn.Write()</code> for every 1376-byte packet, requiring ~67,000 user-kernel context switches per second at full speed. Each syscall costs ~15µs of overhead, consuming nearly 100% of available CPU time at target throughput. The Phase 2 C port must use <code>sendmmsg()</code>/<code>recvmmsg()</code> or equivalent batching to amortize this cost across 16–64 packets per syscall.</p>
+
     <h2>Appendix A: Protocol Constants (Defaults)</h2>
     <table>
         <thead>
@@ -569,16 +613,17 @@
             <tr><td>FEC Block Size</td><td>100 data packets</td><td>Yes</td></tr>
             <tr><td>FEC Initial Parity</td><td>5%</td><td>Yes</td></tr>
             <tr><td>FEC Tail Min Parity</td><td>2 packets</td><td>Yes</td></tr>
-            <tr><td>Calibration Burst Size</td><td>100 packets</td><td>Yes</td></tr>
+            <tr><td>Calibration Burst Size</td><td>10 packets (packet train)</td><td>Yes</td></tr>
             <tr><td>Calibration Burst Spacing</td><td>0 (wire speed)</td><td>Yes</td></tr>
             <tr><td>Default Starting Rate</td><td>2 MB/s</td><td>Yes</td></tr>
             <tr><td>EWMA Smoothing Factor (α)</td><td>0.3</td><td>Yes</td></tr>
             <tr><td>Loss Threshold: Increase</td><td>&lt; 100 bp (1%)</td><td>Yes</td></tr>
-            <tr><td>Loss Threshold: Hold</td><td>100–500 bp (1–5%)</td><td>Yes</td></tr>
+            <tr><td>Loss Threshold: Hold / Phase Transition</td><td>100–500 bp (1–5%)</td><td>Yes</td></tr>
             <tr><td>Loss Threshold: Decrease</td><td>&gt; 500 bp (5%)</td><td>Yes</td></tr>
             <tr><td>Consecutive Decrease Signals</td><td>2</td><td>Yes</td></tr>
-            <tr><td>Increase Multiplier</td><td>1.5×</td><td>Yes</td></tr>
-            <tr><td>Decrease Headroom</td><td>1.05×</td><td>Yes</td></tr>
+            <tr><td>Phase 1 Increase Multiplier</td><td>1.25× per RTT</td><td>Yes</td></tr>
+            <tr><td>Phase 2 Additive Increase</td><td>MaxPayload / RTT per RTT</td><td>Yes</td></tr>
+            <tr><td>Decrease Factor</td><td>0.85× smoothed delivery rate</td><td>Yes</td></tr>
             <tr><td>Auto-Ceiling Multiplier</td><td>4× peak delivery rate</td><td>Yes</td></tr>
             <tr><td>Ceiling Warmup Heartbeats</td><td>5</td><td>Yes</td></tr>
             <tr><td>Deficit Accumulator Burst Cap</td><td>2ms of credit</td><td>Yes</td></tr>
