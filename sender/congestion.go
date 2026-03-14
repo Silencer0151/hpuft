@@ -274,23 +274,25 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 
 	// Auto-ceiling: cap at 1.5× peak observed delivery rate.
 	//
-	// 4× was too aggressive: on a Gigabit LAN where peak delivery measured
-	// ~99 MB/s, the ceiling was set to 396 MB/s — triple the theoretical
-	// link maximum. This left the token bucket functionally unconstrained,
-	// causing OS socket buffer overflow and 167+ persistent NACKs per
-	// heartbeat that FEC could not recover.
+	// PHASE 2 ONLY. During Phase 1 (multiplicative probe), delivery rate
+	// measurements lag the send rate because the sender increases 25% per
+	// heartbeat and the receiver's measurement window hasn't stabilised.
+	// e.g. at 7.63 MB/s send rate the receiver may only report 4.19 MB/s
+	// delivery — applying a 1.5× ceiling here gives 6.28 MB/s, which is
+	// *below* the current rate and locks the sender far below link capacity
+	// (observed: 5.68 MB/s on a 110 MB/s Gigabit link).
 	//
-	// 1.5× gives ~148 MB/s on the same measurement, just above Gigabit
-	// theoretical max (125 MB/s), while still allowing the rate to probe
-	// above the measured delivery on faster links.
+	// In Phase 2, the sender has already found the approximate link ceiling
+	// via the loss event that triggered the phase transition. The delivery
+	// rate measured near that event reflects genuine link utilisation, so
+	// 1.5× of that is a reliable upper bound for additive probing.
 	//
-	// Skip during warmup (first 5 heartbeats) — early delivery-rate
-	// measurements reflect cold-start conditions (calibration burst timing,
-	// receiver buffer allocation), not actual link capacity.
-	const ceilingWarmupHeartbeats = 5
+	// On a clean link where loss never occurs and Phase 2 is never entered,
+	// the ceiling is never applied — the OS link speed acts as the natural
+	// physical cap, and FEC + NACK retransmissions handle any overflow drops.
 	const ceilingMultiplier = 1.5
 	wasCapped := false
-	if tb.heartbeatCount > ceilingWarmupHeartbeats && tb.peakRate > 0 && tb.rate > tb.peakRate*ceilingMultiplier {
+	if tb.inPhase2 && tb.peakRate > 0 && tb.rate > tb.peakRate*ceilingMultiplier {
 		tb.rate = tb.peakRate * ceilingMultiplier
 		wasCapped = true
 	}

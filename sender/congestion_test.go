@@ -127,10 +127,10 @@ func TestStreakResetOnLowLoss(t *testing.T) {
 }
 
 func TestContinuousIncreaseOnCleanLink(t *testing.T) {
-	// Simulates a LAN with zero loss — should ramp up and hit ceiling.
-	// Phase 1 at 1.25× per HB. Ceiling = 1.5 × 10 MB/s = 15 MB/s.
-	// Ceiling activates after 5 warmup HBs.
-	// 1 MB/s × 1.25^N > 15 MB/s → N ≈ 11. Run 20 iterations to be safe.
+	// Clean link with zero loss — Phase 2 is never entered so the ceiling
+	// never fires. Phase 1 multiplicative increase should ramp the rate well
+	// above where an early-measurement ceiling would have capped it.
+	// 1 MB/s × 1.25^20 ≈ 86 MB/s after 20 HBs with no loss.
 	tb := NewTokenBucket(1_000_000, defaultCC())
 
 	for i := 0; i < 20; i++ {
@@ -138,9 +138,34 @@ func TestContinuousIncreaseOnCleanLink(t *testing.T) {
 	}
 
 	actual := tb.Rate()
+	if actual < 20_000_000 {
+		t.Fatalf("after 20 HBs with zero loss: rate = %.2f MB/s, want > 20 MB/s (should ramp freely in Phase 1)",
+			actual/1e6)
+	}
+}
+
+func TestCeilingActivatesInPhase2(t *testing.T) {
+	// Ceiling = 1.5× peak delivery should fire when Phase 2 is entered and
+	// the current rate is above the ceiling. Start at 20 MB/s (above the
+	// 1.5 × 10 MB/s = 15 MB/s ceiling), enter Phase 2 via hold zone, and
+	// verify the ceiling is applied immediately on that same heartbeat.
+	tb := NewTokenBucket(20_000_000, defaultCC())
+
+	// Enter Phase 2: 2% loss (hold zone). Rate is held, but ceiling fires
+	// because 20 MB/s > 1.5 × peakDelivery (10 MB/s) = 15 MB/s.
+	tb.OnHeartbeat(&protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 10_000_000,
+		StorageFlushRate:    10_000_000,
+		LossRate:            200,
+	})
+	if !tb.inPhase2 {
+		t.Fatal("expected Phase 2 after hold-zone heartbeat")
+	}
+
 	expectedCeiling := 15_000_000.0
+	actual := tb.Rate()
 	if actual < expectedCeiling*0.99 || actual > expectedCeiling*1.01 {
-		t.Fatalf("after 20 HBs: rate = %.2f MB/s, want ~%.2f MB/s (ceiling)",
+		t.Fatalf("Phase 2 ceiling: rate = %.2f MB/s, want ~%.2f MB/s (1.5× peak delivery 10 MB/s)",
 			actual/1e6, expectedCeiling/1e6)
 	}
 }

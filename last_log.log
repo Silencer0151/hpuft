@@ -1,651 +1,162 @@
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft-sender.exe -file .\testdata\darksouls3_2022.09.05.mp4 -addr 192.168.50.9:9000
-10:11:24.477100 [sender] hashing file: .\testdata\darksouls3_2022.09.05.mp4 (237931368 bytes)
-10:11:24.528706 [sender] file hash: 0x2681C51BDEAEBA6F
-10:11:24.529309 [sender] sending SESSION_REQ: sessionID=0x05E6B016 -> 192.168.50.9:9000
-10:11:24.529834 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-10:11:24.529834 [sender] congestion control ENABLED, starting rate=2.00 MB/s
-10:11:24.529834 [sender] FEC enabled: block_size=100, initial_parity=5%
-10:11:24.529834 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-10:11:24.682258 [congestion] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=1.87)
-10:11:24.782183 [congestion] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.72)
-10:11:24.882447 [congestion] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=2.08)
-10:11:24.982423 [congestion] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=2.57)
-10:11:25.082244 [congestion] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.39)
-10:11:25.181656 [congestion] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=2.10)
-10:11:25.281516 [congestion] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=4.64)
-10:11:25.382547 [congestion] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=5.73)
-10:11:25.482952 [congestion] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=6.85)
-10:11:25.583417 [congestion] INCREASE (phase1): 14.90 -> 18.63 MB/s (loss=0.00% delivery=9.64)
-10:11:25.681738 [congestion] INCREASE (phase1): 18.63 -> 23.28 MB/s (loss=0.00% delivery=6.07)
-10:11:25.732355 [congestion] INCREASE (phase1): 23.28 -> 29.10 MB/s (loss=0.00% delivery=11.79)
-10:11:25.782719 [congestion] INCREASE (phase1): 29.10 -> 36.38 MB/s (loss=0.00% delivery=15.45)
-10:11:25.833476 [congestion] INCREASE (phase1): 36.38 -> 45.47 MB/s (loss=0.00% delivery=24.07)
-10:11:25.883415 [congestion] INCREASE (phase1): 45.47 -> 56.84 MB/s (loss=0.00% delivery=30.95)
-10:11:25.934389 [congestion] INCREASE (phase1): 56.84 -> 71.05 MB/s (loss=0.00% delivery=39.21)
-10:11:25.982310 [congestion] INCREASE (phase1): 71.05 -> 88.82 MB/s (loss=0.00% delivery=0.00)
-10:11:26.035668 [congestion] INCREASE (phase1): 88.82 -> 111.02 MB/s (loss=0.00% delivery=64.14)
-10:11:26.086715 [congestion] INCREASE (phase1): 111.02 -> 138.78 MB/s (loss=0.00% delivery=77.29)
-10:11:26.086715 [sender] queued 5 NACKs for retransmission
-10:11:26.098317 [sender] progress: 10% (17291/172916) actual=15.17 MB/s target=138.78 MB/s
-10:11:26.137810 [congestion] INCREASE (phase1): 138.78 -> 173.47 MB/s (loss=0.00% delivery=99.05)
-10:11:26.137810 [sender] queued 167 NACKs for retransmission
-10:11:26.183012 [congestion] INCREASE (phase1): 173.47 -> 216.84 MB/s (loss=0.00% delivery=11.23)
-10:11:26.183012 [sender] queued 11 NACKs for retransmission
-10:11:26.207865 [congestion] INCREASE (phase1): 216.84 -> 271.05 MB/s (loss=0.00% delivery=0.00)
-10:11:26.242629 [congestion] INCREASE (phase1): 271.05 -> 338.81 MB/s (loss=0.00% delivery=91.73)
-10:11:26.243588 [sender] queued 167 NACKs for retransmission
-10:11:26.255433 [sender] progress: 20% (34582/172916) actual=27.58 MB/s target=338.81 MB/s
-10:11:26.293295 [congestion] INCREASE (phase1): 338.81 -> 423.52 MB/s (loss=0.00% delivery=5.38)
-10:11:26.293295 [congestion] CEILING: rate capped at 396.20 MB/s (4x peak delivery 99.05 MB/s)
-10:11:26.293295 [sender] queued 167 NACKs for retransmission
-10:11:26.318433 [sender] queued 167 NACKs for retransmission
-10:11:26.343660 [sender] queued 167 NACKs for retransmission
-10:11:26.368244 [sender] queued 167 NACKs for retransmission
-10:11:26.390700 [sender] progress: 30% (51873/172916) actual=38.36 MB/s target=396.20 MB/s
-10:11:26.393357 [sender] queued 167 NACKs for retransmission
-10:11:26.418257 [sender] queued 167 NACKs for retransmission
-10:11:26.443037 [sender] queued 167 NACKs for retransmission
-10:11:26.468503 [sender] queued 167 NACKs for retransmission
-10:11:26.493009 [sender] queued 167 NACKs for retransmission
-10:11:26.518058 [sender] queued 167 NACKs for retransmission
-10:11:26.550388 [sender] queued 90 NACKs for retransmission
-10:11:26.618318 [sender] queued 167 NACKs for retransmission
-10:11:26.668241 [sender] queued 167 NACKs for retransmission
-10:11:26.672241 [sender] progress: 40% (69164/172916) actual=44.42 MB/s target=396.20 MB/s
-10:11:26.693241 [sender] queued 167 NACKs for retransmission
-10:11:26.718242 [sender] queued 167 NACKs for retransmission
-10:11:26.742771 [sender] queued 167 NACKs for retransmission
-10:11:26.768290 [sender] queued 167 NACKs for retransmission
-10:11:26.793289 [sender] queued 167 NACKs for retransmission
-10:11:26.817683 [sender] queued 167 NACKs for retransmission
-10:11:26.843585 [sender] queued 167 NACKs for retransmission
-10:11:26.867655 [sender] queued 167 NACKs for retransmission
-10:11:26.892948 [sender] queued 167 NACKs for retransmission
-10:11:26.909531 [sender] NACK for seq 55963 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55964 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55965 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55966 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55967 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55968 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55969 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55970 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55971 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55972 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55973 but chunk not in cache
-10:11:26.910336 [sender] NACK for seq 55974 but chunk not in cache
-10:11:26.910856 [sender] NACK for seq 55975 but chunk not in cache
-10:11:26.910856 [sender] NACK for seq 55976 but chunk not in cache
-10:11:26.910856 [sender] NACK for seq 55977 but chunk not in cache
-10:11:26.910856 [sender] NACK for seq 55978 but chunk not in cache
-10:11:26.910856 [sender] NACK for seq 55979 but chunk not in cache
-10:11:26.910856 [sender] NACK for seq 55980 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55963 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55964 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55965 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55966 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55967 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55968 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55969 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55970 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55971 but chunk not in cache
-10:11:26.911882 [sender] NACK for seq 55972 but chunk not in cache
-10:11:26.912396 [sender] NACK for seq 55973 but chunk not in cache
-10:11:26.912396 [sender] NACK for seq 55974 but chunk not in cache
-10:11:26.912396 [sender] NACK for seq 55975 but chunk not in cache
-10:11:26.912396 [sender] NACK for seq 55976 but chunk not in cache
-10:11:26.912396 [sender] NACK for seq 55977 but chunk not in cache
-10:11:26.912396 [sender] NACK for seq 55978 but chunk not in cache
-10:11:26.912396 [sender] NACK for seq 55979 but chunk not in cache
-10:11:26.912396 [sender] NACK for seq 55980 but chunk not in cache
-10:11:26.913423 [sender] NACK for seq 55963 but chunk not in cache
-10:11:26.913423 [sender] NACK for seq 55964 but chunk not in cache
-10:11:26.913423 [sender] NACK for seq 55965 but chunk not in cache
-10:11:26.913423 [sender] NACK for seq 55966 but chunk not in cache
-10:11:26.913423 [sender] NACK for seq 55967 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55968 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55969 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55970 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55971 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55972 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55973 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55974 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55975 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55976 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55977 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55978 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55979 but chunk not in cache
-10:11:26.913940 [sender] NACK for seq 55980 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55963 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55964 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55965 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55966 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55967 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55968 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55969 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55970 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55971 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55972 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55973 but chunk not in cache
-10:11:26.914978 [sender] NACK for seq 55974 but chunk not in cache
-10:11:26.915501 [sender] NACK for seq 55975 but chunk not in cache
-10:11:26.915501 [sender] NACK for seq 55976 but chunk not in cache
-10:11:26.915501 [sender] NACK for seq 55977 but chunk not in cache
-10:11:26.915501 [sender] NACK for seq 55978 but chunk not in cache
-10:11:26.915501 [sender] NACK for seq 55979 but chunk not in cache
-10:11:26.915501 [sender] NACK for seq 55980 but chunk not in cache
-10:11:26.919738 [sender] queued 167 NACKs for retransmission
-10:11:26.951632 [sender] progress: 50% (86455/172916) actual=49.12 MB/s target=396.20 MB/s
-10:11:26.968631 [sender] queued 167 NACKs for retransmission
-10:11:26.993631 [sender] queued 167 NACKs for retransmission
-10:11:27.018811 [sender] queued 167 NACKs for retransmission
-10:11:27.043379 [sender] queued 167 NACKs for retransmission
-10:11:27.068693 [sender] queued 167 NACKs for retransmission
-10:11:27.093609 [sender] queued 167 NACKs for retransmission
-10:11:27.094609 [sender] progress: 60% (103746/172916) actual=55.66 MB/s target=396.20 MB/s
-10:11:27.118610 [sender] queued 167 NACKs for retransmission
-10:11:27.143100 [sender] queued 167 NACKs for retransmission
-10:11:27.168633 [sender] queued 167 NACKs for retransmission
-10:11:27.193633 [sender] queued 167 NACKs for retransmission
-10:11:27.218680 [sender] queued 167 NACKs for retransmission
-10:11:27.243720 [sender] queued 167 NACKs for retransmission
-10:11:27.268729 [sender] queued 167 NACKs for retransmission
-10:11:27.292755 [sender] queued 167 NACKs for retransmission
-10:11:27.318709 [sender] queued 167 NACKs for retransmission
-10:11:27.343352 [sender] queued 167 NACKs for retransmission
-10:11:27.348776 [sender] NACK for seq 56798 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56799 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56800 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56801 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56802 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56803 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56804 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56805 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56806 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56807 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56808 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56809 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56810 but chunk not in cache
-10:11:27.349099 [sender] NACK for seq 56811 but chunk not in cache
-10:11:27.349601 [sender] NACK for seq 56812 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56813 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56814 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56815 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56816 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56817 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56818 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56819 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56820 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56821 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56822 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56823 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56824 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56825 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56826 but chunk not in cache
-10:11:27.349611 [sender] NACK for seq 56827 but chunk not in cache
-10:11:27.350114 [sender] NACK for seq 56828 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56829 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56830 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56831 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56832 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56833 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56834 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56835 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56836 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56837 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56838 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56839 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56840 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56841 but chunk not in cache
-10:11:27.350133 [sender] NACK for seq 56842 but chunk not in cache
-10:11:27.351168 [sender] NACK for seq 56798 but chunk not in cache
-10:11:27.351168 [sender] NACK for seq 56799 but chunk not in cache
-10:11:27.351168 [sender] NACK for seq 56800 but chunk not in cache
-10:11:27.351168 [sender] NACK for seq 56801 but chunk not in cache
-10:11:27.351168 [sender] NACK for seq 56802 but chunk not in cache
-10:11:27.351671 [sender] NACK for seq 56803 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56804 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56805 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56806 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56807 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56808 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56809 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56810 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56811 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56812 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56813 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56814 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56815 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56816 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56817 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56818 but chunk not in cache
-10:11:27.351681 [sender] NACK for seq 56819 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56820 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56821 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56822 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56823 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56824 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56825 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56826 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56827 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56828 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56829 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56830 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56831 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56832 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56833 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56834 but chunk not in cache
-10:11:27.352193 [sender] NACK for seq 56835 but chunk not in cache
-10:11:27.352709 [sender] NACK for seq 56836 but chunk not in cache
-10:11:27.352709 [sender] NACK for seq 56837 but chunk not in cache
-10:11:27.352709 [sender] NACK for seq 56838 but chunk not in cache
-10:11:27.352709 [sender] NACK for seq 56839 but chunk not in cache
-10:11:27.352709 [sender] NACK for seq 56840 but chunk not in cache
-10:11:27.352709 [sender] NACK for seq 56841 but chunk not in cache
-10:11:27.352709 [sender] NACK for seq 56842 but chunk not in cache
-10:11:27.353225 [sender] NACK for seq 56798 but chunk not in cache
-10:11:27.353225 [sender] NACK for seq 56799 but chunk not in cache
-10:11:27.353225 [sender] NACK for seq 56800 but chunk not in cache
-10:11:27.353225 [sender] NACK for seq 56801 but chunk not in cache
-10:11:27.353225 [sender] NACK for seq 56802 but chunk not in cache
-10:11:27.353225 [sender] NACK for seq 56803 but chunk not in cache
-10:11:27.353225 [sender] NACK for seq 56804 but chunk not in cache
-10:11:27.353225 [sender] NACK for seq 56805 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56806 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56807 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56808 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56809 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56810 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56811 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56812 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56813 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56814 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56815 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56816 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56817 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56818 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56819 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56820 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56821 but chunk not in cache
-10:11:27.353742 [sender] NACK for seq 56822 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56823 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56824 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56825 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56826 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56827 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56828 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56829 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56830 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56831 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56832 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56833 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56834 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56835 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56836 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56837 but chunk not in cache
-10:11:27.354257 [sender] NACK for seq 56838 but chunk not in cache
-10:11:27.354774 [sender] NACK for seq 56839 but chunk not in cache
-10:11:27.354774 [sender] NACK for seq 56840 but chunk not in cache
-10:11:27.354774 [sender] NACK for seq 56841 but chunk not in cache
-10:11:27.354774 [sender] NACK for seq 56842 but chunk not in cache
-10:11:27.355302 [sender] NACK for seq 56798 but chunk not in cache
-10:11:27.355302 [sender] NACK for seq 56799 but chunk not in cache
-10:11:27.355302 [sender] NACK for seq 56800 but chunk not in cache
-10:11:27.355302 [sender] NACK for seq 56801 but chunk not in cache
-10:11:27.355808 [sender] NACK for seq 56802 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56803 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56804 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56805 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56806 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56807 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56808 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56809 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56810 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56811 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56812 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56813 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56814 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56815 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56816 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56817 but chunk not in cache
-10:11:27.355814 [sender] NACK for seq 56818 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56819 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56820 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56821 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56822 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56823 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56824 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56825 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56826 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56827 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56828 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56829 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56830 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56831 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56832 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56833 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56834 but chunk not in cache
-10:11:27.356334 [sender] NACK for seq 56835 but chunk not in cache
-10:11:27.356850 [sender] NACK for seq 56836 but chunk not in cache
-10:11:27.356850 [sender] NACK for seq 56837 but chunk not in cache
-10:11:27.356850 [sender] NACK for seq 56838 but chunk not in cache
-10:11:27.356850 [sender] NACK for seq 56839 but chunk not in cache
-10:11:27.356850 [sender] NACK for seq 56840 but chunk not in cache
-10:11:27.356850 [sender] NACK for seq 56841 but chunk not in cache
-10:11:27.356850 [sender] NACK for seq 56842 but chunk not in cache
-10:11:27.357366 [sender] NACK for seq 56798 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56799 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56800 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56801 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56802 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56803 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56804 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56805 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56806 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56807 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56808 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56809 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56810 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56811 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56812 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56813 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56814 but chunk not in cache
-10:11:27.357879 [sender] NACK for seq 56815 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56816 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56817 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56818 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56819 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56820 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56821 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56822 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56823 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56824 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56825 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56826 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56827 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56828 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56829 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56830 but chunk not in cache
-10:11:27.358396 [sender] NACK for seq 56831 but chunk not in cache
-10:11:27.358902 [sender] NACK for seq 56832 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56833 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56834 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56835 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56836 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56837 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56838 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56839 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56840 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56841 but chunk not in cache
-10:11:27.358912 [sender] NACK for seq 56842 but chunk not in cache
-10:11:27.368797 [sender] queued 167 NACKs for retransmission
-10:11:27.408090 [sender] progress: 70% (121037/172916) actual=57.86 MB/s target=396.20 MB/s
-10:11:27.418494 [sender] queued 167 NACKs for retransmission
-10:11:27.443362 [sender] queued 167 NACKs for retransmission
-10:11:27.468363 [sender] queued 167 NACKs for retransmission
-10:11:27.493738 [sender] queued 167 NACKs for retransmission
-10:11:27.518583 [sender] queued 167 NACKs for retransmission
-10:11:27.543583 [sender] queued 167 NACKs for retransmission
-10:11:27.550115 [sender] progress: 80% (138328/172916) actual=63.02 MB/s target=396.20 MB/s
-10:11:27.568115 [sender] queued 167 NACKs for retransmission
-10:11:27.593115 [sender] queued 167 NACKs for retransmission
-10:11:27.618115 [sender] queued 167 NACKs for retransmission
-10:11:27.643960 [sender] queued 167 NACKs for retransmission
-10:11:27.668554 [sender] queued 167 NACKs for retransmission
-10:11:27.693777 [sender] queued 167 NACKs for retransmission
-10:11:27.718808 [sender] queued 167 NACKs for retransmission
-10:11:27.743186 [sender] queued 167 NACKs for retransmission
-10:11:27.767792 [sender] queued 167 NACKs for retransmission
-10:11:27.786822 [sender] NACK for seq 57678 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57679 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57680 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57681 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57682 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57683 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57684 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57685 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57686 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57687 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57688 but chunk not in cache
-10:11:27.786968 [sender] NACK for seq 57689 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57690 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57691 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57692 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57693 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57694 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57695 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57696 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57697 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57698 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57699 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57700 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57701 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57702 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57703 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57704 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57705 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57706 but chunk not in cache
-10:11:27.787485 [sender] NACK for seq 57707 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57708 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57709 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57710 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57711 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57712 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57713 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57714 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57715 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57716 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57717 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57718 but chunk not in cache
-10:11:27.788065 [sender] NACK for seq 57719 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57720 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57721 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57722 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57723 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57724 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57725 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57726 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57727 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57728 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57729 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57730 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57731 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57732 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57733 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57734 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57735 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57736 but chunk not in cache
-10:11:27.788583 [sender] NACK for seq 57737 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57738 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57739 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57740 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57741 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57742 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57743 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57744 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57745 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57746 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57747 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57748 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57749 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57750 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57751 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57752 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57753 but chunk not in cache
-10:11:27.789097 [sender] NACK for seq 57754 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57755 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57756 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57757 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57758 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57759 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57760 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57761 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57762 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57763 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57764 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57765 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57766 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57767 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57768 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57769 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57770 but chunk not in cache
-10:11:27.789614 [sender] NACK for seq 57771 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57772 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57773 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57774 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57775 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57776 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57777 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57778 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57779 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57780 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57781 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57782 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57783 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57784 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57785 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57786 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57787 but chunk not in cache
-10:11:27.790129 [sender] NACK for seq 57788 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57789 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57790 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57791 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57792 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57793 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57794 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57795 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57796 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57797 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57798 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57799 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57800 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57801 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57802 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57803 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57804 but chunk not in cache
-10:11:27.790656 [sender] NACK for seq 57805 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57806 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57807 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57808 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57809 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57810 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57811 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57812 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57813 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57814 but chunk not in cache
-10:11:27.791171 [sender] NACK for seq 57815 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57816 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57817 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57818 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57819 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57820 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57821 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57822 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57823 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57824 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57825 but chunk not in cache
-10:11:27.791687 [sender] NACK for seq 57826 but chunk not in cache
-10:11:27.792196 [sender] NACK for seq 57827 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57828 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57829 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57830 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57831 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57832 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57833 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57834 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57835 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57836 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57837 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57838 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57839 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57840 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57841 but chunk not in cache
-10:11:27.792205 [sender] NACK for seq 57842 but chunk not in cache
-10:11:27.792717 [sender] NACK for seq 57843 but chunk not in cache
-10:11:27.792717 [sender] NACK for seq 57844 but chunk not in cache
-10:11:27.796853 [sender] queued 158 NACKs for retransmission
-10:11:27.840514 [sender] progress: 90% (155619/172916) actual=64.68 MB/s target=396.20 MB/s
-10:11:27.978227 [sender] progress: 100% (172910/172916) actual=69.00 MB/s target=396.20 MB/s
-10:11:27.978227 [sender] sent 2 tail block parity packets for block 1729 (16 data shards)
-10:11:27.978227 [sender] all 172916 packets sent in 3.448s (69.00 MB/s) | CC: +82 =0 -0
-10:11:27.978227 [sender] waiting for TRANSFER_COMPLETE...
-10:11:28.008357 [sender] queued 167 NACKs for retransmission
-10:11:28.033593 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.057810 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.084021 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.134375 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.233948 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.334371 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.434371 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.535032 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.634209 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.734064 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.834284 [sender] teardown: retransmitting 167 NACKed packets
-10:11:28.935370 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.034168 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.134796 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.234371 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.334370 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.435221 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.534372 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.635371 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.734372 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.834211 [sender] teardown: retransmitting 167 NACKed packets
-10:11:29.934269 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.034014 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.134211 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.234714 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.334921 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.435407 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.535059 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.634208 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.734844 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.834376 [sender] teardown: retransmitting 167 NACKed packets
-10:11:30.934279 [sender] teardown: retransmitting 167 NACKed packets
-10:11:31.034372 [sender] teardown: retransmitting 167 NACKed packets
-10:11:31.134633 [sender] teardown: retransmitting 167 NACKed packets
-10:11:31.234253 [sender] teardown: retransmitting 167 NACKed packets
-10:11:31.334757 [sender] teardown: retransmitting 167 NACKed packets
-10:11:31.434905 [sender] teardown: retransmitting 167 NACKed packets
-10:11:31.534371 [sender] teardown: retransmitting 167 NACKed packets
-10:11:31.634211 [sender] teardown: retransmitting 6 NACKed packets
-10:11:31.736372 [sender] received TRANSFER_COMPLETE
-10:11:31.736907 [sender] sent ACK_CLOSE, entering linger state
-10:11:34.737131 [sender] linger complete, session finished
+10:24:10.912032 [sender] hashing file: .\testdata\darksouls3_2022.09.05.mp4 (237931368 bytes)
+10:24:10.964747 [sender] file hash: 0x2681C51BDEAEBA6F
+10:24:10.965747 [sender] sending SESSION_REQ: sessionID=0xBE1DE72F -> 192.168.50.9:9000
+10:24:10.965747 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+10:24:10.965747 [sender] congestion control ENABLED, starting rate=2.00 MB/s
+10:24:10.965747 [sender] FEC enabled: block_size=100, initial_parity=5%
+10:24:10.965747 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+10:24:11.116788 [congestion] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=2.67)
+10:24:11.216385 [congestion] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.69)
+10:24:11.316333 [congestion] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=1.27)
+10:24:11.416157 [congestion] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=2.68)
+10:24:11.516790 [congestion] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.41)
+10:24:11.616258 [congestion] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=4.19)
+10:24:11.616258 [congestion] CEILING: rate capped at 6.28 MB/s (1.5x peak delivery 4.19 MB/s)
+10:24:16.751523 [sender] progress: 10% (17291/172916) actual=4.11 MB/s target=6.66 MB/s
+10:24:21.954697 [sender] progress: 20% (34582/172916) actual=4.33 MB/s target=7.86 MB/s
+10:24:26.565724 [sender] progress: 30% (51873/172916) actual=4.58 MB/s target=7.95 MB/s
+10:24:31.186769 [sender] progress: 40% (69164/172916) actual=4.71 MB/s target=8.01 MB/s
+10:24:35.183810 [sender] progress: 50% (86455/172916) actual=4.91 MB/s target=9.36 MB/s
+10:24:38.893986 [sender] progress: 60% (103746/172916) actual=5.11 MB/s target=10.56 MB/s
+10:24:42.373582 [sender] progress: 70% (121037/172916) actual=5.30 MB/s target=10.56 MB/s
+10:24:45.873744 [sender] progress: 80% (138328/172916) actual=5.45 MB/s target=10.56 MB/s
+10:24:49.362765 [sender] progress: 90% (155619/172916) actual=5.58 MB/s target=10.56 MB/s
+10:24:52.823421 [sender] progress: 100% (172910/172916) actual=5.68 MB/s target=10.72 MB/s
+10:24:52.825010 [sender] sent 2 tail block parity packets for block 1729 (16 data shards)
+10:24:52.825010 [sender] all 172916 packets sent in 41.859s (5.68 MB/s) | CC: +418 =0 -0
+10:24:52.825010 [sender] waiting for TRANSFER_COMPLETE...
+10:24:52.847372 [sender] received TRANSFER_COMPLETE
+10:24:52.847375 [sender] sent ACK_CLOSE, entering linger state
+10:24:55.848058 [sender] linger complete, session finished
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft>
 
 ==== WITH NO DELAY ====
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft-sender.exe -file .\testdata\darksouls3_2022.09.05.mp4 -addr 192.168.50.9:9000 --nodelay
-15:14:07.654034 [sender] hashing file: .\testdata\darksouls3_2022.09.05.mp4 (237931368 bytes)
-15:14:07.709246 [sender] file hash: 0x2681C51BDEAEBA6F
-15:14:07.709764 [sender] sending SESSION_REQ: sessionID=0xF90D46B3 -> 192.168.50.9:9000
-15:14:07.710279 [sender] congestion control DISABLED (nodelay mode)
-15:14:07.710279 [sender] FEC enabled: block_size=100, initial_parity=5%
-15:14:07.864887 [sender] queued 169 NACKs for retransmission
-15:14:07.915799 [sender] queued 169 NACKs for retransmission
-15:14:07.963816 [sender] queued 169 NACKs for retransmission
-15:14:08.014816 [sender] queued 169 NACKs for retransmission
-15:14:08.064327 [sender] queued 169 NACKs for retransmission
-15:14:08.113834 [sender] queued 169 NACKs for retransmission
-15:14:08.163845 [sender] queued 169 NACKs for retransmission
-15:14:08.214856 [sender] queued 17 NACKs for retransmission
-15:14:08.312857 [sender] progress: 10% (17291/172916) rate=39.48 MB/s
-15:14:08.315363 [sender] queued 169 NACKs for retransmission
-15:14:08.365866 [sender] queued 169 NACKs for retransmission
-15:14:08.414371 [sender] queued 59 NACKs for retransmission
-15:14:08.516379 [sender] queued 37 NACKs for retransmission
-15:14:08.916007 [sender] progress: 20% (34582/172916) rate=39.47 MB/s
-15:14:09.509264 [sender] progress: 30% (51873/172916) rate=39.68 MB/s
-15:14:10.076440 [sender] progress: 40% (69164/172916) rate=40.22 MB/s
-15:14:10.656059 [sender] progress: 50% (86455/172916) rate=40.38 MB/s
-15:14:11.231643 [sender] progress: 60% (103746/172916) rate=40.54 MB/s
-15:14:11.813373 [sender] progress: 70% (121037/172916) rate=40.59 MB/s
-15:14:12.387608 [sender] progress: 80% (138328/172916) rate=40.69 MB/s
-15:14:12.975602 [sender] progress: 90% (155619/172916) rate=40.67 MB/s
-15:14:13.528477 [sender] progress: 100% (172910/172916) rate=40.89 MB/s
-15:14:13.528477 [sender] sent 2 tail block parity packets for block 1729 (16 data shards)
-15:14:13.529477 [sender] all 172916 packets sent in 5.819s (40.89 MB/s)
-15:14:13.529477 [sender] waiting for TRANSFER_COMPLETE...
-15:14:13.623789 [sender] received TRANSFER_COMPLETE
-15:14:13.623789 [sender] sent ACK_CLOSE, entering linger state
-15:14:16.624229 [sender] linger complete, session finished
+S C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft-sender.exe -file .\testdata\darksouls3_2022.09.05.mp4 -addr 192.168.50.9:9000 -nodelay
+10:25:59.114641 [sender] hashing file: .\testdata\darksouls3_2022.09.05.mp4 (237931368 bytes)
+10:25:59.163966 [sender] file hash: 0x2681C51BDEAEBA6F
+10:25:59.164966 [sender] sending SESSION_REQ: sessionID=0x8264C50D -> 192.168.50.9:9000
+10:25:59.164966 [sender] congestion control DISABLED (nodelay mode)
+10:25:59.164966 [sender] FEC enabled: block_size=100, initial_parity=5%
+10:25:59.307388 [sender] progress: 10% (17291/172916) rate=167.05 MB/s
+10:25:59.318427 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.343097 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.368080 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.393080 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.418081 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.443080 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.518023 [sender] queued 150 new NACKs (317 total pending)
+10:25:59.568040 [sender] queued 17 new NACKs (334 total pending)
+10:25:59.587388 [sender] progress: 20% (34582/172916) rate=112.65 MB/s
+10:25:59.593122 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.618594 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.643242 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.668796 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.692831 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.718533 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.730121 [sender] progress: 30% (51873/172916) rate=126.30 MB/s
+10:25:59.743136 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.768688 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.792688 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.817693 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.842693 [sender] queued 167 new NACKs (167 total pending)
+10:25:59.893026 [sender] queued 167 new NACKs (334 total pending)
+10:25:59.993345 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.018587 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.021586 [sender] progress: 40% (69164/172916) rate=111.10 MB/s
+10:26:00.043587 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.074587 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.118915 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.143912 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.163550 [sender] progress: 50% (86455/172916) rate=119.13 MB/s
+10:26:00.169790 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.194655 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.219895 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.244435 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.269375 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.294044 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.319047 [sender] queued 167 new NACKs (334 total pending)
+10:26:00.444344 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.464861 [sender] progress: 60% (103746/172916) rate=109.82 MB/s
+10:26:00.468861 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.494725 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.519544 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.544645 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.569461 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.594010 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.613010 [sender] progress: 70% (121037/172916) rate=115.02 MB/s
+10:26:00.619731 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.644536 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.669643 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.694552 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.719597 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.744779 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.869708 [sender] queued 167 new NACKs (334 total pending)
+10:26:00.894730 [sender] queued 167 new NACKs (167 total pending)
+10:26:00.901964 [sender] progress: 80% (138328/172916) rate=109.58 MB/s
+10:26:00.919497 [sender] queued 76 new NACKs (76 total pending)
+10:26:01.041869 [sender] progress: 90% (155619/172916) rate=114.09 MB/s
+10:26:01.127757 [sender] queued 167 new NACKs (167 total pending)
+10:26:01.177366 [sender] queued 167 new NACKs (167 total pending)
+10:26:01.277215 [sender] queued 167 new NACKs (334 total pending)
+10:26:01.306388 [sender] queued 167 new NACKs (167 total pending)
+10:26:01.322611 [sender] progress: 100% (172910/172916) rate=110.27 MB/s
+10:26:01.323127 [sender] sent 2 tail block parity packets for block 1729 (16 data shards)
+10:26:01.323127 [sender] all 172916 packets sent in 2.158s (110.25 MB/s)
+10:26:01.323127 [sender] waiting for TRANSFER_COMPLETE...
+10:26:01.328192 [sender] queued 167 new NACKs (167 total pending)
+10:26:01.352369 [sender] teardown: retransmitting 167 NACKed packets
+10:26:01.403584 [sender] teardown: retransmitting 167 NACKed packets
+10:26:01.504372 [sender] teardown: retransmitting 167 NACKed packets
+10:26:01.604367 [sender] teardown: retransmitting 167 NACKed packets
+10:26:01.704306 [sender] teardown: retransmitting 167 NACKed packets
+10:26:01.804560 [sender] teardown: retransmitting 167 NACKed packets
+10:26:01.904407 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.004526 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.104292 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.203217 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.303208 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.403422 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.503902 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.604063 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.704063 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.804498 [sender] teardown: retransmitting 167 NACKed packets
+10:26:02.904425 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.004371 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.104671 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.204372 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.304113 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.403207 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.503372 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.603888 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.703372 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.803372 [sender] teardown: retransmitting 167 NACKed packets
+10:26:03.903872 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.004766 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.103944 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.204357 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.304210 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.404273 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.504305 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.604342 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.704546 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.804286 [sender] teardown: retransmitting 167 NACKed packets
+10:26:04.903155 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.004209 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.103367 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.204068 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.303061 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.403907 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.504153 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.603214 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.703939 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.803820 [sender] teardown: retransmitting 167 NACKed packets
+10:26:05.904058 [sender] teardown: retransmitting 167 NACKed packets
+10:26:06.003367 [sender] teardown: retransmitting 167 NACKed packets
+10:26:06.103201 [sender] teardown: retransmitting 167 NACKed packets
+10:26:06.204531 [sender] teardown: retransmitting 167 NACKed packets
+10:26:06.304164 [sender] teardown: retransmitting 142 NACKed packets
+10:26:06.410109 [sender] received TRANSFER_COMPLETE
+10:26:06.411113 [sender] sent ACK_CLOSE, entering linger state
+10:26:09.412208 [sender] linger complete, session finished
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft>

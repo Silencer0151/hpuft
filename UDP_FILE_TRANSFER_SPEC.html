@@ -473,14 +473,14 @@
     <p>A single heartbeat reporting &gt; 5% loss may be a transient spike (e.g., a router briefly queuing). The sender requires <strong>two consecutive</strong> above-threshold heartbeats before executing a decrease. The first signal starts a "decrease streak" counter; the second confirms it. Any increase or hold resets the streak to zero.</p>
 
     <h4>Auto-Ceiling</h4>
-    <p>On a clean link with zero loss, the 1.25× multiplicative increase would grow the target rate exponentially without bound (e.g., reaching exabytes/sec within seconds). While the actual throughput is always bounded by <code>conn.Write</code> speed, the unbounded target causes OS socket buffer overflow — the sender floods faster than the NIC can transmit, systematically dropping packets that FEC cannot recover. The sender caps the target rate at <strong>1.5× the peak observed delivery rate</strong>:</p>
-    <pre>if rate > peakDeliveryRate × 1.5:
+    <p>The ceiling is applied <strong>only in Phase 2</strong>, capping the target rate at <strong>1.5× the peak observed delivery rate</strong>:</p>
+    <pre>if inPhase2 and rate > peakDeliveryRate × 1.5:
     rate = peakDeliveryRate × 1.5</pre>
-    <p>On a Gigabit LAN where peak delivery measures ~99 MB/s, this gives a ceiling of ~148 MB/s — just above the theoretical maximum (~125 MB/s), allowing modest headroom without permitting unbounded overshoot. A multiplier of 4× (the original value) produced a 396 MB/s ceiling on the same measurement, leaving the sender effectively unconstrained and causing 167+ persistent NACKs per heartbeat that FEC could not recover (see Lesson I).</p>
-    <p>The ceiling is <strong>not applied during the first 5 heartbeats</strong> (the warmup phase), because early delivery-rate measurements reflect cold-start conditions (calibration burst timing, receiver allocation latency) rather than actual link capacity. Applying the ceiling too early locks the sender far below the link's real throughput.</p>
+    <p>The Phase 2 restriction is critical. During Phase 1, delivery-rate measurements lag the send rate because the sender increases 25% per heartbeat and the receiver's measurement window has not stabilised at the new rate. For example, at a 7.63 MB/s send rate the receiver may report only 4.19 MB/s delivery. Applying a 1.5× ceiling from this measurement gives 6.28 MB/s — <em>below</em> the current send rate — locking the sender far below actual link capacity for the entire transfer (observed: 5.68 MB/s on a 110 MB/s Gigabit link). In Phase 1, loss signals are the correct mechanism for discovering the link ceiling.</p>
+    <p>In Phase 2, the delivery rate was measured near the actual link ceiling — the loss event that triggered the Phase 2 transition occurred at or near capacity — so 1.5× of that peak is a reliable upper bound for the additive probing that follows. On a clean link where no loss ever occurs and Phase 2 is never entered, no ceiling is applied; the OS NIC speed acts as the natural physical cap, and FEC and NACK retransmissions handle any overflow drops.</p>
 
     <div class="lesson">
-        <strong>Implementation Note:</strong> The warmup was originally 3 heartbeats. Starlink testing revealed that 3 was insufficient — the high RTT meant early heartbeats arrived during the calibration burst window and measured artificially low delivery rates. Extending to 5 heartbeats gives the CC enough time to establish a representative <code>peakRate</code> on high-latency links.
+        <strong>Implementation Note:</strong> Earlier revisions gated the ceiling on a fixed warmup period (originally 3 heartbeats, later extended to 5) to avoid locking in a low <code>peakRate</code> from cold-start measurements. This approach was superseded by Phase 2 gating, which is more principled: the ceiling is irrelevant during Phase 1 (the sender is still discovering the link ceiling) and correct during Phase 2 (the delivery rate was measured near capacity). The warmup constant no longer exists in the implementation.
     </div>
 
     <h3>D. Deficit-Accumulator Pacing</h3>
@@ -590,7 +590,7 @@
     <p>On a satellite link with ~30ms RTT and 5% loss, each heartbeat reported ~169 NACKs. Processing all NACKs before each new data packet caused the send loop to spend its entire bandwidth on retransmissions, preventing <code>seqNum</code> from advancing. Capping retransmissions at 3 per iteration restored forward progress.</p>
 
     <h3>E. Early Delivery-Rate Measurements Are Unreliable</h3>
-    <p>The first few heartbeats arrive during or immediately after the calibration burst, when the receiver is still allocating buffers and the network path hasn't stabilized. These measurements consistently underestimate actual link capacity. The auto-ceiling must skip a warmup phase (5 heartbeats) before locking in a peak rate.</p>
+    <p>The first few heartbeats arrive during or immediately after the calibration burst, when the receiver is still allocating buffers and the network path hasn't stabilized. More broadly, during Phase 1 ramp-up the receiver's measurement window hasn't caught up to the sender's current rate — at a 7.63 MB/s send rate the receiver may only report 4.19 MB/s delivery because the sender had only been at that rate for one 100ms heartbeat interval. Any ceiling derived from these measurements will be artificially low. The correct solution is to gate the auto-ceiling on Phase 2 entry rather than a fixed warmup period: by the time Phase 2 is entered, the sender has been near the link ceiling long enough for delivery measurements to be meaningful.</p>
 
     <h3>F. Socket Ownership During Teardown</h3>
     <p>The sender's heartbeat listener goroutine and the teardown synchronous read loop compete for the same socket. If the goroutine is still running when the sender enters teardown, it consumes packets (including TRANSFER_COMPLETE) that the teardown loop needs. The goroutine must be stopped before entering teardown, and any queued NACKs must be drained synchronously.</p>
@@ -614,10 +614,11 @@
 
     <h3>I. Auto-Ceiling Overshoot Causes Persistent NACK Storms</h3>
     <p>With the original auto-ceiling multiplier of 4×, the target rate on a Gigabit LAN reached 396 MB/s (4× a measured peak delivery of ~99 MB/s). At this target the token bucket's pacing budget was so large that no sleep was ever triggered — the sender fired packets as fast as the CPU allowed. The OS NIC queue and the receiver's socket buffer were overwhelmed, systematically dropping the same ~167 packets per heartbeat interval. Because these drops were clustered within FEC blocks (the sender had burst through several consecutive blocks before the receiver could drain them), the parity overhead was insufficient to recover them. The result: every heartbeat for the entire transfer carried the same 167-entry NACK list, the sender retransmitted them repeatedly, and the teardown phase required ~3.5 seconds of retransmit cycles before the receiver could recover all blocks and issue <code>TRANSFER_COMPLETE</code>.</p>
-    <p>Two fixes address this together:</p>
+    <p>Three fixes address this together:</p>
     <ol>
-        <li><strong>Ceiling multiplier 4× → 1.5×.</strong> On the same Gigabit LAN measurement, this gives a 148 MB/s ceiling, keeping the token bucket meaningfully engaged and preventing OS buffer overflow.</li>
-        <li><strong>NACK deduplication.</strong> The sender's retransmit queue was a plain slice. Each heartbeat appended the full NACK list again (167 entries × every ~25 ms heartbeat = the queue grew without bound). The fix is to use a set (hash map of pending sequence numbers): a sequence already waiting for retransmission is not added a second time. This prevents the queue from accumulating thousands of stale duplicate entries and ensures the 3-retransmits-per-iteration cap is spent on distinct missing packets rather than the same sequence retransmitted dozens of times before it is drained. The Phase 2 C port should maintain a fixed-size bitset or hash set of pending NACK sequences rather than a FIFO queue.</li>
+        <li><strong>Ceiling is Phase 2 only.</strong> Applying a tight ceiling during Phase 1 ramp-up caused the opposite problem: with a 4.19 MB/s peak delivery measurement at heartbeat 6, a 1.5× ceiling produced a 6.28 MB/s cap — <em>below</em> the current send rate — locking the sender at ~5.68 MB/s for a 42-second transfer on a 110 MB/s Gigabit link. The ceiling is now only active after Phase 2 is entered. In Phase 2 the delivery rate was measured near actual link capacity, so 1.5× is a meaningful upper bound. In Phase 1, loss signals are the correct ceiling discovery mechanism.</li>
+        <li><strong>Ceiling multiplier 4× → 1.5×.</strong> Once restricted to Phase 2, 1.5× of a near-capacity delivery measurement (e.g., ~99 MB/s → 148 MB/s ceiling) keeps the additive probing bounded without permitting the unbounded overshoot that 4× produced.</li>
+        <li><strong>NACK deduplication.</strong> The sender's retransmit queue was a plain slice. Each heartbeat appended the full NACK list again (167 entries × every ~25 ms = the queue grew without bound). The fix is to use a set (hash map of pending sequence numbers): a sequence already waiting for retransmission is not added a second time. This prevents the queue from accumulating thousands of stale duplicate entries and ensures the 3-retransmits-per-iteration cap is spent on distinct missing packets. The Phase 2 C port should maintain a fixed-size bitset or hash set of pending NACK sequences rather than a FIFO queue.</li>
     </ol>
 
     <h2>Appendix A: Protocol Constants (Defaults)</h2>
@@ -647,8 +648,7 @@
             <tr><td>Phase 1 Increase Multiplier</td><td>1.25× per RTT</td><td>Yes</td></tr>
             <tr><td>Phase 2 Additive Increase</td><td>MaxPayload / RTT per RTT</td><td>Yes</td></tr>
             <tr><td>Decrease Factor</td><td>0.85× smoothed delivery rate</td><td>Yes</td></tr>
-            <tr><td>Auto-Ceiling Multiplier</td><td>1.5× peak delivery rate</td><td>Yes</td></tr>
-            <tr><td>Ceiling Warmup Heartbeats</td><td>5</td><td>Yes</td></tr>
+            <tr><td>Auto-Ceiling Multiplier</td><td>1.5× peak delivery rate (Phase 2 only)</td><td>Yes</td></tr>
             <tr><td>Deficit Accumulator Burst Cap</td><td>2ms of credit</td><td>Yes</td></tr>
             <tr><td>Deficit Sleep Threshold</td><td>≥ 1ms</td><td>No (OS-dependent)</td></tr>
             <tr><td>Max NACKs per Send Iteration</td><td>3</td><td>Yes</td></tr>
