@@ -159,6 +159,11 @@ func (s *Sender) Send() error {
 	var nackMu sync.Mutex
 	var nackQueue []uint64
 
+	// --- Step 7 (pre-declared): Chunk cache for NACK retransmission ---
+	// Declared here so the heartbeat goroutine can prune acknowledged entries.
+	sentChunks := make(map[uint64][]byte)
+	var sentMu sync.Mutex
+
 	// doneCh signals the heartbeat goroutine to stop
 	doneCh := make(chan struct{})
 
@@ -222,6 +227,21 @@ func (s *Sender) Send() error {
 					log.Printf("[sender] queued %d NACKs for retransmission", len(hb.NACKs))
 				}
 
+				// Prune acknowledged entries from the chunk cache.
+				// All sequences ≤ HighestContiguous have been received at the
+				// destination and can never be NACKed again. Without pruning,
+				// sentChunks retains every chunk for the entire transfer
+				// (~470 MB for a 237 MB file), causing repeated GC pauses.
+				if hb.HighestContiguous > 0 {
+					sentMu.Lock()
+					for seq := range sentChunks {
+						if seq <= hb.HighestContiguous {
+							delete(sentChunks, seq)
+						}
+					}
+					sentMu.Unlock()
+				}
+
 			case protocol.PacketTransferComplete, protocol.PacketSessionReject:
 				select {
 				case teardownCh <- teardownMsg{pkt.Header.Type, pkt.Payload}:
@@ -231,10 +251,6 @@ func (s *Sender) Send() error {
 			}
 		}
 	}()
-
-	// --- Step 7: Chunk cache for NACK retransmission ---
-	sentChunks := make(map[uint64][]byte)
-	var sentMu sync.Mutex
 
 	// --- Step 8: Main send loop ---
 	sendBuf := make([]byte, protocol.MTUHardCap)
