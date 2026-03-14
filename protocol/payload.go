@@ -71,9 +71,11 @@ func UnmarshalSessionReq(data []byte) (SessionReqPayload, error) {
 //   8       2 bytes   LossRate (basis points)
 //   10      8 bytes   HighestContiguous
 //   18      2 bytes   NACKCount
-//   20      8*N bytes NACKArray
+//   20      8 bytes   EchoTimestampNs  (sender's last-data-send time, echoed for RTT)
+//   28      8 bytes   DispersionNs     (calibration burst arrival spread in nanoseconds)
+//   36      8*N bytes NACKArray
 
-const HeartbeatFixedSize = 20 // bytes before the NACK array
+const HeartbeatFixedSize = 36 // bytes before the NACK array
 
 // MarshalHeartbeat serializes a HeartbeatPayload into bytes.
 func MarshalHeartbeat(p *HeartbeatPayload) []byte {
@@ -84,9 +86,11 @@ func MarshalHeartbeat(p *HeartbeatPayload) []byte {
 	binary.BigEndian.PutUint16(buf[8:10], p.LossRate)
 	binary.BigEndian.PutUint64(buf[10:18], p.HighestContiguous)
 	binary.BigEndian.PutUint16(buf[18:20], uint16(len(p.NACKs)))
+	binary.BigEndian.PutUint64(buf[20:28], p.EchoTimestampNs)
+	binary.BigEndian.PutUint64(buf[28:36], p.DispersionNs)
 
 	for i, seq := range p.NACKs {
-		binary.BigEndian.PutUint64(buf[20+8*i:28+8*i], seq)
+		binary.BigEndian.PutUint64(buf[36+8*i:44+8*i], seq)
 	}
 
 	return buf
@@ -105,6 +109,8 @@ func UnmarshalHeartbeat(data []byte) (HeartbeatPayload, error) {
 		LossRate:            binary.BigEndian.Uint16(data[8:10]),
 		HighestContiguous:   binary.BigEndian.Uint64(data[10:18]),
 		NACKCount:           binary.BigEndian.Uint16(data[18:20]),
+		EchoTimestampNs:     binary.BigEndian.Uint64(data[20:28]),
+		DispersionNs:        binary.BigEndian.Uint64(data[28:36]),
 	}
 
 	nackCount := int(p.NACKCount)
@@ -117,7 +123,7 @@ func UnmarshalHeartbeat(data []byte) (HeartbeatPayload, error) {
 	if nackCount > 0 {
 		p.NACKs = make([]uint64, nackCount)
 		for i := 0; i < nackCount; i++ {
-			p.NACKs[i] = binary.BigEndian.Uint64(data[20+8*i : 28+8*i])
+			p.NACKs[i] = binary.BigEndian.Uint64(data[36+8*i : 44+8*i])
 		}
 	}
 

@@ -173,6 +173,8 @@ func (r *Receiver) Run() error {
 
 		switch pkt.Header.Type {
 		case protocol.PacketData:
+			recvNs := time.Now().UnixNano()
+
 			isNew, err := recvBuf.Insert(pkt.Header.SequenceNum, pkt.Payload)
 			if err != nil {
 				log.Printf("[receiver] insert error seq=%d: %v", pkt.Header.SequenceNum, err)
@@ -182,6 +184,14 @@ func (r *Receiver) Run() error {
 			// Track metrics for heartbeat
 			if isNew {
 				hbGen.RecordPacket(len(pkt.Payload))
+			}
+
+			// Always update the echo timestamp (RTT measurement) and
+			// calibration dispersion (even for duplicate packets, since
+			// timing is what matters for both measurements).
+			hbGen.RecordDataReceiveTime(recvNs)
+			if pkt.Header.Flags&protocol.FlagCalibrationBurst != 0 {
+				hbGen.RecordCalibrationPacket(recvNs)
 			}
 
 			// Record in FEC block decoder and attempt reconstruction

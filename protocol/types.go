@@ -123,6 +123,8 @@ type HeartbeatPayload struct {
 	LossRate            uint16   // basis points (150 = 1.50%)
 	HighestContiguous   uint64   // highest seqnum with all 0..N received
 	NACKCount           uint16   // number of entries in NACKs
+	EchoTimestampNs     uint64   // sender's last-sent-data Unix nanosecond timestamp, echoed for RTT measurement
+	DispersionNs        uint64   // calibration burst dispersion: (last_cal_arrival − first_cal_arrival) in ns
 	NACKs               []uint64 // unrecoverable sequence numbers
 }
 
@@ -172,19 +174,22 @@ func (f FECConfig) ParityCount(dataCount int, lossBasisPoints uint16) int {
 
 // CongestionConfig holds the tunable parameters for the rate adjustment algorithm.
 type CongestionConfig struct {
-	IncreaseThreshold  float64 // E >= threshold * S -> increase (default 0.95)
-	HoldThreshold      float64 // E >= threshold * S -> hold (default 0.85)
-	IncreaseMultiplier float64 // multiplicative increase factor (default 1.5)
-	DecreaseHeadroom   float64 // set rate to E * headroom on decrease (default 1.05)
+	// Phase1Multiplier is the multiplicative increase factor applied once per RTT
+	// during Phase 1 (loss < 1%, link ceiling not yet found). Default: 1.25.
+	Phase1Multiplier float64
+
+	// DecreaseFrac is the fraction of the EWMA-smoothed effective delivery rate
+	// the sender targets on confirmed congestion (loss > 5% for two consecutive
+	// heartbeats). Values < 1.0 undershoot the measured ceiling so router queues
+	// can drain. Default: 0.85.
+	DecreaseFrac float64
 }
 
 // DefaultCongestionConfig returns the spec defaults from Appendix A.
 func DefaultCongestionConfig() CongestionConfig {
 	return CongestionConfig{
-		IncreaseThreshold:  0.95,
-		HoldThreshold:      0.85,
-		IncreaseMultiplier: 1.5,
-		DecreaseHeadroom:   1.05,
+		Phase1Multiplier: 1.25,
+		DecreaseFrac:     0.85,
 	}
 }
 
@@ -199,8 +204,8 @@ type CalibrationConfig struct {
 // DefaultCalibrationConfig returns the spec defaults from Appendix A.
 func DefaultCalibrationConfig() CalibrationConfig {
 	return CalibrationConfig{
-		BurstSize:    100,
-		BurstSpacing: 0, // 0 = send at wire speed to probe actual link capacity
+		BurstSize:    10, // 10 packets at wire speed: enough to measure dispersion without flooding
+		BurstSpacing: 0,  // 0 = send at wire speed to probe actual link capacity
 	}
 }
 
