@@ -128,9 +128,9 @@ func TestStreakResetOnLowLoss(t *testing.T) {
 
 func TestContinuousIncreaseOnCleanLink(t *testing.T) {
 	// Simulates a LAN with zero loss — should ramp up and hit ceiling.
-	// Phase 1 at 1.25× per HB. Ceiling = 4 × 10 MB/s = 40 MB/s.
+	// Phase 1 at 1.25× per HB. Ceiling = 1.5 × 10 MB/s = 15 MB/s.
 	// Ceiling activates after 5 warmup HBs.
-	// 1 MB/s × 1.25^N > 40 MB/s → N ≈ 17. Run 20 iterations to be safe.
+	// 1 MB/s × 1.25^N > 15 MB/s → N ≈ 11. Run 20 iterations to be safe.
 	tb := NewTokenBucket(1_000_000, defaultCC())
 
 	for i := 0; i < 20; i++ {
@@ -138,7 +138,7 @@ func TestContinuousIncreaseOnCleanLink(t *testing.T) {
 	}
 
 	actual := tb.Rate()
-	expectedCeiling := 40_000_000.0
+	expectedCeiling := 15_000_000.0
 	if actual < expectedCeiling*0.99 || actual > expectedCeiling*1.01 {
 		t.Fatalf("after 20 HBs: rate = %.2f MB/s, want ~%.2f MB/s (ceiling)",
 			actual/1e6, expectedCeiling/1e6)

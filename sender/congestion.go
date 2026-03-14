@@ -272,12 +272,23 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		tb.rate = tb.maxRate
 	}
 
-	// Auto-ceiling: cap at 4× peak observed delivery rate.
-	// Skip during warmup (first 5 heartbeats) — early measurements reflect
-	// cold-start conditions (calibration burst, buffer allocation), not real
-	// link capacity.
+	// Auto-ceiling: cap at 1.5× peak observed delivery rate.
+	//
+	// 4× was too aggressive: on a Gigabit LAN where peak delivery measured
+	// ~99 MB/s, the ceiling was set to 396 MB/s — triple the theoretical
+	// link maximum. This left the token bucket functionally unconstrained,
+	// causing OS socket buffer overflow and 167+ persistent NACKs per
+	// heartbeat that FEC could not recover.
+	//
+	// 1.5× gives ~148 MB/s on the same measurement, just above Gigabit
+	// theoretical max (125 MB/s), while still allowing the rate to probe
+	// above the measured delivery on faster links.
+	//
+	// Skip during warmup (first 5 heartbeats) — early delivery-rate
+	// measurements reflect cold-start conditions (calibration burst timing,
+	// receiver buffer allocation), not actual link capacity.
 	const ceilingWarmupHeartbeats = 5
-	const ceilingMultiplier = 4.0
+	const ceilingMultiplier = 1.5
 	wasCapped := false
 	if tb.heartbeatCount > ceilingWarmupHeartbeats && tb.peakRate > 0 && tb.rate > tb.peakRate*ceilingMultiplier {
 		tb.rate = tb.peakRate * ceilingMultiplier
@@ -286,7 +297,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 
 	if wasCapped && !tb.atCeiling {
 		tb.atCeiling = true
-		log.Printf("[congestion] CEILING: rate capped at %.2f MB/s (%.0fx peak delivery %.2f MB/s)",
+		log.Printf("[congestion] CEILING: rate capped at %.2f MB/s (%.1fx peak delivery %.2f MB/s)",
 			tb.rate/1e6, ceilingMultiplier, tb.peakRate/1e6)
 	} else if !wasCapped {
 		tb.atCeiling = false

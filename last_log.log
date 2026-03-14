@@ -1,857 +1,617 @@
-====SENT OVER STARLINK FROM MAC TO MY PC AT HOME====
-sh-3.2# xattr -d com.apple.quarantine hpuft-sender-darwin-amd64 \
-sh-3.2# ./hpuft-sender-darwin-amd64 -file Scrivener.dmg -addr 71.62.235.16:2001\
-16:21:35.789932 [sender] hashing file: Scrivener.dmg (98683559 bytes)\
-16:21:35.832523 [sender] file hash: 0x3CAC3FC750EED422\
-16:21:35.832770 [sender] sending SESSION_REQ: sessionID=0xF30A612B -> 71.62.235.16:2001\
-16:21:35.832856 [calibration] burst: 100 packets at wire speed (link-capacity probe)\
-16:21:35.832863 [sender] congestion control ENABLED, starting rate=50.00 MB/s\
-16:21:35.832872 [sender] FEC enabled: block_size=100, initial_parity=5%\
-16:21:35.833854 [calibration] burst complete (100 packets sent), switching to adaptive pacing\
-16:21:35.970258 [congestion] INCREASE: 50.00 -> 75.00 MB/s (loss=0.00% delivery=0.10)\
-16:21:35.971956 [sender] queued 14 NACKs for retransmission\
-16:21:36.074404 [congestion] INCREASE: 75.00 -> 112.50 MB/s (loss=0.00% delivery=0.00)\
-16:21:36.076294 [sender] queued 169 NACKs for retransmission\
-16:21:36.181476 [congestion] INCREASE: 112.50 -> 168.75 MB/s (loss=0.00% delivery=0.00)\
-16:21:36.185416 [sender] queued 169 NACKs for retransmission\
-16:21:36.265947 [sender] progress: 10% (7171/71718) actual=22.79 MB/s target=168.75 MB/s\
-16:21:36.273270 [congestion] INCREASE: 168.75 -> 253.12 MB/s (loss=0.00% delivery=0.00)\
-16:21:36.273283 [congestion] CEILING: rate capped at 0.38 MB/s (4x peak delivery 0.10 MB/s)\
-16:21:36.276758 [sender] queued 169 NACKs for retransmission\
-16:21:36.376978 [sender] queued 169 NACKs for retransmission\
-16:21:36.473196 [sender] queued 169 NACKs for retransmission\
-16:21:36.573153 [sender] queued 169 NACKs for retransmission\
-16:21:36.681320 [sender] queued 169 NACKs for retransmission\
-16:21:36.774305 [sender] queued 169 NACKs for retransmission\
-16:21:36.881219 [sender] queued 169 NACKs for retransmission\
-16:21:36.972987 [sender] queued 169 NACKs for retransmission\
-16:21:37.073188 [sender] queued 169 NACKs for retransmission\
-16:21:37.173000 [sender] queued 169 NACKs for retransmission\
-16:21:37.276923 [sender] queued 169 NACKs for retransmission\
-16:21:37.376943 [sender] queued 169 NACKs for retransmission\
-16:21:37.476911 [sender] queued 169 NACKs for retransmission\
-16:21:37.568931 [sender] queued 169 NACKs for retransmission\
-16:21:37.673117 [sender] queued 169 NACKs for retransmission\
-16:21:37.777397 [sender] queued 169 NACKs for retransmission\
-16:21:37.872835 [sender] queued 169 NACKs for retransmission\
-16:21:37.968809 [congestion] INCREASE: 0.57 -> 0.86 MB/s (loss=0.00% delivery=0.06)\
-16:21:37.968842 [sender] queued 169 NACKs for retransmission\
-16:21:38.068786 [congestion] INCREASE: 0.86 -> 1.29 MB/s (loss=0.00% delivery=0.07)\
-16:21:38.068812 [congestion] CEILING: rate capped at 0.87 MB/s (4x peak delivery 0.22 MB/s)\
-16:21:38.068852 [sender] queued 169 NACKs for retransmission\
-16:21:38.172896 [sender] queued 169 NACKs for retransmission\
-16:21:38.273045 [congestion] INCREASE: 1.31 -> 1.97 MB/s (loss=0.00% delivery=0.00)\
-16:21:38.273077 [sender] queued 169 NACKs for retransmission\
-16:21:38.372802 [congestion] INCREASE: 1.97 -> 2.95 MB/s (loss=0.00% delivery=0.00)\
-16:21:38.372830 [congestion] CEILING: rate capped at 2.02 MB/s (4x peak delivery 0.51 MB/s)\
-16:21:38.372837 [sender] queued 169 NACKs for retransmission\
-16:21:38.468879 [sender] queued 169 NACKs for retransmission\
-16:21:38.572886 [sender] queued 169 NACKs for retransmission\
-16:21:38.680786 [sender] queued 169 NACKs for retransmission\
-16:21:38.773042 [sender] queued 169 NACKs for retransmission\
-16:21:38.873113 [sender] queued 169 NACKs for retransmission\
-16:21:38.972870 [sender] queued 169 NACKs for retransmission\
-16:21:39.073002 [sender] queued 169 NACKs for retransmission\
-16:21:39.176864 [sender] queued 169 NACKs for retransmission\
-16:21:39.272981 [sender] queued 169 NACKs for retransmission\
-16:21:39.372801 [sender] queued 169 NACKs for retransmission\
-16:21:39.472700 [sender] queued 169 NACKs for retransmission\
-16:21:39.574291 [sender] queued 169 NACKs for retransmission\
-16:21:39.673012 [sender] queued 169 NACKs for retransmission\
-16:21:39.777265 [sender] queued 169 NACKs for retransmission\
-16:21:39.885180 [sender] queued 169 NACKs for retransmission\
-16:21:39.972800 [sender] queued 169 NACKs for retransmission\
-16:21:40.077127 [sender] queued 169 NACKs for retransmission\
-16:21:40.168954 [sender] queued 169 NACKs for retransmission\
-16:21:40.273227 [sender] queued 169 NACKs for retransmission\
-16:21:40.373168 [sender] queued 169 NACKs for retransmission\
-16:21:40.480754 [sender] queued 169 NACKs for retransmission\
-16:21:40.573131 [sender] queued 169 NACKs for retransmission\
-16:21:40.672823 [sender] queued 169 NACKs for retransmission\
-16:21:40.772801 [sender] queued 169 NACKs for retransmission\
-16:21:40.872979 [sender] queued 169 NACKs for retransmission\
-16:21:40.976645 [sender] queued 169 NACKs for retransmission\
-16:21:41.072883 [sender] queued 169 NACKs for retransmission\
-16:21:41.172972 [sender] queued 169 NACKs for retransmission\
-16:21:41.273376 [sender] queued 169 NACKs for retransmission\
-16:21:41.385887 [sender] queued 169 NACKs for retransmission\
-16:21:41.472752 [sender] queued 169 NACKs for retransmission\
-16:21:41.577303 [sender] queued 169 NACKs for retransmission\
-16:21:41.722413 [sender] queued 169 NACKs for retransmission\
-16:21:41.775746 [sender] queued 169 NACKs for retransmission\
-16:21:41.882385 [sender] queued 169 NACKs for retransmission\
-16:21:41.974432 [sender] queued 169 NACKs for retransmission\
-16:21:42.074395 [sender] queued 169 NACKs for retransmission\
-16:21:42.174396 [sender] queued 169 NACKs for retransmission\
-16:21:42.274339 [sender] queued 169 NACKs for retransmission\
-16:21:42.388208 [sender] queued 169 NACKs for retransmission\
-16:21:42.474491 [sender] queued 169 NACKs for retransmission\
-16:21:42.607509 [sender] queued 169 NACKs for retransmission\
-16:21:42.674458 [sender] queued 169 NACKs for retransmission\
-16:21:42.783411 [sender] queued 169 NACKs for retransmission\
-16:21:42.874422 [sender] queued 169 NACKs for retransmission\
-16:21:42.975484 [sender] queued 169 NACKs for retransmission\
-16:21:43.075912 [sender] queued 169 NACKs for retransmission\
-16:21:43.182488 [sender] queued 169 NACKs for retransmission\
-16:21:43.282318 [sender] queued 169 NACKs for retransmission\
-16:21:43.374524 [sender] queued 169 NACKs for retransmission\
-16:21:43.474354 [sender] queued 169 NACKs for retransmission\
-16:21:43.574397 [sender] queued 169 NACKs for retransmission\
-16:21:43.674296 [sender] queued 169 NACKs for retransmission\
-16:21:43.780969 [sender] queued 169 NACKs for retransmission\
-16:21:43.887618 [sender] queued 169 NACKs for retransmission\
-16:21:43.974293 [sender] queued 169 NACKs for retransmission\
-16:21:44.074280 [sender] queued 169 NACKs for retransmission\
-16:21:44.174416 [sender] queued 169 NACKs for retransmission\
-16:21:44.281239 [sender] queued 169 NACKs for retransmission\
-16:21:44.380996 [sender] queued 169 NACKs for retransmission\
-16:21:44.474466 [sender] queued 169 NACKs for retransmission\
-16:21:44.581081 [sender] queued 169 NACKs for retransmission\
-16:21:44.674497 [sender] queued 169 NACKs for retransmission\
-16:21:44.774710 [sender] queued 169 NACKs for retransmission\
-16:21:44.894963 [sender] queued 169 NACKs for retransmission\
-16:21:44.982321 [sender] queued 169 NACKs for retransmission\
-16:21:45.075514 [sender] queued 169 NACKs for retransmission\
-16:21:45.174337 [sender] queued 169 NACKs for retransmission\
-16:21:45.281907 [sender] queued 169 NACKs for retransmission\
-16:21:45.394897 [sender] queued 169 NACKs for retransmission\
-16:21:45.474526 [sender] queued 169 NACKs for retransmission\
-16:21:45.574335 [sender] queued 169 NACKs for retransmission\
-16:21:45.674389 [sender] queued 169 NACKs for retransmission\
-16:21:45.781140 [sender] queued 169 NACKs for retransmission\
-16:21:45.874227 [sender] queued 169 NACKs for retransmission\
-16:21:45.974170 [sender] queued 169 NACKs for retransmission\
-16:21:46.074325 [sender] queued 169 NACKs for retransmission\
-16:21:46.174169 [sender] queued 169 NACKs for retransmission\
-16:21:46.280885 [sender] queued 169 NACKs for retransmission\
-16:21:46.374145 [sender] queued 169 NACKs for retransmission\
-16:21:46.474423 [sender] queued 169 NACKs for retransmission\
-16:21:46.595535 [sender] queued 169 NACKs for retransmission\
-16:21:46.675515 [sender] queued 169 NACKs for retransmission\
-16:21:46.775459 [sender] queued 169 NACKs for retransmission\
-16:21:46.887868 [sender] queued 169 NACKs for retransmission\
-16:21:46.980746 [sender] queued 169 NACKs for retransmission\
-16:21:47.074342 [sender] queued 169 NACKs for retransmission\
-16:21:47.174129 [sender] queued 169 NACKs for retransmission\
-16:21:47.274343 [sender] queued 169 NACKs for retransmission\
-16:21:47.374110 [sender] queued 169 NACKs for retransmission\
-16:21:47.481130 [sender] queued 169 NACKs for retransmission\
-16:21:47.574083 [sender] queued 169 NACKs for retransmission\
-16:21:47.680749 [sender] queued 169 NACKs for retransmission\
-16:21:47.774191 [sender] queued 169 NACKs for retransmission\
-16:21:47.874471 [sender] queued 169 NACKs for retransmission\
-16:21:47.980710 [sender] queued 169 NACKs for retransmission\
-16:21:48.082148 [sender] queued 169 NACKs for retransmission\
-16:21:48.174012 [sender] queued 169 NACKs for retransmission\
-16:21:48.281101 [sender] queued 169 NACKs for retransmission\
-16:21:48.374317 [sender] queued 169 NACKs for retransmission\
-16:21:48.474401 [sender] queued 169 NACKs for retransmission\
-16:21:48.581014 [sender] queued 169 NACKs for retransmission\
-16:21:48.681164 [sender] queued 169 NACKs for retransmission\
-16:21:48.782123 [sender] queued 169 NACKs for retransmission\
-16:21:48.874505 [sender] queued 169 NACKs for retransmission\
-16:21:48.988628 [sender] queued 169 NACKs for retransmission\
-16:21:49.074638 [sender] queued 169 NACKs for retransmission\
-16:21:49.181368 [sender] queued 169 NACKs for retransmission\
-16:21:49.281558 [sender] queued 169 NACKs for retransmission\
-16:21:49.374080 [sender] queued 169 NACKs for retransmission\
-16:21:49.488542 [sender] queued 169 NACKs for retransmission\
-16:21:49.573981 [sender] queued 169 NACKs for retransmission\
-16:21:49.682066 [sender] queued 169 NACKs for retransmission\
-16:21:49.775394 [sender] queued 169 NACKs for retransmission\
-16:21:49.895259 [sender] queued 169 NACKs for retransmission\
-16:21:49.980730 [sender] queued 169 NACKs for retransmission\
-16:21:50.080854 [sender] queued 169 NACKs for retransmission\
-16:21:50.181706 [sender] queued 169 NACKs for retransmission\
-16:21:50.274590 [sender] queued 169 NACKs for retransmission\
-16:21:50.374100 [sender] queued 169 NACKs for retransmission\
-16:21:50.474049 [sender] queued 169 NACKs for retransmission\
-16:21:50.580921 [sender] queued 169 NACKs for retransmission\
-16:21:50.674010 [sender] queued 169 NACKs for retransmission\
-16:21:50.780679 [sender] queued 169 NACKs for retransmission\
-16:21:50.887610 [sender] queued 169 NACKs for retransmission\
-16:21:50.987329 [sender] queued 169 NACKs for retransmission\
-16:21:51.075109 [sender] queued 169 NACKs for retransmission\
-16:21:51.180800 [sender] queued 169 NACKs for retransmission\
-16:21:51.280932 [sender] queued 169 NACKs for retransmission\
-16:21:51.381121 [sender] queued 169 NACKs for retransmission\
-16:21:51.495071 [sender] queued 169 NACKs for retransmission\
-16:21:51.580740 [sender] queued 169 NACKs for retransmission\
-16:21:51.687696 [sender] queued 169 NACKs for retransmission\
-16:21:51.774083 [sender] queued 169 NACKs for retransmission\
-16:21:51.894028 [sender] queued 169 NACKs for retransmission\
-16:21:51.987561 [sender] queued 169 NACKs for retransmission\
-16:21:52.080888 [sender] queued 169 NACKs for retransmission\
-16:21:52.174142 [sender] queued 169 NACKs for retransmission\
-16:21:52.274299 [sender] queued 169 NACKs for retransmission\
-16:21:52.373958 [sender] queued 169 NACKs for retransmission\
-16:21:52.473929 [sender] queued 169 NACKs for retransmission\
-16:21:52.587322 [sender] queued 169 NACKs for retransmission\
-16:21:52.680958 [sender] queued 169 NACKs for retransmission\
-16:21:52.774992 [sender] queued 169 NACKs for retransmission\
-16:21:52.888885 [sender] queued 169 NACKs for retransmission\
-16:21:52.975113 [sender] queued 169 NACKs for retransmission\
-16:21:53.080719 [sender] queued 169 NACKs for retransmission\
-16:21:53.180981 [sender] queued 169 NACKs for retransmission\
-16:21:53.274829 [sender] queued 169 NACKs for retransmission\
-16:21:53.387569 [sender] queued 169 NACKs for retransmission\
-16:21:53.487564 [sender] queued 169 NACKs for retransmission\
-16:21:53.580524 [sender] queued 169 NACKs for retransmission\
-16:21:53.695140 [sender] queued 169 NACKs for retransmission\
-16:21:53.780686 [sender] queued 169 NACKs for retransmission\
-16:21:53.880484 [sender] queued 169 NACKs for retransmission\
-16:21:53.973851 [sender] queued 169 NACKs for retransmission\
-16:21:54.080746 [sender] queued 169 NACKs for retransmission\
-16:21:54.180575 [sender] queued 169 NACKs for retransmission\
-16:21:54.280626 [sender] queued 169 NACKs for retransmission\
-16:21:54.373913 [sender] queued 169 NACKs for retransmission\
-16:21:54.480655 [sender] queued 169 NACKs for retransmission\
-16:21:54.574146 [sender] queued 169 NACKs for retransmission\
-16:21:54.673843 [sender] queued 169 NACKs for retransmission\
-16:21:54.780646 [sender] queued 169 NACKs for retransmission\
-16:21:54.880680 [sender] queued 169 NACKs for retransmission\
-16:21:54.987107 [sender] queued 169 NACKs for retransmission\
-16:21:55.080528 [sender] queued 169 NACKs for retransmission\
-16:21:55.180772 [sender] queued 169 NACKs for retransmission\
-16:21:55.280696 [sender] queued 169 NACKs for retransmission\
-16:21:55.380704 [sender] queued 169 NACKs for retransmission\
-16:21:55.473675 [sender] queued 169 NACKs for retransmission\
-16:21:55.573907 [sender] queued 169 NACKs for retransmission\
-16:21:55.674022 [sender] queued 169 NACKs for retransmission\
-16:21:55.774161 [sender] queued 169 NACKs for retransmission\
-16:21:55.873929 [sender] queued 169 NACKs for retransmission\
-16:21:55.974055 [sender] queued 169 NACKs for retransmission\
-16:21:56.080588 [sender] queued 169 NACKs for retransmission\
-16:21:56.173952 [sender] queued 169 NACKs for retransmission\
-16:21:56.273915 [sender] queued 169 NACKs for retransmission\
-16:21:56.380486 [sender] queued 169 NACKs for retransmission\
-16:21:56.475047 [sender] queued 169 NACKs for retransmission\
-16:21:56.574967 [sender] queued 169 NACKs for retransmission\
-16:21:56.731996 [sender] queued 169 NACKs for retransmission\
-16:21:56.790132 [sender] queued 169 NACKs for retransmission\
-16:21:56.901362 [sender] queued 169 NACKs for retransmission\
-16:21:56.970894 [sender] queued 169 NACKs for retransmission\
-16:21:57.087701 [sender] queued 169 NACKs for retransmission\
-16:21:57.178326 [sender] queued 169 NACKs for retransmission\
-16:21:57.291629 [sender] queued 169 NACKs for retransmission\
-16:21:57.381083 [sender] queued 169 NACKs for retransmission\
-16:21:57.476993 [sender] queued 169 NACKs for retransmission\
-16:21:57.578376 [sender] queued 169 NACKs for retransmission\
-16:21:57.679523 [sender] queued 169 NACKs for retransmission\
-16:21:57.781735 [sender] queued 169 NACKs for retransmission\
-16:21:57.876980 [sender] queued 169 NACKs for retransmission\
-16:21:57.972758 [sender] queued 169 NACKs for retransmission\
-16:21:58.080071 [sender] queued 169 NACKs for retransmission\
-16:21:58.171004 [sender] queued 169 NACKs for retransmission\
-16:21:58.272744 [sender] queued 169 NACKs for retransmission\
-16:21:58.378724 [sender] queued 169 NACKs for retransmission\
-16:21:58.474382 [sender] queued 169 NACKs for retransmission\
-16:21:58.581754 [sender] queued 169 NACKs for retransmission\
-16:21:58.672607 [sender] queued 169 NACKs for retransmission\
-16:21:58.773805 [sender] queued 169 NACKs for retransmission\
-16:21:58.879832 [sender] queued 169 NACKs for retransmission\
-16:21:58.970114 [sender] queued 169 NACKs for retransmission\
-16:21:59.084426 [sender] queued 169 NACKs for retransmission\
-16:21:59.173815 [sender] queued 169 NACKs for retransmission\
-16:21:59.280555 [sender] queued 169 NACKs for retransmission\
-16:21:59.391800 [sender] queued 169 NACKs for retransmission\
-16:22:00.070432 [sender] queued 169 NACKs for retransmission\
-16:22:00.188135 [sender] queued 169 NACKs for retransmission\
-16:22:00.274396 [sender] queued 169 NACKs for retransmission\
-16:22:00.422482 [sender] queued 169 NACKs for retransmission\
-16:22:00.492113 [sender] queued 169 NACKs for retransmission\
-16:22:00.573049 [sender] queued 169 NACKs for retransmission\
-16:22:00.673181 [sender] queued 169 NACKs for retransmission\
-16:22:00.819052 [sender] queued 169 NACKs for retransmission\
-16:22:00.898075 [sender] queued 169 NACKs for retransmission\
-16:22:00.993779 [sender] queued 169 NACKs for retransmission\
-16:22:01.073536 [sender] queued 169 NACKs for retransmission\
-16:22:01.190817 [sender] queued 169 NACKs for retransmission\
-16:22:01.276231 [sender] queued 169 NACKs for retransmission\
-16:22:01.372550 [sender] queued 169 NACKs for retransmission\
-16:22:01.473580 [sender] queued 169 NACKs for retransmission\
-16:22:01.580160 [sender] queued 169 NACKs for retransmission\
-16:22:01.670673 [sender] queued 169 NACKs for retransmission\
-16:22:01.788683 [sender] queued 169 NACKs for retransmission\
-16:22:01.890083 [sender] queued 169 NACKs for retransmission\
-16:22:02.001809 [sender] queued 169 NACKs for retransmission\
-16:22:02.076671 [sender] queued 169 NACKs for retransmission\
-16:22:02.178083 [sender] queued 169 NACKs for retransmission\
-16:22:02.274200 [sender] queued 169 NACKs for retransmission\
-16:22:02.391189 [sender] queued 169 NACKs for retransmission\
-16:22:02.487376 [sender] queued 169 NACKs for retransmission\
-16:22:02.571969 [sender] queued 169 NACKs for retransmission\
-16:22:02.673313 [sender] queued 169 NACKs for retransmission\
-16:22:02.802054 [sender] queued 169 NACKs for retransmission\
-16:22:02.887465 [sender] queued 169 NACKs for retransmission\
-16:22:02.971408 [sender] queued 169 NACKs for retransmission\
-16:22:03.072962 [sender] queued 169 NACKs for retransmission\
-16:22:03.218275 [sender] queued 169 NACKs for retransmission\
-16:22:03.303587 [sender] queued 169 NACKs for retransmission\
-16:22:03.399360 [sender] queued 169 NACKs for retransmission\
-16:22:03.500939 [sender] queued 169 NACKs for retransmission\
-16:22:03.623352 [sender] queued 169 NACKs for retransmission\
-16:22:03.692446 [sender] queued 169 NACKs for retransmission\
-16:22:03.772025 [sender] queued 169 NACKs for retransmission\
-16:22:03.873176 [sender] queued 169 NACKs for retransmission\
-16:22:03.969970 [sender] queued 169 NACKs for retransmission\
-16:22:04.070551 [sender] queued 169 NACKs for retransmission\
-16:22:04.182556 [sender] queued 169 NACKs for retransmission\
-16:22:04.273062 [sender] queued 169 NACKs for retransmission\
-16:22:04.391278 [sender] queued 169 NACKs for retransmission\
-16:22:04.491863 [sender] queued 169 NACKs for retransmission\
-16:22:04.593042 [sender] queued 169 NACKs for retransmission\
-16:22:04.672884 [sender] queued 169 NACKs for retransmission\
-16:22:04.785278 [sender] queued 169 NACKs for retransmission\
-16:22:04.870364 [sender] queued 169 NACKs for retransmission\
-16:22:04.982533 [sender] queued 169 NACKs for retransmission\
-16:22:05.073909 [sender] queued 169 NACKs for retransmission\
-16:22:05.169536 [sender] queued 169 NACKs for retransmission\
-16:22:05.270370 [sender] queued 169 NACKs for retransmission\
-16:22:05.382801 [sender] queued 169 NACKs for retransmission\
-16:22:05.474014 [sender] queued 169 NACKs for retransmission\
-16:22:05.580721 [sender] queued 169 NACKs for retransmission\
-16:22:05.670176 [sender] queued 169 NACKs for retransmission\
-16:22:05.776823 [sender] queued 169 NACKs for retransmission\
-16:22:05.873071 [sender] queued 169 NACKs for retransmission\
-16:22:05.969122 [sender] queued 169 NACKs for retransmission\
-16:22:06.075746 [sender] queued 169 NACKs for retransmission\
-16:22:06.171993 [sender] queued 169 NACKs for retransmission\
-16:22:06.273329 [sender] queued 169 NACKs for retransmission\
-16:22:06.391265 [sender] queued 169 NACKs for retransmission\
-16:22:06.470995 [sender] queued 169 NACKs for retransmission\
-16:22:06.582545 [sender] queued 169 NACKs for retransmission\
-16:22:06.672970 [sender] queued 169 NACKs for retransmission\
-16:22:06.780917 [sender] queued 169 NACKs for retransmission\
-16:22:06.875792 [sender] queued 169 NACKs for retransmission\
-16:22:06.971478 [sender] queued 169 NACKs for retransmission\
-16:22:07.072990 [sender] queued 169 NACKs for retransmission\
-16:22:07.169190 [sender] queued 169 NACKs for retransmission\
-16:22:07.281319 [sender] queued 169 NACKs for retransmission\
-16:22:07.371738 [sender] queued 169 NACKs for retransmission\
-16:22:07.467678 [sender] queued 169 NACKs for retransmission\
-16:22:07.601283 [sender] queued 169 NACKs for retransmission\
-16:22:07.687300 [sender] queued 169 NACKs for retransmission\
-16:22:07.804174 [sender] queued 169 NACKs for retransmission\
-16:22:07.884031 [sender] queued 169 NACKs for retransmission\
-16:22:07.991114 [sender] queued 169 NACKs for retransmission\
-16:22:08.092401 [sender] queued 169 NACKs for retransmission\
-16:22:08.193666 [sender] queued 169 NACKs for retransmission\
-16:22:08.273956 [sender] queued 169 NACKs for retransmission\
-16:22:08.369872 [sender] queued 169 NACKs for retransmission\
-16:22:08.491588 [sender] queued 169 NACKs for retransmission\
-16:22:08.642095 [sender] queued 169 NACKs for retransmission\
-16:22:08.710979 [sender] queued 169 NACKs for retransmission\
-16:22:08.812228 [sender] queued 169 NACKs for retransmission\
-16:22:08.912897 [sender] queued 169 NACKs for retransmission\
-16:22:08.993357 [sender] queued 169 NACKs for retransmission\
-16:22:09.111090 [sender] queued 169 NACKs for retransmission\
-16:22:09.196490 [sender] queued 169 NACKs for retransmission\
-16:22:09.324429 [sender] queued 169 NACKs for retransmission\
-16:22:09.409727 [sender] queued 169 NACKs for retransmission\
-16:22:09.489850 [sender] queued 169 NACKs for retransmission\
-16:22:09.627918 [sender] queued 169 NACKs for retransmission\
-16:22:09.697769 [sender] queued 169 NACKs for retransmission\
-16:22:09.782622 [sender] queued 169 NACKs for retransmission\
-16:22:09.905427 [sender] queued 169 NACKs for retransmission\
-16:22:10.012191 [sender] queued 169 NACKs for retransmission\
-16:22:10.113342 [sender] queued 169 NACKs for retransmission\
-16:22:10.172512 [sender] queued 169 NACKs for retransmission\
-16:22:10.332678 [sender] queued 169 NACKs for retransmission\
-16:22:10.401688 [sender] queued 169 NACKs for retransmission\
-16:22:10.524090 [sender] queued 169 NACKs for retransmission\
-16:22:10.583403 [sender] queued 169 NACKs for retransmission\
-16:22:10.732368 [sender] queued 169 NACKs for retransmission\
-16:22:10.774024 [sender] queued 169 NACKs for retransmission\
-16:22:10.897624 [sender] queued 169 NACKs for retransmission\
-16:22:10.971442 [sender] queued 169 NACKs for retransmission\
-16:22:11.073272 [sender] queued 169 NACKs for retransmission\
-16:22:11.217194 [sender] queued 169 NACKs for retransmission\
-16:22:11.270690 [sender] queued 169 NACKs for retransmission\
-16:22:11.387411 [sender] queued 169 NACKs for retransmission\
-16:22:11.515476 [sender] queued 169 NACKs for retransmission\
-16:22:11.612432 [sender] queued 169 NACKs for retransmission\
-16:22:11.781799 [sender] queued 169 NACKs for retransmission\
-16:22:11.888963 [sender] queued 169 NACKs for retransmission\
-16:22:11.982210 [sender] queued 169 NACKs for retransmission\
-16:22:12.095678 [sender] queued 169 NACKs for retransmission\
-16:22:12.181509 [sender] queued 169 NACKs for retransmission\
-16:22:12.275679 [sender] queued 169 NACKs for retransmission\
-16:22:12.375521 [sender] queued 169 NACKs for retransmission\
-16:22:12.475417 [sender] queued 169 NACKs for retransmission\
-16:22:12.595676 [sender] queued 169 NACKs for retransmission\
-16:22:12.682121 [sender] queued 169 NACKs for retransmission\
-16:22:12.782362 [sender] queued 169 NACKs for retransmission\
-16:22:12.888778 [sender] queued 169 NACKs for retransmission\
-16:22:12.988828 [sender] queued 169 NACKs for retransmission\
-16:22:13.076313 [sender] queued 169 NACKs for retransmission\
-16:22:13.182342 [sender] queued 169 NACKs for retransmission\
-16:22:13.282960 [sender] queued 169 NACKs for retransmission\
-16:22:13.375053 [sender] queued 169 NACKs for retransmission\
-16:22:13.475393 [sender] queued 169 NACKs for retransmission\
-16:22:13.588317 [sender] queued 169 NACKs for retransmission\
-16:22:13.681190 [sender] queued 169 NACKs for retransmission\
-16:22:13.774528 [sender] queued 169 NACKs for retransmission\
-16:22:13.888132 [sender] queued 169 NACKs for retransmission\
-16:22:13.974333 [sender] queued 169 NACKs for retransmission\
-16:22:14.074386 [sender] queued 169 NACKs for retransmission\
-16:22:14.182550 [sender] queued 169 NACKs for retransmission\
-16:22:14.281791 [sender] queued 169 NACKs for retransmission\
-16:22:14.381576 [sender] queued 169 NACKs for retransmission\
-16:22:14.474320 [sender] queued 169 NACKs for retransmission\
-16:22:14.588548 [sender] queued 169 NACKs for retransmission\
-16:22:14.675418 [sender] queued 169 NACKs for retransmission\
-16:22:14.781543 [sender] queued 169 NACKs for retransmission\
-16:22:14.875344 [sender] queued 169 NACKs for retransmission\
-16:22:14.982137 [sender] queued 169 NACKs for retransmission\
-16:22:15.074778 [sender] queued 169 NACKs for retransmission\
-16:22:15.175183 [sender] queued 169 NACKs for retransmission\
-16:22:15.282760 [sender] queued 169 NACKs for retransmission\
-16:22:15.378493 [sender] queued 169 NACKs for retransmission\
-16:22:15.479592 [sender] queued 169 NACKs for retransmission\
-16:22:15.570870 [sender] queued 169 NACKs for retransmission\
-16:22:15.672329 [sender] queued 169 NACKs for retransmission\
-16:22:15.778354 [sender] queued 169 NACKs for retransmission\
-16:22:15.869705 [sender] queued 169 NACKs for retransmission\
-16:22:15.970738 [sender] queued 169 NACKs for retransmission\
-16:22:16.082186 [sender] queued 169 NACKs for retransmission\
-16:22:16.172743 [sender] queued 169 NACKs for retransmission\
-16:22:16.268594 [sender] queued 169 NACKs for retransmission\
-16:22:16.370720 [sender] queued 169 NACKs for retransmission\
-16:22:16.472183 [sender] queued 169 NACKs for retransmission\
-16:22:16.572868 [sender] queued 169 NACKs for retransmission\
-16:22:16.680171 [sender] queued 169 NACKs for retransmission\
-16:22:16.770904 [sender] queued 169 NACKs for retransmission\
-16:22:16.871150 [sender] queued 169 NACKs for retransmission\
-16:22:16.972209 [sender] queued 169 NACKs for retransmission\
-16:22:17.090051 [sender] queued 169 NACKs for retransmission\
-16:22:17.169810 [sender] queued 169 NACKs for retransmission\
-16:22:17.272238 [sender] queued 169 NACKs for retransmission\
-16:22:17.378619 [sender] queued 169 NACKs for retransmission\
-16:22:17.468903 [sender] queued 169 NACKs for retransmission\
-16:22:17.569903 [sender] queued 169 NACKs for retransmission\
-16:22:17.672307 [sender] queued 169 NACKs for retransmission\
-16:22:17.777688 [sender] queued 169 NACKs for retransmission\
-16:22:17.878956 [sender] queued 169 NACKs for retransmission\
-16:22:17.974875 [sender] queued 169 NACKs for retransmission\
-16:22:18.071140 [sender] queued 169 NACKs for retransmission\
-16:22:18.177837 [sender] queued 169 NACKs for retransmission\
-16:22:18.279536 [sender] queued 169 NACKs for retransmission\
-16:22:18.380191 [sender] queued 169 NACKs for retransmission\
-16:22:18.470940 [sender] queued 169 NACKs for retransmission\
-16:22:18.577788 [sender] queued 169 NACKs for retransmission\
-16:22:18.679043 [sender] queued 169 NACKs for retransmission\
-16:22:18.769782 [sender] queued 169 NACKs for retransmission\
-16:22:18.872146 [sender] queued 169 NACKs for retransmission\
-16:22:18.967664 [sender] queued 169 NACKs for retransmission\
-16:22:19.069662 [sender] queued 169 NACKs for retransmission\
-16:22:19.180912 [sender] queued 169 NACKs for retransmission\
-16:22:19.287970 [sender] queued 169 NACKs for retransmission\
-16:22:19.378374 [sender] queued 169 NACKs for retransmission\
-16:22:19.468724 [sender] queued 169 NACKs for retransmission\
-16:22:19.569934 [sender] queued 169 NACKs for retransmission\
-16:22:19.672048 [sender] queued 169 NACKs for retransmission\
-16:22:19.778425 [sender] queued 169 NACKs for retransmission\
-16:22:19.869502 [sender] queued 169 NACKs for retransmission\
-16:22:19.970648 [sender] queued 169 NACKs for retransmission\
-16:22:20.071846 [sender] queued 169 NACKs for retransmission\
-16:22:20.178413 [sender] queued 169 NACKs for retransmission\
-16:22:20.268799 [sender] queued 169 NACKs for retransmission\
-16:22:20.370651 [sender] queued 169 NACKs for retransmission\
-16:22:20.472172 [sender] queued 169 NACKs for retransmission\
-16:22:20.578505 [sender] queued 169 NACKs for retransmission\
-16:22:20.669268 [sender] queued 169 NACKs for retransmission\
-16:22:20.770488 [sender] queued 169 NACKs for retransmission\
-16:22:20.870790 [sender] queued 169 NACKs for retransmission\
-16:22:20.977385 [sender] queued 169 NACKs for retransmission\
-16:22:21.068272 [sender] queued 169 NACKs for retransmission\
-16:22:21.170967 [sender] queued 169 NACKs for retransmission\
-16:22:21.271119 [sender] queued 169 NACKs for retransmission\
-16:22:21.377427 [sender] queued 169 NACKs for retransmission\
-16:22:21.468159 [sender] queued 169 NACKs for retransmission\
-16:22:21.569464 [sender] queued 169 NACKs for retransmission\
-16:22:21.682925 [sender] queued 169 NACKs for retransmission\
-16:22:21.777793 [sender] queued 169 NACKs for retransmission\
-16:22:21.869002 [sender] queued 169 NACKs for retransmission\
-16:22:21.970504 [sender] queued 169 NACKs for retransmission\
-16:22:22.082285 [sender] queued 169 NACKs for retransmission\
-16:22:22.172511 [sender] queued 169 NACKs for retransmission\
-16:22:22.269455 [sender] queued 169 NACKs for retransmission\
-16:22:22.369728 [sender] queued 169 NACKs for retransmission\
-16:22:22.471072 [sender] queued 169 NACKs for retransmission\
-16:22:22.566744 [sender] queued 169 NACKs for retransmission\
-16:22:22.668439 [sender] queued 169 NACKs for retransmission\
-16:22:22.769752 [sender] queued 169 NACKs for retransmission\
-16:22:22.870984 [sender] queued 169 NACKs for retransmission\
-16:22:22.971931 [sender] queued 169 NACKs for retransmission\
-16:22:23.068133 [sender] queued 169 NACKs for retransmission\
-16:22:23.180794 [sender] queued 169 NACKs for retransmission\
-16:22:23.270783 [sender] queued 169 NACKs for retransmission\
-16:22:23.378731 [sender] queued 169 NACKs for retransmission\
-16:22:23.478859 [sender] queued 169 NACKs for retransmission\
-16:22:23.569597 [sender] queued 169 NACKs for retransmission\
-16:22:23.670677 [sender] queued 169 NACKs for retransmission\
-16:22:23.766731 [sender] queued 169 NACKs for retransmission\
-16:22:23.868087 [sender] queued 169 NACKs for retransmission\
-16:22:23.969356 [sender] queued 169 NACKs for retransmission\
-16:22:24.077142 [sender] queued 169 NACKs for retransmission\
-16:22:24.172028 [sender] queued 169 NACKs for retransmission\
-16:22:24.268242 [sender] queued 169 NACKs for retransmission\
-16:22:24.369547 [sender] queued 169 NACKs for retransmission\
-16:22:24.470598 [sender] queued 169 NACKs for retransmission\
-16:22:24.572292 [sender] queued 169 NACKs for retransmission\
-16:22:24.680345 [sender] queued 169 NACKs for retransmission\
-16:22:24.769856 [sender] queued 169 NACKs for retransmission\
-16:22:24.871005 [sender] queued 169 NACKs for retransmission\
-16:22:24.967889 [sender] queued 169 NACKs for retransmission\
-16:22:25.079439 [sender] queued 169 NACKs for retransmission\
-16:22:25.180536 [sender] queued 169 NACKs for retransmission\
-16:22:25.271947 [sender] queued 169 NACKs for retransmission\
-16:22:25.377823 [sender] queued 169 NACKs for retransmission\
-16:22:25.473354 [sender] queued 169 NACKs for retransmission\
-16:22:25.570463 [sender] queued 169 NACKs for retransmission\
-16:22:25.671832 [sender] queued 169 NACKs for retransmission\
-16:22:25.777984 [sender] queued 169 NACKs for retransmission\
-16:22:25.879446 [sender] queued 169 NACKs for retransmission\
-16:22:25.970005 [sender] queued 169 NACKs for retransmission\
-16:22:26.071878 [sender] queued 169 NACKs for retransmission\
-16:22:26.178199 [sender] queued 169 NACKs for retransmission\
-16:22:26.279589 [sender] queued 169 NACKs for retransmission\
-16:22:26.369860 [sender] queued 169 NACKs for retransmission\
-16:22:26.471272 [sender] queued 169 NACKs for retransmission\
-16:22:26.577674 [sender] queued 169 NACKs for retransmission\
-16:22:26.775695 [sender] queued 169 NACKs for retransmission\
-16:22:26.910213 [sender] queued 169 NACKs for retransmission\
-16:22:26.975575 [sender] queued 169 NACKs for retransmission\
-16:22:27.086720 [sender] queued 169 NACKs for retransmission\
-16:22:27.175544 [sender] queued 169 NACKs for retransmission\
-16:22:27.275542 [sender] queued 169 NACKs for retransmission\
-16:22:27.383517 [sender] queued 169 NACKs for retransmission\
-16:22:27.475500 [sender] queued 169 NACKs for retransmission\
-16:22:27.574166 [sender] queued 169 NACKs for retransmission\
-16:22:27.671446 [sender] queued 169 NACKs for retransmission\
-16:22:27.770140 [sender] queued 169 NACKs for retransmission\
-16:22:27.872695 [sender] queued 169 NACKs for retransmission\
-16:22:27.970264 [sender] queued 169 NACKs for retransmission\
-16:22:28.069158 [sender] queued 169 NACKs for retransmission\
-16:22:28.179490 [sender] queued 169 NACKs for retransmission\
-16:22:28.268758 [sender] queued 169 NACKs for retransmission\
-16:22:28.379398 [sender] queued 169 NACKs for retransmission\
-16:22:28.470262 [sender] queued 169 NACKs for retransmission\
-16:22:28.571473 [sender] queued 169 NACKs for retransmission\
-16:22:28.668683 [sender] queued 169 NACKs for retransmission\
-16:22:28.776652 [sender] queued 169 NACKs for retransmission\
-16:22:28.868780 [sender] queued 169 NACKs for retransmission\
-16:22:28.976687 [sender] queued 169 NACKs for retransmission\
-16:22:29.075563 [sender] queued 169 NACKs for retransmission\
-16:22:29.168975 [sender] queued 169 NACKs for retransmission\
-16:22:29.275970 [sender] queued 169 NACKs for retransmission\
-16:22:29.370345 [sender] queued 169 NACKs for retransmission\
-16:22:29.478062 [sender] queued 169 NACKs for retransmission\
-16:22:30.079029 [sender] queued 169 NACKs for retransmission\
-16:22:30.179029 [sender] queued 169 NACKs for retransmission\
-16:22:30.287224 [sender] queued 169 NACKs for retransmission\
-16:22:30.379167 [sender] queued 169 NACKs for retransmission\
-16:22:30.479037 [sender] queued 169 NACKs for retransmission\
-16:22:30.580599 [sender] queued 169 NACKs for retransmission\
-16:22:30.679071 [sender] queued 169 NACKs for retransmission\
-16:22:30.779340 [sender] queued 169 NACKs for retransmission\
-16:22:30.883070 [sender] queued 169 NACKs for retransmission\
-16:22:30.979029 [sender] queued 169 NACKs for retransmission\
-16:22:31.090973 [sender] queued 169 NACKs for retransmission\
-16:22:31.176155 [sender] queued 169 NACKs for retransmission\
-16:22:31.275131 [sender] queued 169 NACKs for retransmission\
-16:22:31.374770 [sender] queued 169 NACKs for retransmission\
-16:22:31.474788 [sender] queued 169 NACKs for retransmission\
-16:22:31.578976 [sender] queued 169 NACKs for retransmission\
-16:22:31.671235 [sender] queued 169 NACKs for retransmission\
-16:22:31.770878 [sender] queued 169 NACKs for retransmission\
-16:22:31.874685 [sender] queued 169 NACKs for retransmission\
-16:22:31.983180 [sender] queued 169 NACKs for retransmission\
-16:22:32.095101 [sender] queued 169 NACKs for retransmission\
-16:22:32.183054 [sender] queued 169 NACKs for retransmission\
-16:22:32.290950 [sender] queued 169 NACKs for retransmission\
-16:22:32.383334 [sender] queued 169 NACKs for retransmission\
-16:22:32.570848 [sender] queued 169 NACKs for retransmission\
-16:22:32.674857 [sender] queued 169 NACKs for retransmission\
-16:22:32.770381 [sender] queued 169 NACKs for retransmission\
-16:22:32.875585 [sender] queued 169 NACKs for retransmission\
-16:22:32.974384 [sender] queued 169 NACKs for retransmission\
-16:22:33.078875 [sender] queued 169 NACKs for retransmission\
-16:22:33.170146 [sender] queued 169 NACKs for retransmission\
-16:22:33.270816 [sender] queued 169 NACKs for retransmission\
-16:22:33.371192 [sender] queued 169 NACKs for retransmission\
-16:22:33.482879 [sender] queued 169 NACKs for retransmission\
-16:22:33.570859 [sender] queued 169 NACKs for retransmission\
-16:22:33.670387 [sender] queued 169 NACKs for retransmission\
-16:22:33.770804 [sender] queued 169 NACKs for retransmission\
-16:22:33.882939 [sender] queued 169 NACKs for retransmission\
-16:22:33.982938 [sender] queued 169 NACKs for retransmission\
-16:22:34.071019 [sender] queued 169 NACKs for retransmission\
-16:22:34.183079 [sender] queued 169 NACKs for retransmission\
-16:22:34.282893 [sender] queued 169 NACKs for retransmission\
-16:22:34.371087 [sender] queued 169 NACKs for retransmission\
-16:22:34.479170 [sender] queued 169 NACKs for retransmission\
-16:22:34.578271 [sender] queued 169 NACKs for retransmission\
-16:22:34.682868 [sender] queued 169 NACKs for retransmission\
-16:22:34.782985 [sender] queued 169 NACKs for retransmission\
-16:22:34.883673 [sender] queued 169 NACKs for retransmission\
-16:22:34.974839 [sender] queued 169 NACKs for retransmission\
-16:22:35.087063 [sender] queued 169 NACKs for retransmission\
-16:22:35.170932 [sender] queued 169 NACKs for retransmission\
-16:22:35.270521 [sender] queued 169 NACKs for retransmission\
-16:22:35.382815 [sender] queued 169 NACKs for retransmission\
-16:22:35.482975 [sender] queued 169 NACKs for retransmission\
-16:22:35.586698 [sender] queued 169 NACKs for retransmission\
-16:22:35.678806 [sender] queued 169 NACKs for retransmission\
-16:22:35.795129 [sender] queued 169 NACKs for retransmission\
-16:22:35.882880 [sender] queued 169 NACKs for retransmission\
-16:22:35.974080 [sender] queued 169 NACKs for retransmission\
-16:22:36.098907 [sender] queued 169 NACKs for retransmission\
-16:22:36.186896 [sender] queued 169 NACKs for retransmission\
-16:22:36.295287 [sender] queued 169 NACKs for retransmission\
-16:22:36.402939 [sender] queued 169 NACKs for retransmission\
-16:22:36.499458 [sender] queued 169 NACKs for retransmission\
-16:22:36.590974 [sender] queued 169 NACKs for retransmission\
-16:22:36.698798 [sender] queued 169 NACKs for retransmission\
-16:22:36.795462 [sender] queued 169 NACKs for retransmission\
-16:22:36.878810 [sender] queued 169 NACKs for retransmission\
-16:22:36.970587 [sender] queued 169 NACKs for retransmission\
-16:22:37.082886 [sender] queued 169 NACKs for retransmission\
-16:22:37.178816 [sender] queued 169 NACKs for retransmission\
-16:22:37.281962 [sender] queued 169 NACKs for retransmission\
-16:22:37.382727 [sender] queued 169 NACKs for retransmission\
-16:22:37.474775 [sender] queued 169 NACKs for retransmission\
-16:22:37.586879 [sender] queued 169 NACKs for retransmission\
-16:22:37.678087 [sender] queued 169 NACKs for retransmission\
-16:22:37.770580 [sender] queued 169 NACKs for retransmission\
-16:22:37.898804 [sender] queued 169 NACKs for retransmission\
-16:22:37.974423 [sender] queued 169 NACKs for retransmission\
-16:22:38.074157 [sender] queued 169 NACKs for retransmission\
-16:22:38.186682 [sender] queued 169 NACKs for retransmission\
-16:22:38.270331 [sender] queued 169 NACKs for retransmission\
-16:22:38.378643 [sender] queued 169 NACKs for retransmission\
-16:22:38.474047 [sender] queued 169 NACKs for retransmission\
-16:22:38.582019 [sender] queued 169 NACKs for retransmission\
-16:22:38.674004 [sender] queued 169 NACKs for retransmission\
-16:22:38.770669 [sender] queued 169 NACKs for retransmission\
-16:22:38.878646 [sender] queued 169 NACKs for retransmission\
-16:22:38.978340 [sender] queued 169 NACKs for retransmission\
-16:22:39.078633 [sender] queued 169 NACKs for retransmission\
-16:22:39.174061 [sender] queued 169 NACKs for retransmission\
-16:22:39.290293 [sender] queued 169 NACKs for retransmission\
-16:22:39.374590 [sender] queued 169 NACKs for retransmission\
-16:22:39.478601 [sender] queued 169 NACKs for retransmission\
-16:22:39.570627 [sender] queued 169 NACKs for retransmission\
-16:22:39.682609 [sender] queued 169 NACKs for retransmission\
-16:22:39.774709 [sender] queued 169 NACKs for retransmission\
-16:22:39.883179 [sender] queued 169 NACKs for retransmission\
-16:22:39.974588 [sender] queued 169 NACKs for retransmission\
-16:22:40.070649 [sender] queued 169 NACKs for retransmission\
-16:22:40.178774 [sender] queued 169 NACKs for retransmission\
-16:22:40.286547 [sender] queued 169 NACKs for retransmission\
-16:22:40.374068 [sender] queued 169 NACKs for retransmission\
-16:22:40.474013 [sender] queued 169 NACKs for retransmission\
-16:22:40.574026 [sender] queued 169 NACKs for retransmission\
-16:22:40.669970 [sender] queued 169 NACKs for retransmission\
-16:22:40.778172 [sender] queued 169 NACKs for retransmission\
-16:22:40.882164 [sender] queued 169 NACKs for retransmission\
-16:22:40.977779 [sender] queued 169 NACKs for retransmission\
-16:22:41.070121 [sender] queued 169 NACKs for retransmission\
-16:22:41.182294 [sender] queued 169 NACKs for retransmission\
-16:22:41.278273 [sender] queued 169 NACKs for retransmission\
-16:22:41.382517 [sender] queued 169 NACKs for retransmission\
-16:22:41.478513 [sender] queued 169 NACKs for retransmission\
-16:22:41.570451 [sender] queued 169 NACKs for retransmission\
-16:22:41.773267 [sender] queued 169 NACKs for retransmission\
-16:22:41.872649 [sender] queued 169 NACKs for retransmission\
-16:22:41.974118 [sender] queued 169 NACKs for retransmission\
-16:22:42.075466 [sender] queued 169 NACKs for retransmission\
-16:22:42.172501 [sender] queued 169 NACKs for retransmission\
-16:22:42.278134 [sender] queued 169 NACKs for retransmission\
-16:22:42.368761 [sender] queued 169 NACKs for retransmission\
-16:22:42.470114 [sender] queued 169 NACKs for retransmission\
-16:22:42.571405 [sender] queued 169 NACKs for retransmission\
-16:22:42.667522 [sender] queued 169 NACKs for retransmission\
-16:22:42.771875 [sender] queued 169 NACKs for retransmission\
-16:22:42.876131 [sender] queued 169 NACKs for retransmission\
-16:22:42.971261 [sender] queued 169 NACKs for retransmission\
-16:22:43.067246 [sender] queued 169 NACKs for retransmission\
-16:22:43.168785 [sender] queued 169 NACKs for retransmission\
-16:22:43.275366 [sender] queued 169 NACKs for retransmission\
-16:22:43.371354 [sender] queued 169 NACKs for retransmission\
-16:22:43.467302 [sender] queued 169 NACKs for retransmission\
-16:22:43.574004 [sender] queued 169 NACKs for retransmission\
-16:22:43.675342 [sender] queued 169 NACKs for retransmission\
-16:22:43.771351 [sender] queued 169 NACKs for retransmission\
-16:22:43.881103 [sender] queued 169 NACKs for retransmission\
-16:22:43.985814 [sender] queued 169 NACKs for retransmission\
-16:22:44.076550 [sender] queued 169 NACKs for retransmission\
-16:22:44.172316 [sender] queued 169 NACKs for retransmission\
-16:22:44.278160 [sender] queued 169 NACKs for retransmission\
-16:22:44.381562 [sender] queued 169 NACKs for retransmission\
-16:22:44.471165 [sender] queued 169 NACKs for retransmission\
-16:22:44.572463 [sender] queued 169 NACKs for retransmission\
-16:22:44.668566 [sender] queued 169 NACKs for retransmission\
-16:22:44.768870 [sender] queued 169 NACKs for retransmission\
-16:22:44.876135 [sender] queued 169 NACKs for retransmission\
-16:22:44.972753 [sender] queued 169 NACKs for retransmission\
-16:22:45.068947 [sender] queued 169 NACKs for retransmission\
-16:22:45.169729 [sender] queued 169 NACKs for retransmission\
-16:22:45.282541 [sender] queued 169 NACKs for retransmission\
-16:22:45.377483 [sender] queued 169 NACKs for retransmission\
-16:22:45.479145 [sender] queued 169 NACKs for retransmission\
-16:22:45.570046 [sender] queued 169 NACKs for retransmission\
-16:22:45.681804 [sender] queued 169 NACKs for retransmission\
-16:22:45.772448 [sender] queued 169 NACKs for retransmission\
-16:22:45.878979 [sender] queued 169 NACKs for retransmission\
-16:22:45.968812 [sender] queued 169 NACKs for retransmission\
-16:22:46.076254 [sender] queued 169 NACKs for retransmission\
-16:22:46.171395 [sender] queued 169 NACKs for retransmission\
-16:22:46.267548 [sender] queued 169 NACKs for retransmission\
-16:22:46.376177 [sender] queued 169 NACKs for retransmission\
-16:22:46.475229 [sender] queued 169 NACKs for retransmission\
-16:22:46.571919 [sender] queued 169 NACKs for retransmission\
-16:22:46.672714 [sender] queued 169 NACKs for retransmission\
-16:22:46.774102 [sender] queued 169 NACKs for retransmission\
-16:22:46.875391 [sender] queued 169 NACKs for retransmission\
-16:22:46.971540 [sender] queued 169 NACKs for retransmission\
-16:22:47.067303 [sender] queued 169 NACKs for retransmission\
-16:22:47.174153 [sender] queued 169 NACKs for retransmission\
-16:22:47.277658 [sender] queued 169 NACKs for retransmission\
-16:22:47.371281 [sender] queued 169 NACKs for retransmission\
-16:22:47.473257 [sender] queued 169 NACKs for retransmission\
-16:22:47.573914 [sender] queued 169 NACKs for retransmission\
-16:22:47.675413 [sender] queued 169 NACKs for retransmission\
-16:22:47.771207 [sender] queued 169 NACKs for retransmission\
-16:22:47.873236 [sender] queued 169 NACKs for retransmission\
-16:22:47.975868 [sender] queued 169 NACKs for retransmission\
-16:22:48.076718 [sender] queued 169 NACKs for retransmission\
-16:22:48.176467 [sender] queued 169 NACKs for retransmission\
-16:22:48.278084 [sender] queued 169 NACKs for retransmission\
-16:22:48.379160 [sender] queued 169 NACKs for retransmission\
-16:22:48.469793 [sender] queued 169 NACKs for retransmission\
-16:22:48.582677 [sender] queued 169 NACKs for retransmission\
-16:22:48.673065 [sender] queued 169 NACKs for retransmission\
-16:22:48.774341 [sender] queued 169 NACKs for retransmission\
-16:22:48.876609 [sender] queued 169 NACKs for retransmission\
-16:22:48.972807 [sender] queued 169 NACKs for retransmission\
-16:22:49.089691 [sender] queued 169 NACKs for retransmission\
-16:22:49.170637 [sender] queued 169 NACKs for retransmission\
-16:22:49.270590 [sender] queued 169 NACKs for retransmission\
-16:22:49.371891 [sender] queued 169 NACKs for retransmission\
-16:22:49.467557 [sender] queued 169 NACKs for retransmission\
-16:22:49.569175 [sender] queued 169 NACKs for retransmission\
-16:22:49.675743 [sender] queued 169 NACKs for retransmission\
-16:22:49.771202 [sender] queued 169 NACKs for retransmission\
-16:22:49.878988 [sender] queued 169 NACKs for retransmission\
-16:22:49.969527 [sender] queued 169 NACKs for retransmission\
-16:22:50.075732 [sender] queued 169 NACKs for retransmission\
-16:22:50.172345 [sender] queued 169 NACKs for retransmission\
-16:22:50.267383 [sender] queued 169 NACKs for retransmission\
-16:22:50.374603 [sender] queued 169 NACKs for retransmission\
-16:22:50.470550 [sender] queued 169 NACKs for retransmission\
-16:22:50.577267 [sender] queued 169 NACKs for retransmission\
-16:22:50.678491 [sender] queued 169 NACKs for retransmission\
-16:22:50.768638 [sender] queued 169 NACKs for retransmission\
-16:22:50.875291 [sender] queued 169 NACKs for retransmission\
-16:22:50.970985 [sender] queued 169 NACKs for retransmission\
-16:22:51.067261 [sender] queued 169 NACKs for retransmission\
-16:22:51.173840 [sender] queued 169 NACKs for retransmission\
-16:22:51.275264 [sender] queued 169 NACKs for retransmission\
-16:22:51.371113 [sender] queued 169 NACKs for retransmission\
-16:22:51.472255 [sender] queued 169 NACKs for retransmission\
-16:22:51.573907 [sender] queued 169 NACKs for retransmission\
-16:22:51.675338 [sender] queued 169 NACKs for retransmission\
-16:22:51.770906 [sender] queued 169 NACKs for retransmission\
-16:22:51.872452 [sender] queued 169 NACKs for retransmission\
-16:22:51.973695 [sender] queued 169 NACKs for retransmission\
-16:22:52.085866 [sender] queued 169 NACKs for retransmission\
-16:22:52.171336 [sender] queued 169 NACKs for retransmission\
-16:22:52.272449 [sender] queued 169 NACKs for retransmission\
-16:22:52.373732 [sender] queued 169 NACKs for retransmission\
-16:22:52.469727 [sender] queued 169 NACKs for retransmission\
-16:22:52.571125 [sender] queued 169 NACKs for retransmission\
-16:22:52.667064 [sender] queued 169 NACKs for retransmission\
-16:22:52.773851 [sender] queued 169 NACKs for retransmission\
-16:22:52.875309 [sender] queued 169 NACKs for retransmission\
-16:22:52.971033 [sender] queued 169 NACKs for retransmission\
-16:22:53.067021 [sender] queued 169 NACKs for retransmission\
-16:22:53.174199 [sender] queued 169 NACKs for retransmission\
-16:22:53.274983 [sender] queued 169 NACKs for retransmission\
-16:22:53.371384 [sender] queued 169 NACKs for retransmission\
-16:22:53.472915 [sender] queued 169 NACKs for retransmission\
-16:22:53.573699 [sender] queued 169 NACKs for retransmission\
-16:22:53.675265 [sender] queued 169 NACKs for retransmission\
-16:22:53.771289 [sender] queued 169 NACKs for retransmission\
-16:22:53.878368 [sender] queued 169 NACKs for retransmission\
-16:22:53.974397 [sender] queued 169 NACKs for retransmission\
-16:22:54.075194 [sender] queued 169 NACKs for retransmission\
-16:22:54.176764 [sender] queued 169 NACKs for retransmission\
-16:22:54.272445 [sender] queued 169 NACKs for retransmission\
-16:22:54.373750 [sender] queued 169 NACKs for retransmission\
-16:22:54.475882 [sender] queued 169 NACKs for retransmission\
-16:22:54.572169 [sender] queued 169 NACKs for retransmission\
-16:22:54.668163 [sender] queued 169 NACKs for retransmission\
-16:22:54.769660 [sender] queued 169 NACKs for retransmission\
-16:22:54.870817 [sender] queued 169 NACKs for retransmission\
-16:22:54.977924 [sender] queued 169 NACKs for retransmission\
-16:22:55.078851 [sender] queued 169 NACKs for retransmission\
-16:22:55.169296 [sender] queued 169 NACKs for retransmission\
-16:22:55.271008 [sender] queued 169 NACKs for retransmission\
-16:22:55.377382 [sender] queued 169 NACKs for retransmission\
-16:22:55.467405 [sender] queued 169 NACKs for retransmission\
-16:22:55.569243 [sender] queued 169 NACKs for retransmission\
-16:22:55.670823 [sender] queued 169 NACKs for retransmission\
-16:22:55.772357 [sender] queued 169 NACKs for retransmission\
-16:22:55.878946 [sender] queued 169 NACKs for retransmission\
-16:22:55.979920 [sender] queued 169 NACKs for retransmission\
-16:22:56.080678 [sender] queued 169 NACKs for retransmission\
-16:22:56.171758 [sender] queued 169 NACKs for retransmission\
-16:22:56.272716 [sender] queued 169 NACKs for retransmission\
-16:22:56.373918 [sender] queued 169 NACKs for retransmission\
-16:22:56.474878 [sender] queued 169 NACKs for retransmission\
-16:22:56.572392 [sender] queued 169 NACKs for retransmission\
-16:22:56.729691 [sender] queued 169 NACKs for retransmission\
-16:22:56.772836 [sender] queued 169 NACKs for retransmission\
-16:22:56.876841 [sender] queued 169 NACKs for retransmission\
-16:22:56.988582 [sender] queued 169 NACKs for retransmission\
-16:22:57.072861 [sender] queued 169 NACKs for retransmission\
-16:22:57.189043 [sender] queued 169 NACKs for retransmission\
-16:22:57.293815 [sender] queued 169 NACKs for retransmission\
-16:22:57.372896 [sender] queued 169 NACKs for retransmission\
-16:22:57.472726 [sender] queued 169 NACKs for retransmission\
-16:22:57.572703 [sender] queued 169 NACKs for retransmission\
-16:22:57.676814 [sender] queued 169 NACKs for retransmission\
-16:22:57.820740 [sender] queued 169 NACKs for retransmission\
-16:22:57.876540 [sender] queued 169 NACKs for retransmission\
-16:22:57.977740 [sender] queued 169 NACKs for retransmission\
-16:22:58.072799 [sender] queued 169 NACKs for retransmission\
-16:22:58.172713 [sender] queued 169 NACKs for retransmission\
-16:22:58.269210 [sender] queued 169 NACKs for retransmission\
-16:22:58.369108 [sender] queued 169 NACKs for retransmission\
-16:22:58.468528 [sender] queued 169 NACKs for retransmission\
-16:22:58.585425 [sender] queued 169 NACKs for retransmission\
-16:22:58.672436 [sender] queued 169 NACKs for retransmission\
-16:22:58.772706 [sender] queued 169 NACKs for retransmission\
-16:22:58.892841 [sender] queued 169 NACKs for retransmission\
-16:22:58.972849 [sender] queued 169 NACKs for retransmission\
-16:22:59.068715 [sender] queued 169 NACKs for retransmission\
-16:22:59.172709 [sender] queued 169 NACKs for retransmission\
-16:22:59.272539 [sender] queued 169 NACKs for retransmission\
-16:22:59.368772 [sender] queued 169 NACKs for retransmission\
-16:22:59.485613 [sender] queued 169 NACKs for retransmission\
-16:22:59.573075 [sender] queued 169 NACKs for retransmission\
-16:22:59.668670 [sender] queued 169 NACKs for retransmission\
-16:22:59.788726 [sender] queued 169 NACKs for retransmission\
-16:22:59.880714 [sender] queued 169 NACKs for retransmission\
-16:22:59.968856 [sender] queued 169 NACKs for retransmission\
-16:23:00.076470 [sender] queued 169 NACKs for retransmission\
-16:23:00.180594 [sender] queued 169 NACKs for retransmission\
-16:23:00.268961 [sender] queued 169 NACKs for retransmission\
-16:23:00.380593 [sender] queued 169 NACKs for retransmission\
-16:23:00.468944 [sender] queued 169 NACKs for retransmission\
-^C\
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft-sender.exe -file .\testdata\darksouls3_2022.09.05.mp4 -addr 192.168.50.9:9000
+10:11:24.477100 [sender] hashing file: .\testdata\darksouls3_2022.09.05.mp4 (237931368 bytes)
+10:11:24.528706 [sender] file hash: 0x2681C51BDEAEBA6F
+10:11:24.529309 [sender] sending SESSION_REQ: sessionID=0x05E6B016 -> 192.168.50.9:9000
+10:11:24.529834 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+10:11:24.529834 [sender] congestion control ENABLED, starting rate=2.00 MB/s
+10:11:24.529834 [sender] FEC enabled: block_size=100, initial_parity=5%
+10:11:24.529834 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+10:11:24.682258 [congestion] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=1.87)
+10:11:24.782183 [congestion] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.72)
+10:11:24.882447 [congestion] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=2.08)
+10:11:24.982423 [congestion] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=2.57)
+10:11:25.082244 [congestion] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.39)
+10:11:25.181656 [congestion] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=2.10)
+10:11:25.281516 [congestion] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=4.64)
+10:11:25.382547 [congestion] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=5.73)
+10:11:25.482952 [congestion] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=6.85)
+10:11:25.583417 [congestion] INCREASE (phase1): 14.90 -> 18.63 MB/s (loss=0.00% delivery=9.64)
+10:11:25.681738 [congestion] INCREASE (phase1): 18.63 -> 23.28 MB/s (loss=0.00% delivery=6.07)
+10:11:25.732355 [congestion] INCREASE (phase1): 23.28 -> 29.10 MB/s (loss=0.00% delivery=11.79)
+10:11:25.782719 [congestion] INCREASE (phase1): 29.10 -> 36.38 MB/s (loss=0.00% delivery=15.45)
+10:11:25.833476 [congestion] INCREASE (phase1): 36.38 -> 45.47 MB/s (loss=0.00% delivery=24.07)
+10:11:25.883415 [congestion] INCREASE (phase1): 45.47 -> 56.84 MB/s (loss=0.00% delivery=30.95)
+10:11:25.934389 [congestion] INCREASE (phase1): 56.84 -> 71.05 MB/s (loss=0.00% delivery=39.21)
+10:11:25.982310 [congestion] INCREASE (phase1): 71.05 -> 88.82 MB/s (loss=0.00% delivery=0.00)
+10:11:26.035668 [congestion] INCREASE (phase1): 88.82 -> 111.02 MB/s (loss=0.00% delivery=64.14)
+10:11:26.086715 [congestion] INCREASE (phase1): 111.02 -> 138.78 MB/s (loss=0.00% delivery=77.29)
+10:11:26.086715 [sender] queued 5 NACKs for retransmission
+10:11:26.098317 [sender] progress: 10% (17291/172916) actual=15.17 MB/s target=138.78 MB/s
+10:11:26.137810 [congestion] INCREASE (phase1): 138.78 -> 173.47 MB/s (loss=0.00% delivery=99.05)
+10:11:26.137810 [sender] queued 167 NACKs for retransmission
+10:11:26.183012 [congestion] INCREASE (phase1): 173.47 -> 216.84 MB/s (loss=0.00% delivery=11.23)
+10:11:26.183012 [sender] queued 11 NACKs for retransmission
+10:11:26.207865 [congestion] INCREASE (phase1): 216.84 -> 271.05 MB/s (loss=0.00% delivery=0.00)
+10:11:26.242629 [congestion] INCREASE (phase1): 271.05 -> 338.81 MB/s (loss=0.00% delivery=91.73)
+10:11:26.243588 [sender] queued 167 NACKs for retransmission
+10:11:26.255433 [sender] progress: 20% (34582/172916) actual=27.58 MB/s target=338.81 MB/s
+10:11:26.293295 [congestion] INCREASE (phase1): 338.81 -> 423.52 MB/s (loss=0.00% delivery=5.38)
+10:11:26.293295 [congestion] CEILING: rate capped at 396.20 MB/s (4x peak delivery 99.05 MB/s)
+10:11:26.293295 [sender] queued 167 NACKs for retransmission
+10:11:26.318433 [sender] queued 167 NACKs for retransmission
+10:11:26.343660 [sender] queued 167 NACKs for retransmission
+10:11:26.368244 [sender] queued 167 NACKs for retransmission
+10:11:26.390700 [sender] progress: 30% (51873/172916) actual=38.36 MB/s target=396.20 MB/s
+10:11:26.393357 [sender] queued 167 NACKs for retransmission
+10:11:26.418257 [sender] queued 167 NACKs for retransmission
+10:11:26.443037 [sender] queued 167 NACKs for retransmission
+10:11:26.468503 [sender] queued 167 NACKs for retransmission
+10:11:26.493009 [sender] queued 167 NACKs for retransmission
+10:11:26.518058 [sender] queued 167 NACKs for retransmission
+10:11:26.550388 [sender] queued 90 NACKs for retransmission
+10:11:26.618318 [sender] queued 167 NACKs for retransmission
+10:11:26.668241 [sender] queued 167 NACKs for retransmission
+10:11:26.672241 [sender] progress: 40% (69164/172916) actual=44.42 MB/s target=396.20 MB/s
+10:11:26.693241 [sender] queued 167 NACKs for retransmission
+10:11:26.718242 [sender] queued 167 NACKs for retransmission
+10:11:26.742771 [sender] queued 167 NACKs for retransmission
+10:11:26.768290 [sender] queued 167 NACKs for retransmission
+10:11:26.793289 [sender] queued 167 NACKs for retransmission
+10:11:26.817683 [sender] queued 167 NACKs for retransmission
+10:11:26.843585 [sender] queued 167 NACKs for retransmission
+10:11:26.867655 [sender] queued 167 NACKs for retransmission
+10:11:26.892948 [sender] queued 167 NACKs for retransmission
+10:11:26.909531 [sender] NACK for seq 55963 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55964 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55965 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55966 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55967 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55968 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55969 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55970 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55971 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55972 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55973 but chunk not in cache
+10:11:26.910336 [sender] NACK for seq 55974 but chunk not in cache
+10:11:26.910856 [sender] NACK for seq 55975 but chunk not in cache
+10:11:26.910856 [sender] NACK for seq 55976 but chunk not in cache
+10:11:26.910856 [sender] NACK for seq 55977 but chunk not in cache
+10:11:26.910856 [sender] NACK for seq 55978 but chunk not in cache
+10:11:26.910856 [sender] NACK for seq 55979 but chunk not in cache
+10:11:26.910856 [sender] NACK for seq 55980 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55963 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55964 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55965 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55966 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55967 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55968 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55969 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55970 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55971 but chunk not in cache
+10:11:26.911882 [sender] NACK for seq 55972 but chunk not in cache
+10:11:26.912396 [sender] NACK for seq 55973 but chunk not in cache
+10:11:26.912396 [sender] NACK for seq 55974 but chunk not in cache
+10:11:26.912396 [sender] NACK for seq 55975 but chunk not in cache
+10:11:26.912396 [sender] NACK for seq 55976 but chunk not in cache
+10:11:26.912396 [sender] NACK for seq 55977 but chunk not in cache
+10:11:26.912396 [sender] NACK for seq 55978 but chunk not in cache
+10:11:26.912396 [sender] NACK for seq 55979 but chunk not in cache
+10:11:26.912396 [sender] NACK for seq 55980 but chunk not in cache
+10:11:26.913423 [sender] NACK for seq 55963 but chunk not in cache
+10:11:26.913423 [sender] NACK for seq 55964 but chunk not in cache
+10:11:26.913423 [sender] NACK for seq 55965 but chunk not in cache
+10:11:26.913423 [sender] NACK for seq 55966 but chunk not in cache
+10:11:26.913423 [sender] NACK for seq 55967 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55968 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55969 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55970 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55971 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55972 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55973 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55974 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55975 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55976 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55977 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55978 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55979 but chunk not in cache
+10:11:26.913940 [sender] NACK for seq 55980 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55963 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55964 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55965 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55966 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55967 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55968 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55969 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55970 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55971 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55972 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55973 but chunk not in cache
+10:11:26.914978 [sender] NACK for seq 55974 but chunk not in cache
+10:11:26.915501 [sender] NACK for seq 55975 but chunk not in cache
+10:11:26.915501 [sender] NACK for seq 55976 but chunk not in cache
+10:11:26.915501 [sender] NACK for seq 55977 but chunk not in cache
+10:11:26.915501 [sender] NACK for seq 55978 but chunk not in cache
+10:11:26.915501 [sender] NACK for seq 55979 but chunk not in cache
+10:11:26.915501 [sender] NACK for seq 55980 but chunk not in cache
+10:11:26.919738 [sender] queued 167 NACKs for retransmission
+10:11:26.951632 [sender] progress: 50% (86455/172916) actual=49.12 MB/s target=396.20 MB/s
+10:11:26.968631 [sender] queued 167 NACKs for retransmission
+10:11:26.993631 [sender] queued 167 NACKs for retransmission
+10:11:27.018811 [sender] queued 167 NACKs for retransmission
+10:11:27.043379 [sender] queued 167 NACKs for retransmission
+10:11:27.068693 [sender] queued 167 NACKs for retransmission
+10:11:27.093609 [sender] queued 167 NACKs for retransmission
+10:11:27.094609 [sender] progress: 60% (103746/172916) actual=55.66 MB/s target=396.20 MB/s
+10:11:27.118610 [sender] queued 167 NACKs for retransmission
+10:11:27.143100 [sender] queued 167 NACKs for retransmission
+10:11:27.168633 [sender] queued 167 NACKs for retransmission
+10:11:27.193633 [sender] queued 167 NACKs for retransmission
+10:11:27.218680 [sender] queued 167 NACKs for retransmission
+10:11:27.243720 [sender] queued 167 NACKs for retransmission
+10:11:27.268729 [sender] queued 167 NACKs for retransmission
+10:11:27.292755 [sender] queued 167 NACKs for retransmission
+10:11:27.318709 [sender] queued 167 NACKs for retransmission
+10:11:27.343352 [sender] queued 167 NACKs for retransmission
+10:11:27.348776 [sender] NACK for seq 56798 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56799 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56800 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56801 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56802 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56803 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56804 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56805 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56806 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56807 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56808 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56809 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56810 but chunk not in cache
+10:11:27.349099 [sender] NACK for seq 56811 but chunk not in cache
+10:11:27.349601 [sender] NACK for seq 56812 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56813 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56814 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56815 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56816 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56817 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56818 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56819 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56820 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56821 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56822 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56823 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56824 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56825 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56826 but chunk not in cache
+10:11:27.349611 [sender] NACK for seq 56827 but chunk not in cache
+10:11:27.350114 [sender] NACK for seq 56828 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56829 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56830 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56831 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56832 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56833 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56834 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56835 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56836 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56837 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56838 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56839 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56840 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56841 but chunk not in cache
+10:11:27.350133 [sender] NACK for seq 56842 but chunk not in cache
+10:11:27.351168 [sender] NACK for seq 56798 but chunk not in cache
+10:11:27.351168 [sender] NACK for seq 56799 but chunk not in cache
+10:11:27.351168 [sender] NACK for seq 56800 but chunk not in cache
+10:11:27.351168 [sender] NACK for seq 56801 but chunk not in cache
+10:11:27.351168 [sender] NACK for seq 56802 but chunk not in cache
+10:11:27.351671 [sender] NACK for seq 56803 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56804 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56805 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56806 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56807 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56808 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56809 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56810 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56811 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56812 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56813 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56814 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56815 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56816 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56817 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56818 but chunk not in cache
+10:11:27.351681 [sender] NACK for seq 56819 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56820 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56821 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56822 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56823 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56824 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56825 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56826 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56827 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56828 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56829 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56830 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56831 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56832 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56833 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56834 but chunk not in cache
+10:11:27.352193 [sender] NACK for seq 56835 but chunk not in cache
+10:11:27.352709 [sender] NACK for seq 56836 but chunk not in cache
+10:11:27.352709 [sender] NACK for seq 56837 but chunk not in cache
+10:11:27.352709 [sender] NACK for seq 56838 but chunk not in cache
+10:11:27.352709 [sender] NACK for seq 56839 but chunk not in cache
+10:11:27.352709 [sender] NACK for seq 56840 but chunk not in cache
+10:11:27.352709 [sender] NACK for seq 56841 but chunk not in cache
+10:11:27.352709 [sender] NACK for seq 56842 but chunk not in cache
+10:11:27.353225 [sender] NACK for seq 56798 but chunk not in cache
+10:11:27.353225 [sender] NACK for seq 56799 but chunk not in cache
+10:11:27.353225 [sender] NACK for seq 56800 but chunk not in cache
+10:11:27.353225 [sender] NACK for seq 56801 but chunk not in cache
+10:11:27.353225 [sender] NACK for seq 56802 but chunk not in cache
+10:11:27.353225 [sender] NACK for seq 56803 but chunk not in cache
+10:11:27.353225 [sender] NACK for seq 56804 but chunk not in cache
+10:11:27.353225 [sender] NACK for seq 56805 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56806 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56807 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56808 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56809 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56810 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56811 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56812 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56813 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56814 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56815 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56816 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56817 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56818 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56819 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56820 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56821 but chunk not in cache
+10:11:27.353742 [sender] NACK for seq 56822 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56823 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56824 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56825 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56826 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56827 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56828 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56829 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56830 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56831 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56832 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56833 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56834 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56835 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56836 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56837 but chunk not in cache
+10:11:27.354257 [sender] NACK for seq 56838 but chunk not in cache
+10:11:27.354774 [sender] NACK for seq 56839 but chunk not in cache
+10:11:27.354774 [sender] NACK for seq 56840 but chunk not in cache
+10:11:27.354774 [sender] NACK for seq 56841 but chunk not in cache
+10:11:27.354774 [sender] NACK for seq 56842 but chunk not in cache
+10:11:27.355302 [sender] NACK for seq 56798 but chunk not in cache
+10:11:27.355302 [sender] NACK for seq 56799 but chunk not in cache
+10:11:27.355302 [sender] NACK for seq 56800 but chunk not in cache
+10:11:27.355302 [sender] NACK for seq 56801 but chunk not in cache
+10:11:27.355808 [sender] NACK for seq 56802 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56803 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56804 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56805 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56806 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56807 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56808 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56809 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56810 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56811 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56812 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56813 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56814 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56815 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56816 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56817 but chunk not in cache
+10:11:27.355814 [sender] NACK for seq 56818 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56819 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56820 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56821 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56822 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56823 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56824 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56825 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56826 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56827 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56828 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56829 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56830 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56831 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56832 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56833 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56834 but chunk not in cache
+10:11:27.356334 [sender] NACK for seq 56835 but chunk not in cache
+10:11:27.356850 [sender] NACK for seq 56836 but chunk not in cache
+10:11:27.356850 [sender] NACK for seq 56837 but chunk not in cache
+10:11:27.356850 [sender] NACK for seq 56838 but chunk not in cache
+10:11:27.356850 [sender] NACK for seq 56839 but chunk not in cache
+10:11:27.356850 [sender] NACK for seq 56840 but chunk not in cache
+10:11:27.356850 [sender] NACK for seq 56841 but chunk not in cache
+10:11:27.356850 [sender] NACK for seq 56842 but chunk not in cache
+10:11:27.357366 [sender] NACK for seq 56798 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56799 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56800 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56801 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56802 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56803 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56804 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56805 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56806 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56807 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56808 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56809 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56810 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56811 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56812 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56813 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56814 but chunk not in cache
+10:11:27.357879 [sender] NACK for seq 56815 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56816 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56817 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56818 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56819 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56820 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56821 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56822 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56823 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56824 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56825 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56826 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56827 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56828 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56829 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56830 but chunk not in cache
+10:11:27.358396 [sender] NACK for seq 56831 but chunk not in cache
+10:11:27.358902 [sender] NACK for seq 56832 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56833 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56834 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56835 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56836 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56837 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56838 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56839 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56840 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56841 but chunk not in cache
+10:11:27.358912 [sender] NACK for seq 56842 but chunk not in cache
+10:11:27.368797 [sender] queued 167 NACKs for retransmission
+10:11:27.408090 [sender] progress: 70% (121037/172916) actual=57.86 MB/s target=396.20 MB/s
+10:11:27.418494 [sender] queued 167 NACKs for retransmission
+10:11:27.443362 [sender] queued 167 NACKs for retransmission
+10:11:27.468363 [sender] queued 167 NACKs for retransmission
+10:11:27.493738 [sender] queued 167 NACKs for retransmission
+10:11:27.518583 [sender] queued 167 NACKs for retransmission
+10:11:27.543583 [sender] queued 167 NACKs for retransmission
+10:11:27.550115 [sender] progress: 80% (138328/172916) actual=63.02 MB/s target=396.20 MB/s
+10:11:27.568115 [sender] queued 167 NACKs for retransmission
+10:11:27.593115 [sender] queued 167 NACKs for retransmission
+10:11:27.618115 [sender] queued 167 NACKs for retransmission
+10:11:27.643960 [sender] queued 167 NACKs for retransmission
+10:11:27.668554 [sender] queued 167 NACKs for retransmission
+10:11:27.693777 [sender] queued 167 NACKs for retransmission
+10:11:27.718808 [sender] queued 167 NACKs for retransmission
+10:11:27.743186 [sender] queued 167 NACKs for retransmission
+10:11:27.767792 [sender] queued 167 NACKs for retransmission
+10:11:27.786822 [sender] NACK for seq 57678 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57679 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57680 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57681 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57682 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57683 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57684 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57685 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57686 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57687 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57688 but chunk not in cache
+10:11:27.786968 [sender] NACK for seq 57689 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57690 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57691 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57692 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57693 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57694 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57695 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57696 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57697 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57698 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57699 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57700 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57701 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57702 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57703 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57704 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57705 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57706 but chunk not in cache
+10:11:27.787485 [sender] NACK for seq 57707 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57708 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57709 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57710 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57711 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57712 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57713 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57714 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57715 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57716 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57717 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57718 but chunk not in cache
+10:11:27.788065 [sender] NACK for seq 57719 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57720 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57721 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57722 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57723 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57724 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57725 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57726 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57727 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57728 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57729 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57730 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57731 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57732 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57733 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57734 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57735 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57736 but chunk not in cache
+10:11:27.788583 [sender] NACK for seq 57737 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57738 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57739 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57740 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57741 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57742 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57743 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57744 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57745 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57746 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57747 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57748 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57749 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57750 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57751 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57752 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57753 but chunk not in cache
+10:11:27.789097 [sender] NACK for seq 57754 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57755 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57756 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57757 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57758 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57759 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57760 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57761 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57762 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57763 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57764 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57765 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57766 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57767 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57768 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57769 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57770 but chunk not in cache
+10:11:27.789614 [sender] NACK for seq 57771 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57772 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57773 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57774 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57775 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57776 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57777 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57778 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57779 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57780 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57781 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57782 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57783 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57784 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57785 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57786 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57787 but chunk not in cache
+10:11:27.790129 [sender] NACK for seq 57788 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57789 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57790 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57791 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57792 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57793 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57794 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57795 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57796 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57797 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57798 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57799 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57800 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57801 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57802 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57803 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57804 but chunk not in cache
+10:11:27.790656 [sender] NACK for seq 57805 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57806 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57807 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57808 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57809 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57810 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57811 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57812 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57813 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57814 but chunk not in cache
+10:11:27.791171 [sender] NACK for seq 57815 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57816 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57817 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57818 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57819 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57820 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57821 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57822 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57823 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57824 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57825 but chunk not in cache
+10:11:27.791687 [sender] NACK for seq 57826 but chunk not in cache
+10:11:27.792196 [sender] NACK for seq 57827 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57828 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57829 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57830 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57831 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57832 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57833 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57834 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57835 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57836 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57837 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57838 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57839 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57840 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57841 but chunk not in cache
+10:11:27.792205 [sender] NACK for seq 57842 but chunk not in cache
+10:11:27.792717 [sender] NACK for seq 57843 but chunk not in cache
+10:11:27.792717 [sender] NACK for seq 57844 but chunk not in cache
+10:11:27.796853 [sender] queued 158 NACKs for retransmission
+10:11:27.840514 [sender] progress: 90% (155619/172916) actual=64.68 MB/s target=396.20 MB/s
+10:11:27.978227 [sender] progress: 100% (172910/172916) actual=69.00 MB/s target=396.20 MB/s
+10:11:27.978227 [sender] sent 2 tail block parity packets for block 1729 (16 data shards)
+10:11:27.978227 [sender] all 172916 packets sent in 3.448s (69.00 MB/s) | CC: +82 =0 -0
+10:11:27.978227 [sender] waiting for TRANSFER_COMPLETE...
+10:11:28.008357 [sender] queued 167 NACKs for retransmission
+10:11:28.033593 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.057810 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.084021 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.134375 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.233948 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.334371 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.434371 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.535032 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.634209 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.734064 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.834284 [sender] teardown: retransmitting 167 NACKed packets
+10:11:28.935370 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.034168 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.134796 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.234371 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.334370 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.435221 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.534372 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.635371 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.734372 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.834211 [sender] teardown: retransmitting 167 NACKed packets
+10:11:29.934269 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.034014 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.134211 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.234714 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.334921 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.435407 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.535059 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.634208 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.734844 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.834376 [sender] teardown: retransmitting 167 NACKed packets
+10:11:30.934279 [sender] teardown: retransmitting 167 NACKed packets
+10:11:31.034372 [sender] teardown: retransmitting 167 NACKed packets
+10:11:31.134633 [sender] teardown: retransmitting 167 NACKed packets
+10:11:31.234253 [sender] teardown: retransmitting 167 NACKed packets
+10:11:31.334757 [sender] teardown: retransmitting 167 NACKed packets
+10:11:31.434905 [sender] teardown: retransmitting 167 NACKed packets
+10:11:31.534371 [sender] teardown: retransmitting 167 NACKed packets
+10:11:31.634211 [sender] teardown: retransmitting 6 NACKed packets
+10:11:31.736372 [sender] received TRANSFER_COMPLETE
+10:11:31.736907 [sender] sent ACK_CLOSE, entering linger state
+10:11:34.737131 [sender] linger complete, session finished
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft>
 
 ==== WITH NO DELAY ====
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft-sender.exe -file .\testdata\darksouls3_2022.09.05.mp4 -addr 192.168.50.9:9000 --nodelay
