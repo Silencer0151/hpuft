@@ -597,6 +597,20 @@
     <h3>G. Per-Packet Syscall Overhead Is the Phase 1 Bottleneck</h3>
     <p>FTP achieves 93 MB/s on the same Gigabit LAN where HP-UDP reaches ~30–41 MB/s. The difference is not the protocol or the language — it's the syscall pattern. FTP writes large buffers to a TCP socket; the kernel segments them into packets internally. HP-UDP calls <code>conn.Write()</code> for every 1376-byte packet, requiring ~67,000 user-kernel context switches per second at full speed. Each syscall costs ~15µs of overhead, consuming nearly 100% of available CPU time at target throughput. The Phase 2 C port must use <code>sendmmsg()</code>/<code>recvmmsg()</code> or equivalent batching to amortize this cost across 16–64 packets per syscall.</p>
 
+    <h3>H. Go-Specific Memory Pressure</h3>
+    <p>Three allocations patterns in the Go prototype created significant memory and CPU overhead that are not visible in the protocol design but directly impacted measured throughput. All three were fixed in Phase 1 and their equivalents must be avoided in the Phase 2 C port.</p>
+    <ol>
+        <li>
+            <strong>FEC Encoder Construction Cost.</strong> <code>NewRSEncoder(k, m)</code> builds a <code>k×k</code> Vandermonde matrix and inverts it using O(k³) GF(2⁸) operations. For the default block size of <code>k=100</code> this is ~2 million GF operations, measured at ~4 ms per call. With ~1,720 FEC blocks in a 237 MB transfer, constructing a fresh encoder for each block costs ~6.9 seconds of CPU time — roughly equal to the entire transfer duration at 35 MB/s. The fix is to cache the encoder keyed on <code>(dataShards, parityShards)</code> and reuse it across blocks. The matrix is deterministic for a given <code>(k, m)</code> pair and encoding only reads from it (no mutation), so the cached instance is safe for concurrent use. The Phase 2 C port must pre-build encoder matrices at session start and reuse them.
+        </li>
+        <li>
+            <strong>FEC Shard Buffer Allocations.</strong> Each data packet that enters the FEC encoder requires a <code>MaxPayload</code>-sized buffer padded to equal length before RS encoding. At the default block size of 100 and a 35 MB/s transfer rate, this produces ~25,000 allocations per second, generating ~470 MB of heap churn per 237 MB transfer and placing the garbage collector on the critical path. The fix is a <code>sync.Pool</code> of pre-allocated <code>MaxPayload</code>-sized buffers checked out at encode time and returned immediately after the parity computation completes. The Phase 2 C port should maintain a fixed pool of shard-sized stack or heap buffers reused across blocks.
+        </li>
+        <li>
+            <strong>Unbounded Retransmit Cache Growth.</strong> The sender caches every transmitted chunk to service NACK retransmissions. Without eviction, this cache retains all ~172,000 chunks for a 237 MB transfer, consuming ~470 MB of heap memory for the entire session duration. The fix is to prune cache entries with sequence numbers ≤ <code>HighestContiguous</code> (received from each heartbeat), since the receiver has already acknowledged contiguous receipt up to that point and will never NACK those sequences. The Phase 2 C port should use a ring buffer or sliding window indexed on sequence number, freeing confirmed entries on each heartbeat.
+        </li>
+    </ol>
+
     <h2>Appendix A: Protocol Constants (Defaults)</h2>
     <table>
         <thead>

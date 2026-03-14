@@ -1,0 +1,37 @@
+1. Replace conn.Write() with WriteBatch
+
+If you run this code on a Linux machine (or WSL2), you don't have to rewrite in C just to get sendmmsg() behavior. Go's extended network library has an abstraction for it.
+
+Instead of using the standard net package, you pull in golang.org/x/net/ipv4.
+
+    The Fix: You can wrap your standard *net.UDPConn with ipv4.NewPacketConn(conn). This exposes a method called WriteBatch().
+
+    How it works in sender/sender.go: Instead of looping 100 times to send 100 packets, you construct an array of ipv4.Message structs and pass the whole array to WriteBatch() at once. On Linux, Go translates this directly into a single sendmmsg syscall.
+
+2. Defeat the Garbage Collector (Zero-Allocation Pipeline)
+
+If your conn.Write isn't the only bottleneck, Go's Garbage Collector (GC) is the silent killer of network throughput.
+
+Look at protocol/fec.go and sender/sender.go. If you are doing make([]byte, 1376) every time you create a new packet, encode parity, or read a chunk from the file, you are forcing the GC to work overtime cleaning up thousands of tiny byte slices per second.
+
+    The Fix: Implement a sync.Pool in protocol/types.go or a dedicated buffer package.
+
+    How it works: You create a pool of pre-allocated 1376-byte slices. When the sender needs to build a packet, it checks out a buffer from the pool. Once the packet is sent, it returns the buffer to the pool. This drops your heap allocations for the transport loop to essentially zero, completely removing the GC from the critical path.
+
+3. Eliminate Lock Contention in congestion.go
+
+In your Phase 1 prototype, if your congestion.go deficit-accumulator is using a sync.Mutex to lock the state every single time a packet wants to debit the token bucket, you are creating a massive traffic jam on the CPU.
+
+    The Fix: Switch to atomic operations.
+
+    How it works: Use the sync/atomic package to manage your tokens balance (e.g., atomic.AddInt64(&c.tokens, -int64(packetSize))). This allows your send loop to decrement the token budget concurrently without ever halting for a mutex lock.
+
+4. Pre-allocate the Ring Buffer (receiver/buffer.go)
+
+When the receiver gets the SESSION_REQ with the 232 MB file size, it shouldn't be appending to a slice or dynamically growing memory.
+
+    The Fix: buffer.go should instantly allocate the full 232 MB in memory (make([]byte, fileSize)).
+
+    How it works: When receiver.go gets SequenceNum 500, it just calculates the exact byte offset (500 * 1368) and drops the payload directly into that pre-allocated index. No resizing, no shifting, just pure O(1) memory writes.
+
+If you implement sync.Pool for zero-allocation and WriteBatch for the socket, you might find Go gets surprisingly close to that 98 MB/s FTP speed.
