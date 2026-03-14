@@ -81,6 +81,8 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 				LossRate:            50, // 0.50%
 				HighestContiguous:   999,
 				NACKCount:           0,
+				EchoTimestampNs:     1_700_000_000_000_000_000,
+				DispersionNs:        8_500_000,
 				NACKs:               nil,
 			},
 		},
@@ -92,6 +94,8 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 				LossRate:            200, // 2.00%
 				HighestContiguous:   5000,
 				NACKCount:           3,
+				EchoTimestampNs:     0,
+				DispersionNs:        0,
 				NACKs:               []uint64{42, 99, 5001},
 			},
 		},
@@ -120,7 +124,9 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 				got.StorageFlushRate != tc.payload.StorageFlushRate ||
 				got.LossRate != tc.payload.LossRate ||
 				got.HighestContiguous != tc.payload.HighestContiguous ||
-				got.NACKCount != tc.payload.NACKCount {
+				got.NACKCount != tc.payload.NACKCount ||
+				got.EchoTimestampNs != tc.payload.EchoTimestampNs ||
+				got.DispersionNs != tc.payload.DispersionNs {
 				t.Errorf("fixed field mismatch:\n  got:  %+v\n  want: %+v", got, tc.payload)
 			}
 
@@ -144,13 +150,14 @@ func TestHeartbeatTooShort(t *testing.T) {
 }
 
 func TestHeartbeatTruncatedNACKs(t *testing.T) {
-	// Create a heartbeat claiming 5 NACKs but only providing data for 2
+	// Create a heartbeat claiming 5 NACKs but only providing data for 2.
+	// NACKCount is at wire offset 18-19 (unchanged by v3.1 layout).
 	p := HeartbeatPayload{
 		NACKCount: 5,
-		NACKs:     []uint64{1, 2}, // only 2
+		NACKs:     []uint64{1, 2}, // only 2 → marshal produces HeartbeatFixedSize+16 bytes
 	}
 	data := MarshalHeartbeat(&p)
-	// Manually set NACKCount to 5 in the wire data
+	// Lie about NACKCount: claim 5 when only 2 are present.
 	data[18] = 0
 	data[19] = 5
 

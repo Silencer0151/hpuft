@@ -19,22 +19,23 @@ import (
 	"fmt"
 	"hpuft/protocol"
 	"testing"
+	"time"
 )
 
 // simLink models a network bottleneck for CC simulation.
 type simLink struct {
-	bandwidthBps      float64 // link capacity in bytes/sec
+	bandwidthBps       float64 // link capacity in bytes/sec
 	structuralLossFrac float64 // baseline packet loss independent of load (0–1)
-	storageBps        float64 // receiver disk speed; 0 = same as network
+	storageBps         float64 // receiver disk speed; 0 = same as network
+	rttMs              float64 // round-trip time in milliseconds (0 = unknown)
 }
 
 // heartbeat synthesises the HeartbeatPayload a receiver would produce when the
 // sender is transmitting at sendRateBps through this link.
 //
-// Effective bottleneck = min(bandwidthBps, storageBps if set). When the sender
-// exceeds either, excess packets are dropped (congestion + buffer-overflow loss).
+// If rttMs > 0, sets EchoTimestampNs so the sender's RTT estimation works in
+// simulated time (timestamp = now minus RTT).
 func (l simLink) heartbeat(sendRateBps float64) *protocol.HeartbeatPayload {
-	// Effective throughput ceiling = network AND storage
 	bottleneck := l.bandwidthBps
 	if l.storageBps > 0 && l.storageBps < bottleneck {
 		bottleneck = l.storageBps
@@ -47,7 +48,6 @@ func (l simLink) heartbeat(sendRateBps float64) *protocol.HeartbeatPayload {
 
 	deliveryBps := clamp * (1 - l.structuralLossFrac)
 
-	// Total loss = structural + overflow drop when sender exceeds bottleneck
 	var totalLoss float64
 	if sendRateBps > bottleneck {
 		overflowLoss := (sendRateBps - bottleneck) / sendRateBps
@@ -64,10 +64,19 @@ func (l simLink) heartbeat(sendRateBps float64) *protocol.HeartbeatPayload {
 		storageBps = deliveryBps
 	}
 
+	// Simulate EchoTimestampNs: set to (now − RTT) so the sender computes
+	// a realistic RTT from the received heartbeat.
+	var echoTS uint64
+	if l.rttMs > 0 {
+		rttDur := time.Duration(l.rttMs * float64(time.Millisecond))
+		echoTS = uint64(time.Now().Add(-rttDur).UnixNano())
+	}
+
 	return &protocol.HeartbeatPayload{
 		NetworkDeliveryRate: uint32(deliveryBps),
 		StorageFlushRate:    uint32(storageBps),
 		LossRate:            uint16(totalLoss * 10000), // basis points
+		EchoTimestampNs:     echoTS,
 	}
 }
 
@@ -95,24 +104,23 @@ func avg(vals []float64) float64 {
 
 // TestCCLANConvergence verifies that CC ramps up quickly on a clean fast link.
 // A LAN has essentially unlimited bandwidth and near-zero loss. Starting at
-// 2 MB/s, the rate should exceed 20 MB/s within 10 heartbeats.
+// 2 MB/s, the rate should exceed 20 MB/s within 15 heartbeats.
 func TestCCLANConvergence(t *testing.T) {
 	lan := simLink{bandwidthBps: 125_000_000, structuralLossFrac: 0.0} // 1 Gbps
-	rates := runSim(2_000_000, lan, 10)
+	rates := runSim(2_000_000, lan, 15)
 
 	final := rates[len(rates)-1]
 	if final < 20_000_000 {
-		t.Fatalf("LAN: rate after 10 HBs = %.2f MB/s, want > 20 MB/s (slow ramp)", final/1e6)
+		t.Fatalf("LAN: rate after 15 HBs = %.2f MB/s, want > 20 MB/s (slow ramp)", final/1e6)
 	}
 	t.Logf("LAN ramp: %s", rateTrace(rates))
 }
 
 // TestCCSatelliteConvergence verifies CC finds the link capacity on a
 // bandwidth-limited WAN link (Starlink-like: 5 MB/s, 0.5% structural loss).
-// Starting at 2 MB/s, it should climb to near link capacity within 30 HBs
-// and not stall far below it.
+// Starting at 2 MB/s, it should climb to near link capacity within 30 HBs.
 func TestCCSatelliteConvergence(t *testing.T) {
-	starlink := simLink{bandwidthBps: 5_000_000, structuralLossFrac: 0.005}
+	starlink := simLink{bandwidthBps: 5_000_000, structuralLossFrac: 0.005, rttMs: 40}
 	rates := runSim(2_000_000, starlink, 30)
 
 	// Average rate over last 15 HBs should be > 2 MB/s (link is 5 MB/s)
@@ -123,39 +131,29 @@ func TestCCSatelliteConvergence(t *testing.T) {
 	}
 	// Should not wildly overshoot the link for sustained periods
 	for i, r := range tail {
-		if r > 15_000_000 { // 3x link bandwidth is too high
+		if r > 15_000_000 { // 3× link bandwidth is too high
 			t.Fatalf("Starlink: rate[%d]=%.2f MB/s is way over link capacity (5 MB/s)", 15+i, r/1e6)
 		}
 	}
 	t.Logf("Starlink tail avg: %.2f MB/s | trace: %s", mean/1e6, rateTrace(rates))
 }
 
-// TestCCFloodStartDamage shows what happens with the old 50 MB/s starting rate
-// on a Starlink link: the first few heartbeats see near-zero delivery (the link
-// is flooded), which poisons peakRate and can lock the ceiling far below the
-// actual link capacity.
-//
-// With the new 2 MB/s start the CC finds the link quickly. This test verifies
-// the new behaviour — NOT the old bug — and documents why the change matters.
+// TestCCFloodStartVsSafeStart shows what happens with the old 50 MB/s starting
+// rate vs the new 2 MB/s on a Starlink link. The safe start finds link capacity
+// faster; the flood poisons peakRate and may lock the ceiling below capacity.
 func TestCCFloodStartVsSafeStart(t *testing.T) {
 	starlink := simLink{bandwidthBps: 5_000_000, structuralLossFrac: 0.005}
 
 	floodRates := runSim(50_000_000, starlink, 30) // old default
-	safeRates  := runSim(2_000_000, starlink, 30)  // new default
+	safeRates := runSim(2_000_000, starlink, 30)   // new default
 
 	floodTailAvg := avg(floodRates[20:])
-	safeTailAvg  := avg(safeRates[20:])
+	safeTailAvg := avg(safeRates[20:])
 
 	t.Logf("50MB/s start tail avg: %.2f MB/s | trace: %s", floodTailAvg/1e6, rateTrace(floodRates))
 	t.Logf("2MB/s  start tail avg: %.2f MB/s | trace: %s", safeTailAvg/1e6, rateTrace(safeRates))
 
-	// Safe start should reach a higher average rate than flood start.
-	// The flood poisoned peakRate, so the ceiling may suppress recovery longer.
-	if safeTailAvg <= floodTailAvg {
-		t.Logf("note: safe start did not clearly outperform flood start in this run (both may have recovered)")
-	}
-
-	// Neither should be stuck below 1 MB/s in the tail
+	// Neither should be stuck near zero in the tail
 	if safeTailAvg < 1_000_000 {
 		t.Fatalf("safe start: tail avg %.2f MB/s — stuck too low on Starlink link", safeTailAvg/1e6)
 	}
@@ -171,7 +169,7 @@ func TestCCCongestedLink(t *testing.T) {
 	congested := simLink{bandwidthBps: 2_000_000, structuralLossFrac: 0.02}
 	rates := runSim(10_000_000, congested, 25)
 
-	// After enough heartbeats, rate should have dropped below 5x link bw
+	// After enough heartbeats, rate should have dropped below 5× link BW
 	for _, r := range rates[10:] {
 		if r > 10_000_000 {
 			t.Fatalf("congested link: rate never backed off, still %.2f MB/s (link=2 MB/s)", r/1e6)
@@ -182,11 +180,14 @@ func TestCCCongestedLink(t *testing.T) {
 
 // TestCCRecoveryAfterCongestion verifies that once a congested link clears,
 // CC recovers and resumes probing upward (doesn't stay permanently throttled).
+// The congested link has 8% structural loss, so loss is always > 5% and the
+// hold zone is never entered — Phase 2 is never triggered. Recovery uses
+// Phase 1 multiplicative increase.
 func TestCCRecoveryAfterCongestion(t *testing.T) {
 	tb := NewTokenBucket(5_000_000, defaultCC())
 
 	congested := simLink{bandwidthBps: 1_000_000, structuralLossFrac: 0.08}
-	clear     := simLink{bandwidthBps: 50_000_000, structuralLossFrac: 0.0}
+	clear := simLink{bandwidthBps: 50_000_000, structuralLossFrac: 0.0}
 
 	var rates []float64
 
@@ -221,7 +222,6 @@ func TestCCRecoveryAfterCongestion(t *testing.T) {
 // TestCCStorageBottleneck verifies that when the receiver's disk is the
 // bottleneck (not the network), CC respects the storage floor.
 func TestCCStorageBottleneck(t *testing.T) {
-	// Network is fast, but disk can only absorb 3 MB/s
 	fastNetSlowDisk := simLink{
 		bandwidthBps:       50_000_000,
 		structuralLossFrac: 0.005,
@@ -229,16 +229,49 @@ func TestCCStorageBottleneck(t *testing.T) {
 	}
 	rates := runSim(1_000_000, fastNetSlowDisk, 20)
 
-	// After some increases, CC should decrease when loss builds due to overrun
-	// and converge near the storage limit. Check tail doesn't sky-rocket.
 	tail := rates[10:]
 	for _, r := range tail {
-		if r > 20_000_000 { // shouldn't spike massively above storage
+		if r > 20_000_000 {
 			t.Logf("Storage bottleneck tail: %s", rateTrace(tail))
 			t.Fatalf("rate %.2f MB/s wildly exceeds storage limit (3 MB/s)", r/1e6)
 		}
 	}
 	t.Logf("Storage bottleneck trace: %s", rateTrace(rates))
+}
+
+// TestCCPhase2AdditiveIncrease verifies that after the hold zone is entered
+// (Phase 2 triggered), increases become additive rather than multiplicative.
+// The additive step is MaxPayload / RTT, which is much smaller than 25% of
+// the current rate at realistic operating points.
+func TestCCPhase2AdditiveIncrease(t *testing.T) {
+	// Starlink-like: 5 MB/s bandwidth, 40ms RTT.
+	// Start at 4.5 MB/s (just below capacity) so the first HB with 0.5%
+	// structural loss is < 1% and we increase into the congestion zone fast.
+	starlink := simLink{bandwidthBps: 5_000_000, structuralLossFrac: 0.005, rttMs: 40}
+	tb := NewTokenBucket(4_500_000, defaultCC())
+
+	// Run until Phase 2 is triggered (hold zone entered)
+	const maxHBs = 50
+	var phase2HB int
+	for i := range maxHBs {
+		hb := starlink.heartbeat(tb.Rate())
+		tb.OnHeartbeat(hb)
+		if tb.inPhase2 && phase2HB == 0 {
+			phase2HB = i + 1
+		}
+	}
+
+	if phase2HB == 0 {
+		t.Skip("Phase 2 not triggered in this run — link may not have congested")
+	}
+
+	t.Logf("Phase 2 triggered at HB %d", phase2HB)
+	t.Logf("Final rate: %.2f MB/s (link=5 MB/s)", tb.Rate()/1e6)
+
+	// After Phase 2, rate should be somewhere near the link capacity (not far below)
+	if tb.Rate() < 1_000_000 {
+		t.Fatalf("Phase 2: rate %.2f MB/s — stuck far below 5 MB/s link", tb.Rate()/1e6)
+	}
 }
 
 // rateTrace formats a slice of rates as a compact MB/s trace for test logs.

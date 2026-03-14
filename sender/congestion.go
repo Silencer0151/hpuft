@@ -17,6 +17,25 @@ import (
 // problem on Windows (and Go's asynchronous goroutine preemption) where
 // spin loops and time.Sleep(<1ms) both overshoot by ~1ms, capping
 // effective throughput at ~1.4 MB/s regardless of the configured target.
+//
+// # Rate adjustment (v3.1)
+//
+// Two-phase growth model:
+//
+//	Phase 1 — Multiplicative Probe (loss < 1%):
+//	  S_new = S × Phase1Multiplier (1.25×), applied once per RTT.
+//	  The sender has not yet found the link ceiling.
+//
+//	Phase 2 — Additive (permanent after first hold zone entry):
+//	  S_new = S + MaxPayload / RTT, applied once per RTT.
+//	  Gentle probing once the link ceiling is known.
+//
+//	Hold (1–5% loss): rate unchanged. First entry permanently transitions
+//	  the controller into Phase 2.
+//
+//	Decrease (> 5% loss, two consecutive confirmations):
+//	  S_new = smoothed(E) × DecreaseFrac (0.85).
+//	  Undershoots the measured ceiling so router queues can drain.
 type TokenBucket struct {
 	mu sync.Mutex
 
@@ -34,9 +53,6 @@ type TokenBucket struct {
 	lastSend time.Time
 
 	// tokens is the current byte credit balance (negative = debt).
-	// Credits accrue at `rate` bytes/sec over elapsed time;
-	// each Pace call debits the packet size. When debt exceeds the
-	// 1ms sleep threshold, we call time.Sleep and reset to zero.
 	tokens float64
 
 	// EWMA smoothed effective rate (dampens jitter)
@@ -47,17 +63,22 @@ type TokenBucket struct {
 	// Consecutive decrease signals required before acting
 	decreaseStreak int
 
-	// Peak observed rate for recovery reference
+	// Peak observed delivery rate for auto-ceiling
 	peakRate float64
 
 	// atCeiling suppresses log spam when rate is auto-capped
 	atCeiling bool
 
 	// heartbeatCount tracks how many heartbeats have been received.
-	// The auto-ceiling is not applied during the warmup phase (first few
-	// heartbeats) because early delivery-rate measurements reflect cold-start
-	// conditions, not actual link capacity.
 	heartbeatCount int
+
+	// Phase 2 tracking
+	inPhase2      bool // permanent after first 1-5% hold zone entry
+	lastIncreaseHB int  // heartbeatCount at which the last increase was applied
+
+	// rttEstimateNs holds the most recent RTT estimate in nanoseconds.
+	// Derived from EchoTimestampNs in heartbeats. 0 = unknown.
+	rttEstimateNs int64
 
 	// bytesSent tracks bytes sent in the current measurement window
 	bytesSent atomic.Int64
@@ -100,10 +121,6 @@ func (tb *TokenBucket) Rate() float64 {
 // to justify a sleep (≥1ms — the minimum reliable OS sleep granularity on
 // Windows), we sleep and reset the deficit to zero; small deficits are
 // carried forward and will trigger a sleep once they accumulate enough.
-//
-// This produces the correct long-term average rate without relying on
-// sub-millisecond timer precision or busy-wait spin loops, both of which
-// are unreliable under Go's asynchronous goroutine preemption on Windows.
 func (tb *TokenBucket) Pace(packetBytes int) {
 	tb.mu.Lock()
 	rate := tb.rate
@@ -114,30 +131,21 @@ func (tb *TokenBucket) Pace(packetBytes int) {
 		return
 	}
 
-	// Accrue credits for time elapsed since the last Pace call.
-	// lastSend is set after any sleep so elapsed reflects only loop
-	// overhead, keeping the measurement uncontaminated by sleep time.
 	now := time.Now()
 	tb.tokens += rate * now.Sub(tb.lastSend).Seconds()
 
-	// Cap tokens at 2ms of burst budget to prevent large backlogs
-	// during idle periods (e.g., between calibration and steady state).
 	if maxBurst := rate * 0.002; tb.tokens > maxBurst {
 		tb.tokens = maxBurst
 	}
 
-	// Debit this packet.
 	tb.tokens -= float64(packetBytes)
 
-	// If in deficit, compute the sleep needed to honour the target rate.
 	var sleepDur time.Duration
 	if tb.tokens < 0 {
 		sleepDur = time.Duration(-tb.tokens / rate * float64(time.Second))
 		if sleepDur >= time.Millisecond {
-			// Large enough for a reliable OS sleep — clear the deficit.
 			tb.tokens = 0
 		} else {
-			// Too small to sleep reliably; carry it forward.
 			sleepDur = 0
 		}
 	}
@@ -149,25 +157,13 @@ func (tb *TokenBucket) Pace(packetBytes int) {
 		time.Sleep(sleepDur)
 	}
 
-	// Update lastSend AFTER any sleep so the next call's elapsed only
-	// measures loop overhead, not how long we slept.
 	tb.mu.Lock()
 	tb.lastSend = time.Now()
 	tb.mu.Unlock()
 }
 
 // OnHeartbeat processes a heartbeat from the receiver and adjusts the
-// sending rate. The algorithm is loss-driven rather than delivery-rate-ratio
-// driven, because delivery rate is bounded by send rate and can never exceed
-// it — making ratio-based increase thresholds unreachable under timing jitter.
-//
-// Decision logic:
-//   - Loss < 1%  → INCREASE (1.5x) — link has headroom, probe aggressively
-//   - Loss 1-5%  → HOLD — FEC is absorbing loss, stay the course
-//   - Loss > 5%  → DECREASE (consecutive confirmation required)
-//
-// The effective delivery rate (min of network, storage) acts as a ceiling:
-// we never increase above what the receiver can actually process.
+// sending rate per the v3.1 phased growth model.
 //
 // Returns the new rate in bytes/sec.
 func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
@@ -176,13 +172,22 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 
 	tb.heartbeatCount++
 
-	// Effective rate = min(network, storage) per spec
+	// --- Update RTT estimate from echoed sender timestamp ---
+	if hb.EchoTimestampNs > 0 {
+		rtt := time.Now().UnixNano() - int64(hb.EchoTimestampNs)
+		// Sanity-check: accept RTT between 1ms and 10s
+		if rtt >= int64(time.Millisecond) && rtt < int64(10*time.Second) {
+			tb.rttEstimateNs = rtt
+		}
+	}
+
+	// --- Effective delivery rate = min(network, storage) ---
 	rawEffective := float64(hb.NetworkDeliveryRate)
 	if float64(hb.StorageFlushRate) < rawEffective {
 		rawEffective = float64(hb.StorageFlushRate)
 	}
 
-	// EWMA smoothing on delivery rate for decrease targeting
+	// --- EWMA smoothing on delivery rate ---
 	if !tb.ewmaInit {
 		tb.smoothedRate = rawEffective
 		tb.ewmaInit = true
@@ -190,7 +195,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		tb.smoothedRate = tb.ewmaAlpha*rawEffective + (1-tb.ewmaAlpha)*tb.smoothedRate
 	}
 
-	// Track peak observed delivery rate
+	// Track peak observed delivery rate for auto-ceiling
 	if rawEffective > tb.peakRate {
 		tb.peakRate = rawEffective
 	}
@@ -200,29 +205,60 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 
 	switch {
 	case lossBP < 100:
-		// < 1% loss: link has headroom, probe upward
-		newRate := oldRate * tb.cc.IncreaseMultiplier
-		tb.rate = newRate
-		tb.decreaseStreak = 0
-		tb.increases.Add(1)
-		// Only log if rate actually changed (not capped at ceiling)
-		if !tb.atCeiling {
-			log.Printf("[congestion] INCREASE: %.2f -> %.2f MB/s (loss=%.2f%% delivery=%.2f)",
-				oldRate/1e6, tb.rate/1e6, float64(lossBP)/100, rawEffective/1e6)
+		// < 1% loss: link has headroom, probe upward once per RTT.
+		//
+		// hbPerRTT = how many heartbeats fit within one RTT. If RTT < HB
+		// interval (or RTT is unknown), allow increase every heartbeat.
+		hbInterval := protocol.HeartbeatInterval(uint64(tb.rate))
+		hbPerRTT := 1
+		if tb.rttEstimateNs > 0 {
+			rttDur := time.Duration(tb.rttEstimateNs)
+			if rttDur > hbInterval {
+				hbPerRTT = int(rttDur / hbInterval)
+			}
 		}
 
+		if tb.heartbeatCount-tb.lastIncreaseHB >= hbPerRTT {
+			if tb.inPhase2 {
+				// Phase 2: additive increase — gentle probe near the ceiling.
+				// S_new = S + MaxPayload / RTT
+				effectiveRTTNs := tb.rttEstimateNs
+				if effectiveRTTNs == 0 {
+					effectiveRTTNs = int64(hbInterval)
+				}
+				rttSec := float64(effectiveRTTNs) / float64(time.Second)
+				tb.rate += float64(protocol.MaxPayload) / rttSec
+			} else {
+				// Phase 1: multiplicative probe.
+				tb.rate = oldRate * tb.cc.Phase1Multiplier
+			}
+			tb.lastIncreaseHB = tb.heartbeatCount
+			tb.increases.Add(1)
+			if !tb.atCeiling {
+				log.Printf("[congestion] INCREASE (phase%d): %.2f -> %.2f MB/s (loss=%.2f%% delivery=%.2f)",
+					map[bool]int{false: 1, true: 2}[tb.inPhase2],
+					oldRate/1e6, tb.rate/1e6, float64(lossBP)/100, rawEffective/1e6)
+			}
+		}
+		tb.decreaseStreak = 0
+
 	case lossBP <= 500:
-		// 1-5% loss: FEC is handling it, hold steady
+		// 1–5% loss: FEC is absorbing it, hold rate.
+		// First entry into this zone permanently transitions to Phase 2.
+		if !tb.inPhase2 {
+			tb.inPhase2 = true
+			log.Printf("[congestion] → Phase 2 (additive): loss=%.2f%% crossed hold zone", float64(lossBP)/100)
+		}
 		tb.decreaseStreak = 0
 		tb.holds.Add(1)
 
 	default:
-		// > 5% loss: potential congestion, require consecutive confirmation
+		// > 5% loss: confirmed congestion, require two consecutive signals.
 		tb.decreaseStreak++
 
 		if tb.decreaseStreak >= 2 {
-			// Confirmed: drop to smoothed delivery rate + headroom
-			tb.rate = tb.smoothedRate * tb.cc.DecreaseHeadroom
+			// Drop to 85% of EWMA-smoothed delivery rate so queues can drain.
+			tb.rate = tb.smoothedRate * tb.cc.DecreaseFrac
 			tb.decreases.Add(1)
 			log.Printf("[congestion] DECREASE: %.2f -> %.2f MB/s (loss=%.2f%% delivery=%.2f, streak=%d)",
 				oldRate/1e6, tb.rate/1e6, float64(lossBP)/100, rawEffective/1e6, tb.decreaseStreak)
@@ -231,18 +267,15 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		}
 	}
 
-	// Apply max rate cap if configured
+	// Apply explicit max rate cap if configured
 	if tb.maxRate > 0 && tb.rate > tb.maxRate {
 		tb.rate = tb.maxRate
 	}
 
-	// Auto-ceiling: cap at 4x peak observed delivery rate.
-	// This prevents unbounded probing on clean links while still leaving
-	// enough headroom for the rate to grow naturally ahead of measurements.
-	// The ceiling is skipped for the first 3 heartbeats because early
-	// delivery-rate samples reflect cold-start conditions (the calibration
-	// burst window), not actual link capacity — applying the ceiling then
-	// would lock the sender far below what the link can sustain.
+	// Auto-ceiling: cap at 4× peak observed delivery rate.
+	// Skip during warmup (first 5 heartbeats) — early measurements reflect
+	// cold-start conditions (calibration burst, buffer allocation), not real
+	// link capacity.
 	const ceilingWarmupHeartbeats = 5
 	const ceilingMultiplier = 4.0
 	wasCapped := false
@@ -259,7 +292,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		tb.atCeiling = false
 	}
 
-	// Floor: never go below 10 KB/s (effectively a minimum viable rate)
+	// Floor: never go below 10 KB/s
 	if tb.rate < 10_000 {
 		tb.rate = 10_000
 	}
@@ -268,7 +301,6 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 }
 
 // ResetByteCounter resets the bytes-sent counter and returns the previous value.
-// Used by the measurement window to compute the actual send rate.
 func (tb *TokenBucket) ResetByteCounter() int64 {
 	return tb.bytesSent.Swap(0)
 }

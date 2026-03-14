@@ -34,6 +34,16 @@ type HeartbeatGenerator struct {
 	// most recent heartbeat, used to select the next heartbeat interval.
 	lastNetworkRate uint32
 
+	// lastDataReceiveNs is the Unix nanosecond timestamp of the most recently
+	// received DATA packet. Echoed in EchoTimestampNs so the sender can
+	// compute RTT = (heartbeat arrival time) − EchoTimestampNs.
+	lastDataReceiveNs atomic.Int64
+
+	// Calibration burst dispersion: timestamps of first and last calibration
+	// packet received. DispersionNs = last − first.
+	calFirstNs atomic.Int64 // 0 = no calibration packet seen yet
+	calLastNs  atomic.Int64
+
 	// Current interval (rate-proportional)
 	interval time.Duration
 
@@ -83,6 +93,23 @@ func (hg *HeartbeatGenerator) Stop() {
 func (hg *HeartbeatGenerator) RecordPacket(payloadLen int) {
 	hg.bytesReceivedWindow.Add(int64(payloadLen))
 	hg.packetsReceivedWindow.Add(1)
+}
+
+// RecordDataReceiveTime records the receive timestamp of a DATA packet for
+// RTT echo. The sender reads EchoTimestampNs from the heartbeat and computes
+// RTT = now − EchoTimestampNs.
+func (hg *HeartbeatGenerator) RecordDataReceiveTime(ns int64) {
+	hg.lastDataReceiveNs.Store(ns)
+}
+
+// RecordCalibrationPacket records the arrival of a calibration-burst packet.
+// The first call sets the burst start time; subsequent calls update the end time.
+// DispersionNs = calLast − calFirst gives the bottleneck spread across the burst.
+func (hg *HeartbeatGenerator) RecordCalibrationPacket(ns int64) {
+	if hg.calFirstNs.Load() == 0 {
+		hg.calFirstNs.Store(ns)
+	}
+	hg.calLastNs.Store(ns)
 }
 
 // RecordLoss should be called when a packet is determined lost
@@ -178,6 +205,17 @@ func (hg *HeartbeatGenerator) sendHeartbeat() {
 	hg.lastBeatTime = now
 	hg.lastNetworkRate = networkRate
 
+	// --- EchoTimestampNs: sender's last data-send time echoed for RTT ---
+	echoTS := uint64(hg.lastDataReceiveNs.Load())
+
+	// --- DispersionNs: calibration burst spread ---
+	var dispNs uint64
+	first := hg.calFirstNs.Load()
+	last := hg.calLastNs.Load()
+	if first > 0 && last > first {
+		dispNs = uint64(last - first)
+	}
+
 	// Build and send heartbeat
 	payload := protocol.HeartbeatPayload{
 		NetworkDeliveryRate: networkRate,
@@ -185,6 +223,8 @@ func (hg *HeartbeatGenerator) sendHeartbeat() {
 		LossRate:            lossBasisPoints,
 		HighestContiguous:   hcUint64,
 		NACKCount:           uint16(len(nacks)),
+		EchoTimestampNs:     echoTS,
+		DispersionNs:        dispNs,
 		NACKs:               nacks,
 	}
 
