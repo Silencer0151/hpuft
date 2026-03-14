@@ -157,7 +157,12 @@ func (s *Sender) Send() error {
 
 	// --- Step 6: Start heartbeat listener goroutine ---
 	var nackMu sync.Mutex
-	var nackQueue []uint64
+	// nackPending is a set of sequence numbers awaiting retransmission.
+	// Using a map instead of a slice deduplicates NACKs: the same seq
+	// arriving in multiple consecutive heartbeats is only retransmitted
+	// once per drain cycle, preventing the ~167-entry queue from growing
+	// without bound when the receiver persistently reports the same gaps.
+	nackPending := make(map[uint64]struct{})
 
 	// --- Step 7 (pre-declared): Chunk cache for NACK retransmission ---
 	// Declared here so the heartbeat goroutine can prune acknowledged entries.
@@ -222,9 +227,18 @@ func (s *Sender) Send() error {
 
 				if len(hb.NACKs) > 0 {
 					nackMu.Lock()
-					nackQueue = append(nackQueue, hb.NACKs...)
+					newCount := 0
+					for _, seq := range hb.NACKs {
+						if _, exists := nackPending[seq]; !exists {
+							nackPending[seq] = struct{}{}
+							newCount++
+						}
+					}
+					total := len(nackPending)
 					nackMu.Unlock()
-					log.Printf("[sender] queued %d NACKs for retransmission", len(hb.NACKs))
+					if newCount > 0 {
+						log.Printf("[sender] queued %d new NACKs (%d total pending)", newCount, total)
+					}
 				}
 
 				// Prune acknowledged entries from the chunk cache.
@@ -262,14 +276,17 @@ func (s *Sender) Send() error {
 		// --- Priority: retransmit NACKed packets ---
 		// Cap retransmits per iteration so new data always makes forward progress.
 		// Without this, 100+ NACKs monopolize the link and seqNum never advances.
+		// nackPending is a deduplicating set: the same seq from multiple
+		// consecutive heartbeats is only drained once.
 		const maxNACKsPerIteration = 3
 		nackMu.Lock()
-		nacksToSend := nackQueue
-		if len(nacksToSend) > maxNACKsPerIteration {
-			nacksToSend = nacksToSend[:maxNACKsPerIteration]
-			nackQueue = nackQueue[maxNACKsPerIteration:]
-		} else {
-			nackQueue = nil
+		var nacksToSend []uint64
+		for seq := range nackPending {
+			nacksToSend = append(nacksToSend, seq)
+			delete(nackPending, seq)
+			if len(nacksToSend) >= maxNACKsPerIteration {
+				break
+			}
 		}
 		nackMu.Unlock()
 
@@ -279,7 +296,8 @@ func (s *Sender) Send() error {
 			sentMu.Unlock()
 
 			if !ok {
-				log.Printf("[sender] NACK for seq %d but chunk not in cache", nackSeq)
+				// Cache was pruned because HighestContiguous advanced past this
+				// sequence (FEC or late arrival recovered it). Silently skip.
 				continue
 			}
 
@@ -425,8 +443,11 @@ func (s *Sender) Send() error {
 
 	// Drain any NACKs that were queued before we stopped the goroutine
 	nackMu.Lock()
-	pendingNACKs := nackQueue
-	nackQueue = nil
+	pendingNACKs := make([]uint64, 0, len(nackPending))
+	for seq := range nackPending {
+		pendingNACKs = append(pendingNACKs, seq)
+	}
+	nackPending = make(map[uint64]struct{})
 	nackMu.Unlock()
 
 	retransmitNACKs(conn, sessionID, pendingNACKs, sendBuf, sentChunks, &sentMu, totalChunks)
