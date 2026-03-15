@@ -179,6 +179,7 @@
 
     <h2>3. Packet Wire Format (Custom Header)</h2>
     <p>The protocol utilizes a tightly packed, fixed-width <strong>24-byte</strong> binary header for every datagram. The header is naturally aligned for 64-bit systems (three 8-byte words). The hard MTU cap is <strong>1400 bytes total</strong> (header + payload), yielding a maximum payload of <strong>1376 bytes</strong>. This ensures safe passage within standard 1500-byte ethernet MTUs without IP-level fragmentation.</p>
+    <p><strong>Byte order:</strong> All multi-byte fields are in <strong>big-endian (network byte order)</strong>. C implementations must use <code>htonl</code>/<code>ntohl</code> (32-bit), <code>htonll</code>/<code>ntohll</code> (64-bit), or equivalent for all header and payload fields.</p>
 
     <table>
         <thead>
@@ -264,7 +265,7 @@
 
     <h3>C. Handshake Sequence</h3>
     <ul>
-        <li><strong>Step 1 (The Request):</strong> The client transmits <code>Packet 0</code> (<code>SESSION_REQ</code>). The payload contains: <code>FileSize</code> (8 bytes), <code>xxHash64</code> checksum (8 bytes), <code>InitialRate</code> (4 bytes, 0 = use calibration mode), and <code>FileName</code> (variable, null-terminated).</li>
+        <li><strong>Step 1 (The Request):</strong> The client transmits <code>Packet 0</code> (<code>SESSION_REQ</code>). The payload contains: <code>FileSize</code> (8 bytes), <code>xxHash64</code> checksum (8 bytes), <code>InitialRate</code> (4 bytes, 0 = use calibration mode), and <code>FileName</code> (variable, null-terminated). The null terminator is appended after the filename bytes and is <strong>not</strong> counted in <code>PayloadLen</code>. Filenames must not contain embedded null bytes. The receiver strips all path separators (<code>/</code> and <code>\</code>) from the filename before writing — C implementations must scan for both characters to be platform-neutral.</li>
         <li><strong>Step 2 (The Calibration Packet Train):</strong> Without waiting for acknowledgment, the client immediately begins transmitting <code>DATA</code> packets with the <code>Calibration</code> flag (<code>0x02</code>) set. The burst consists of <strong>10 packets</strong> sent back-to-back at wire speed. This small packet train probes the link without flooding router buffers, even on constrained links like satellite. The token bucket is initialized at a default starting rate of 2 MB/s.</li>
         <li><strong>Step 3 (Dispersion Measurement):</strong> The receiver timestamps the arrival of the first and last calibration-flagged packet. Although 10 packets are sent back-to-back at wire speed, they arrive <em>spread out</em> by the bottleneck link — if 10 packets arrive over 10ms, the bottleneck bandwidth is <code>(10 − 1) × 1376 / 0.010 = 1.24 MB/s</code>. The receiver reports this as the <code>DispersionNs</code> field in the first heartbeat, giving the sender a direct measurement of the path's bottleneck capacity before the first rate adjustment. The sender can use this to seed the CC's peak rate estimate.</li>
         <li><strong>Step 4 (The Alignment):</strong> The server parses the request, validates the payload (§4B), allocates the memory ring buffer, and begins accepting incoming data. If the server cannot allocate resources in time, initial calibration packets are dropped — these will be detected and recovered via the standard Heartbeat/NACK mechanism (§6).</li>
@@ -292,7 +293,9 @@
     <p>To eliminate latency penalties from round-trip retransmissions, the protocol proactively embeds mathematical redundancy that adapts to observed network conditions.</p>
 
     <h4>Block Grouping</h4>
-    <p>Data packets are organized into sequential <code>BlockGroups</code>. The default block size is 100 data packets per group.</p>
+    <p>Data packets are organized into sequential <code>BlockGroups</code>. The default block size is 100 data packets per group. The <code>BlockGroup</code> identifier for a DATA packet is computed as:</p>
+    <pre>BlockGroup = SequenceNum / BlockSize   (integer division)</pre>
+    <p>PARITY packets use the same <code>BlockGroup</code> value as the data packets they protect. The <code>SequenceNum</code> field of a PARITY packet is its <strong>zero-based index within the block</strong> (0, 1, 2, …, m−1), not a global sequence number. A C receiver must distinguish PARITY from DATA packets using the <code>PacketType</code> field (<code>0x02</code>) and interpret <code>SequenceNum</code> accordingly.</p>
 
     <h4>Dynamic Parity Ratio</h4>
     <p>The parity packet count per block is dynamically adjusted based on the observed packet loss rate, reported via Heartbeat metrics (§6).</p>
@@ -327,6 +330,15 @@
         <li>The parity count <code>m_tail</code> is calculated using the current adaptive parity ratio, with a <strong>minimum of 2 parity packets</strong> regardless of block size (even a 1-packet tail block gets 2 parity packets). This ensures the most loss-vulnerable portion of the transfer — the tail — has adequate redundancy.</li>
         <li>The sender sets the <code>EndOfFile</code> flag (<code>0x01</code>) on the final data packet and the final parity packet of the tail block. This signals to the receiver that no further block groups will follow.</li>
     </ul>
+    <p>The key formulas for computing totals and boundaries are:</p>
+    <pre>TotalChunks      = ceil(FileSize / MaxPayload)          // number of DATA packets
+k_tail           = TotalChunks % BlockSize               // 0 means last block is full
+                   (if k_tail == 0: k_tail = BlockSize)
+FinalPayloadSize = FileSize % MaxPayload                 // bytes in last DATA packet
+                   (if FinalPayloadSize == 0: FinalPayloadSize = MaxPayload)</pre>
+    <div class="lesson">
+        <strong>EOF Detection in FEC-Recovered Packets:</strong> The <code>EndOfFile</code> flag is only meaningful on the wire. When the final DATA packet is <em>recovered via FEC reconstruction</em> rather than received directly, the flag is not propagated into the reconstructed shard. Receivers must therefore detect end-of-transfer by checking <code>SequenceNum == TotalChunks − 1</code> (known from the <code>SESSION_REQ</code> <code>FileSize</code> field) rather than relying solely on the Flags field.
+    </div>
 
     <h2>6. Adaptive Congestion and Flow Control</h2>
 
@@ -406,7 +418,7 @@
             <tr>
                 <td><code>NACKArray</code></td>
                 <td>8 Bytes × N</td>
-                <td>Array of 64-bit <code>SequenceNum</code> values that were not recoverable via FEC and require retransmission. Bounded to sequences between <code>HighestContiguous+1</code> and the highest received sequence number (never NACKs packets the sender hasn't transmitted yet).</td>
+                <td>Array of 64-bit <code>SequenceNum</code> values that were not recoverable via FEC and require retransmission. Bounded to sequences between <code>HighestContiguous+1</code> and the highest received sequence number (never NACKs packets the sender hasn't transmitted yet). The array is physically limited to fit within one packet: <code>MaxNACKs = (MaxPayload − HeartbeatFixedSize) / 8 = (1376 − 36) / 8 = 167</code>. If more than 167 sequences are pending, the receiver sends the highest-priority subset and the remainder appear in a subsequent heartbeat.</td>
             </tr>
         </tbody>
     </table>
@@ -490,7 +502,7 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <ul>
         <li>A <code>tokens</code> balance (in bytes) accrues credit at the target rate over elapsed wall-clock time.</li>
         <li>Each packet send debits <code>tokens</code> by the packet size.</li>
-        <li>Tokens are capped at a 2ms burst budget to prevent idle periods from banking excessive credit.</li>
+        <li>Tokens are capped at a <strong>2ms burst budget</strong>: <code>max_tokens = rate_bytes_per_sec × 0.002</code>. This prevents idle periods from banking enough credit to burst a large backlog of packets instantly.</li>
         <li>When the deficit grows large enough that the corresponding sleep would be &ge; 1ms (the minimum reliable OS sleep granularity), the sender calls <code>time.Sleep()</code> and resets the deficit to zero.</li>
         <li>Deficits smaller than 1ms are carried forward — they accumulate across multiple packets and eventually trigger a single coarser sleep.</li>
     </ul>
@@ -505,6 +517,8 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <p>When the sender receives a NACK array in a Heartbeat, it queues the identified packets for retransmission. Retransmitted packets carry their original <code>SequenceNum</code> and <code>BlockGroup</code>.</p>
 
     <p>Retransmissions are <strong>interleaved with forward progress</strong>: the sender processes at most <strong>3 NACKed packets per send-loop iteration</strong>, then sends the next new data packet. This prevents NACK storms (e.g., 169 NACKs on a satellite link) from monopolizing bandwidth and stalling <code>seqNum</code> advancement.</p>
+
+    <p>The pending NACK set must be maintained as a <strong>deduplicated set</strong> (hash set or bitset), not a FIFO queue. Each heartbeat may report the same sequence numbers as the previous one (the receiver keeps NACKing until the packet arrives). If the same sequence is appended to a plain list on every heartbeat, the retransmit queue grows without bound. A set ensures each sequence is queued at most once regardless of how many heartbeats repeat it. If a NACK arrives for a sequence that has already been pruned from the sender's chunk cache (because <code>HighestContiguous</code> advanced past it via FEC recovery), the sender silently skips it — the receiver has already recovered the packet and the NACK is stale.</p>
 
     <div class="lesson">
         <strong>Implementation Note:</strong> The v2.0 spec stated that retransmissions are "injected ahead of new data." In practice, draining the entire NACK queue before sending any new data caused a fatal stall on Starlink: at 0.38 MB/s with 169 NACKs, each send-loop iteration spent ~0.62s on retransmits, and <code>seqNum</code> never advanced. The 3-per-iteration cap ensures the transfer always makes forward progress even under heavy loss.
