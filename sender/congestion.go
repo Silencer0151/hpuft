@@ -272,35 +272,42 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		tb.rate = tb.maxRate
 	}
 
-	// Auto-ceiling: cap at 1.5× peak observed delivery rate.
+	// Auto-ceiling — two-tier based on phase:
 	//
-	// PHASE 2 ONLY. During Phase 1 (multiplicative probe), delivery rate
-	// measurements lag the send rate because the sender increases 25% per
-	// heartbeat and the receiver's measurement window hasn't stabilised.
-	// e.g. at 7.63 MB/s send rate the receiver may only report 4.19 MB/s
-	// delivery — applying a 1.5× ceiling here gives 6.28 MB/s, which is
-	// *below* the current rate and locks the sender far below link capacity
-	// (observed: 5.68 MB/s on a 110 MB/s Gigabit link).
+	//   Phase 1 (probe):    cap at 4× peak delivery
+	//   Phase 2 (avoidance): cap at 1.5× peak delivery
 	//
-	// In Phase 2, the sender has already found the approximate link ceiling
-	// via the loss event that triggered the phase transition. The delivery
-	// rate measured near that event reflects genuine link utilisation, so
-	// 1.5× of that is a reliable upper bound for additive probing.
+	// Phase 1 uses a generous 4× multiplier for two reasons:
+	//  1. Delivery measurements lag during ramp-up. At 7.63 MB/s send rate
+	//     the receiver may report only 4.19 MB/s delivery (measurement window
+	//     hasn't caught up). A tight multiplier like 1.5× fires immediately,
+	//     giving a ceiling below the current rate and locking the sender at
+	//     ~5.68 MB/s for the entire transfer on a 110 MB/s Gigabit link.
+	//  2. On a clean link where FEC absorbs all drops (LossRate = 0% always),
+	//     Phase 2 is never entered. Without a Phase 1 ceiling the target rate
+	//     grows exponentially without bound (observed: 345 trillion MB/s).
+	//     4× bounds this at ~400 MB/s on a Gigabit LAN — effectively disabling
+	//     pacing just as nodelay would, but without the absurd log output.
 	//
-	// On a clean link where loss never occurs and Phase 2 is never entered,
-	// the ceiling is never applied — the OS link speed acts as the natural
-	// physical cap, and FEC + NACK retransmissions handle any overflow drops.
-	const ceilingMultiplier = 1.5
+	// Phase 2 uses 1.5× because by then the delivery rate was measured near
+	// actual link capacity (loss triggered the phase transition at or near the
+	// ceiling), so 1.5× is a reliable upper bound for additive probing.
+	const phase1CeilingMult = 4.0
+	const phase2CeilingMult = 1.5
+	ceilingMult := phase1CeilingMult
+	if tb.inPhase2 {
+		ceilingMult = phase2CeilingMult
+	}
 	wasCapped := false
-	if tb.inPhase2 && tb.peakRate > 0 && tb.rate > tb.peakRate*ceilingMultiplier {
-		tb.rate = tb.peakRate * ceilingMultiplier
+	if tb.peakRate > 0 && tb.rate > tb.peakRate*ceilingMult {
+		tb.rate = tb.peakRate * ceilingMult
 		wasCapped = true
 	}
 
 	if wasCapped && !tb.atCeiling {
 		tb.atCeiling = true
 		log.Printf("[congestion] CEILING: rate capped at %.2f MB/s (%.1fx peak delivery %.2f MB/s)",
-			tb.rate/1e6, ceilingMultiplier, tb.peakRate/1e6)
+			tb.rate/1e6, ceilingMult, tb.peakRate/1e6)
 	} else if !wasCapped {
 		tb.atCeiling = false
 	}

@@ -127,10 +127,10 @@ func TestStreakResetOnLowLoss(t *testing.T) {
 }
 
 func TestContinuousIncreaseOnCleanLink(t *testing.T) {
-	// Clean link with zero loss — Phase 2 is never entered so the ceiling
-	// never fires. Phase 1 multiplicative increase should ramp the rate well
-	// above where an early-measurement ceiling would have capped it.
-	// 1 MB/s × 1.25^20 ≈ 86 MB/s after 20 HBs with no loss.
+	// Clean link, zero loss — Phase 1 ramps up and hits the Phase 1 ceiling
+	// at 4× peak delivery. hbWithLoss(0) reports 10 MB/s delivery, so
+	// peakRate = 10 MB/s and ceiling = 40 MB/s.
+	// 1 MB/s × 1.25^N > 40 MB/s → N ≈ 17. Run 20 iterations to be safe.
 	tb := NewTokenBucket(1_000_000, defaultCC())
 
 	for i := 0; i < 20; i++ {
@@ -138,9 +138,10 @@ func TestContinuousIncreaseOnCleanLink(t *testing.T) {
 	}
 
 	actual := tb.Rate()
-	if actual < 20_000_000 {
-		t.Fatalf("after 20 HBs with zero loss: rate = %.2f MB/s, want > 20 MB/s (should ramp freely in Phase 1)",
-			actual/1e6)
+	expectedCeiling := 40_000_000.0
+	if actual < expectedCeiling*0.99 || actual > expectedCeiling*1.01 {
+		t.Fatalf("after 20 HBs: rate = %.2f MB/s, want ~%.2f MB/s (Phase 1 ceiling = 4× peak delivery 10 MB/s)",
+			actual/1e6, expectedCeiling/1e6)
 	}
 }
 

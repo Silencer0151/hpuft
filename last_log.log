@@ -1,162 +1,210 @@
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft-sender.exe -file .\testdata\darksouls3_2022.09.05.mp4 -addr 192.168.50.9:9000
-10:24:10.912032 [sender] hashing file: .\testdata\darksouls3_2022.09.05.mp4 (237931368 bytes)
-10:24:10.964747 [sender] file hash: 0x2681C51BDEAEBA6F
-10:24:10.965747 [sender] sending SESSION_REQ: sessionID=0xBE1DE72F -> 192.168.50.9:9000
-10:24:10.965747 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-10:24:10.965747 [sender] congestion control ENABLED, starting rate=2.00 MB/s
-10:24:10.965747 [sender] FEC enabled: block_size=100, initial_parity=5%
-10:24:10.965747 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-10:24:11.116788 [congestion] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=2.67)
-10:24:11.216385 [congestion] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.69)
-10:24:11.316333 [congestion] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=1.27)
-10:24:11.416157 [congestion] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=2.68)
-10:24:11.516790 [congestion] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.41)
-10:24:11.616258 [congestion] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=4.19)
-10:24:11.616258 [congestion] CEILING: rate capped at 6.28 MB/s (1.5x peak delivery 4.19 MB/s)
-10:24:16.751523 [sender] progress: 10% (17291/172916) actual=4.11 MB/s target=6.66 MB/s
-10:24:21.954697 [sender] progress: 20% (34582/172916) actual=4.33 MB/s target=7.86 MB/s
-10:24:26.565724 [sender] progress: 30% (51873/172916) actual=4.58 MB/s target=7.95 MB/s
-10:24:31.186769 [sender] progress: 40% (69164/172916) actual=4.71 MB/s target=8.01 MB/s
-10:24:35.183810 [sender] progress: 50% (86455/172916) actual=4.91 MB/s target=9.36 MB/s
-10:24:38.893986 [sender] progress: 60% (103746/172916) actual=5.11 MB/s target=10.56 MB/s
-10:24:42.373582 [sender] progress: 70% (121037/172916) actual=5.30 MB/s target=10.56 MB/s
-10:24:45.873744 [sender] progress: 80% (138328/172916) actual=5.45 MB/s target=10.56 MB/s
-10:24:49.362765 [sender] progress: 90% (155619/172916) actual=5.58 MB/s target=10.56 MB/s
-10:24:52.823421 [sender] progress: 100% (172910/172916) actual=5.68 MB/s target=10.72 MB/s
-10:24:52.825010 [sender] sent 2 tail block parity packets for block 1729 (16 data shards)
-10:24:52.825010 [sender] all 172916 packets sent in 41.859s (5.68 MB/s) | CC: +418 =0 -0
-10:24:52.825010 [sender] waiting for TRANSFER_COMPLETE...
-10:24:52.847372 [sender] received TRANSFER_COMPLETE
-10:24:52.847375 [sender] sent ACK_CLOSE, entering linger state
-10:24:55.848058 [sender] linger complete, session finished
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft>
-
-==== WITH NO DELAY ====
-S C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft-sender.exe -file .\testdata\darksouls3_2022.09.05.mp4 -addr 192.168.50.9:9000 -nodelay
-10:25:59.114641 [sender] hashing file: .\testdata\darksouls3_2022.09.05.mp4 (237931368 bytes)
-10:25:59.163966 [sender] file hash: 0x2681C51BDEAEBA6F
-10:25:59.164966 [sender] sending SESSION_REQ: sessionID=0x8264C50D -> 192.168.50.9:9000
-10:25:59.164966 [sender] congestion control DISABLED (nodelay mode)
-10:25:59.164966 [sender] FEC enabled: block_size=100, initial_parity=5%
-10:25:59.307388 [sender] progress: 10% (17291/172916) rate=167.05 MB/s
-10:25:59.318427 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.343097 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.368080 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.393080 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.418081 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.443080 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.518023 [sender] queued 150 new NACKs (317 total pending)
-10:25:59.568040 [sender] queued 17 new NACKs (334 total pending)
-10:25:59.587388 [sender] progress: 20% (34582/172916) rate=112.65 MB/s
-10:25:59.593122 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.618594 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.643242 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.668796 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.692831 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.718533 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.730121 [sender] progress: 30% (51873/172916) rate=126.30 MB/s
-10:25:59.743136 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.768688 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.792688 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.817693 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.842693 [sender] queued 167 new NACKs (167 total pending)
-10:25:59.893026 [sender] queued 167 new NACKs (334 total pending)
-10:25:59.993345 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.018587 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.021586 [sender] progress: 40% (69164/172916) rate=111.10 MB/s
-10:26:00.043587 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.074587 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.118915 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.143912 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.163550 [sender] progress: 50% (86455/172916) rate=119.13 MB/s
-10:26:00.169790 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.194655 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.219895 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.244435 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.269375 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.294044 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.319047 [sender] queued 167 new NACKs (334 total pending)
-10:26:00.444344 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.464861 [sender] progress: 60% (103746/172916) rate=109.82 MB/s
-10:26:00.468861 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.494725 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.519544 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.544645 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.569461 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.594010 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.613010 [sender] progress: 70% (121037/172916) rate=115.02 MB/s
-10:26:00.619731 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.644536 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.669643 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.694552 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.719597 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.744779 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.869708 [sender] queued 167 new NACKs (334 total pending)
-10:26:00.894730 [sender] queued 167 new NACKs (167 total pending)
-10:26:00.901964 [sender] progress: 80% (138328/172916) rate=109.58 MB/s
-10:26:00.919497 [sender] queued 76 new NACKs (76 total pending)
-10:26:01.041869 [sender] progress: 90% (155619/172916) rate=114.09 MB/s
-10:26:01.127757 [sender] queued 167 new NACKs (167 total pending)
-10:26:01.177366 [sender] queued 167 new NACKs (167 total pending)
-10:26:01.277215 [sender] queued 167 new NACKs (334 total pending)
-10:26:01.306388 [sender] queued 167 new NACKs (167 total pending)
-10:26:01.322611 [sender] progress: 100% (172910/172916) rate=110.27 MB/s
-10:26:01.323127 [sender] sent 2 tail block parity packets for block 1729 (16 data shards)
-10:26:01.323127 [sender] all 172916 packets sent in 2.158s (110.25 MB/s)
-10:26:01.323127 [sender] waiting for TRANSFER_COMPLETE...
-10:26:01.328192 [sender] queued 167 new NACKs (167 total pending)
-10:26:01.352369 [sender] teardown: retransmitting 167 NACKed packets
-10:26:01.403584 [sender] teardown: retransmitting 167 NACKed packets
-10:26:01.504372 [sender] teardown: retransmitting 167 NACKed packets
-10:26:01.604367 [sender] teardown: retransmitting 167 NACKed packets
-10:26:01.704306 [sender] teardown: retransmitting 167 NACKed packets
-10:26:01.804560 [sender] teardown: retransmitting 167 NACKed packets
-10:26:01.904407 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.004526 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.104292 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.203217 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.303208 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.403422 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.503902 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.604063 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.704063 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.804498 [sender] teardown: retransmitting 167 NACKed packets
-10:26:02.904425 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.004371 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.104671 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.204372 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.304113 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.403207 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.503372 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.603888 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.703372 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.803372 [sender] teardown: retransmitting 167 NACKed packets
-10:26:03.903872 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.004766 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.103944 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.204357 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.304210 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.404273 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.504305 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.604342 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.704546 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.804286 [sender] teardown: retransmitting 167 NACKed packets
-10:26:04.903155 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.004209 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.103367 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.204068 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.303061 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.403907 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.504153 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.603214 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.703939 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.803820 [sender] teardown: retransmitting 167 NACKed packets
-10:26:05.904058 [sender] teardown: retransmitting 167 NACKed packets
-10:26:06.003367 [sender] teardown: retransmitting 167 NACKed packets
-10:26:06.103201 [sender] teardown: retransmitting 167 NACKed packets
-10:26:06.204531 [sender] teardown: retransmitting 167 NACKed packets
-10:26:06.304164 [sender] teardown: retransmitting 142 NACKed packets
-10:26:06.410109 [sender] received TRANSFER_COMPLETE
-10:26:06.411113 [sender] sent ACK_CLOSE, entering linger state
-10:26:09.412208 [sender] linger complete, session finished
+10:36:22.638893 [sender] hashing file: .\testdata\darksouls3_2022.09.05.mp4 (237931368 bytes)
+10:36:22.687977 [sender] file hash: 0x2681C51BDEAEBA6F
+10:36:22.688976 [sender] sending SESSION_REQ: sessionID=0xDFD14BE4 -> 192.168.50.9:9000
+10:36:22.688976 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+10:36:22.689977 [sender] congestion control ENABLED, starting rate=2.00 MB/s
+10:36:22.689977 [sender] FEC enabled: block_size=100, initial_parity=5%
+10:36:22.689977 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+10:36:22.839706 [congestion] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=1.77)
+10:36:22.940289 [congestion] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.70)
+10:36:23.040295 [congestion] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=2.57)
+10:36:23.139854 [congestion] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=1.32)
+10:36:23.240465 [congestion] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.36)
+10:36:23.340573 [congestion] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=4.11)
+10:36:23.439803 [congestion] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=2.54)
+10:36:23.540335 [congestion] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=5.67)
+10:36:23.640055 [congestion] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=7.61)
+10:36:23.739708 [congestion] INCREASE (phase1): 14.90 -> 18.63 MB/s (loss=0.00% delivery=4.69)
+10:36:23.840801 [congestion] INCREASE (phase1): 18.63 -> 23.28 MB/s (loss=0.00% delivery=12.30)
+10:36:23.891201 [congestion] INCREASE (phase1): 23.28 -> 29.10 MB/s (loss=0.00% delivery=14.29)
+10:36:23.941723 [congestion] INCREASE (phase1): 29.10 -> 36.38 MB/s (loss=0.00% delivery=19.25)
+10:36:23.991562 [congestion] INCREASE (phase1): 36.38 -> 45.47 MB/s (loss=0.00% delivery=22.61)
+10:36:24.042432 [congestion] INCREASE (phase1): 45.47 -> 56.84 MB/s (loss=0.00% delivery=31.26)
+10:36:24.091401 [congestion] INCREASE (phase1): 56.84 -> 71.05 MB/s (loss=0.00% delivery=41.96)
+10:36:24.141862 [congestion] INCREASE (phase1): 71.05 -> 88.82 MB/s (loss=0.00% delivery=51.66)
+10:36:24.194410 [congestion] INCREASE (phase1): 88.82 -> 111.02 MB/s (loss=0.00% delivery=57.00)
+10:36:24.194410 [sender] queued 30 new NACKs (30 total pending)
+10:36:24.244290 [congestion] INCREASE (phase1): 111.02 -> 138.78 MB/s (loss=0.00% delivery=75.99)
+10:36:24.244290 [sender] queued 38 new NACKs (38 total pending)
+10:36:24.261751 [sender] progress: 10% (17291/172916) actual=15.14 MB/s target=138.78 MB/s
+10:36:24.295685 [congestion] INCREASE (phase1): 138.78 -> 173.47 MB/s (loss=0.00% delivery=101.48)
+10:36:24.296100 [sender] queued 132 new NACKs (132 total pending)
+10:36:24.321035 [congestion] INCREASE (phase1): 173.47 -> 216.84 MB/s (loss=0.00% delivery=0.00)
+10:36:24.346185 [congestion] INCREASE (phase1): 216.84 -> 271.05 MB/s (loss=0.00% delivery=103.86)
+10:36:24.346185 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.370781 [congestion] INCREASE (phase1): 271.05 -> 338.81 MB/s (loss=0.00% delivery=0.00)
+10:36:24.370781 [sender] queued 38 new NACKs (38 total pending)
+10:36:24.395635 [congestion] INCREASE (phase1): 338.81 -> 423.52 MB/s (loss=0.00% delivery=20.04)
+10:36:24.396178 [sender] queued 38 new NACKs (38 total pending)
+10:36:24.418685 [sender] progress: 20% (34582/172916) actual=27.53 MB/s target=423.52 MB/s
+10:36:24.420305 [congestion] INCREASE (phase1): 423.52 -> 529.40 MB/s (loss=0.00% delivery=0.00)
+10:36:24.450315 [congestion] INCREASE (phase1): 529.40 -> 661.74 MB/s (loss=0.00% delivery=86.63)
+10:36:24.450315 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.500489 [congestion] INCREASE (phase1): 661.74 -> 827.18 MB/s (loss=0.00% delivery=4.43)
+10:36:24.500489 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.525683 [congestion] INCREASE (phase1): 827.18 -> 1033.98 MB/s (loss=0.00% delivery=0.00)
+10:36:24.525756 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.549936 [congestion] INCREASE (phase1): 1033.98 -> 1292.47 MB/s (loss=0.00% delivery=9.19)
+10:36:24.549936 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.555936 [sender] progress: 30% (51873/172916) actual=38.25 MB/s target=1292.47 MB/s
+10:36:24.574935 [congestion] INCREASE (phase1): 1292.47 -> 1615.59 MB/s (loss=0.00% delivery=0.00)
+10:36:24.575730 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.600240 [congestion] INCREASE (phase1): 1615.59 -> 2019.48 MB/s (loss=0.00% delivery=0.00)
+10:36:24.625710 [congestion] INCREASE (phase1): 2019.48 -> 2524.35 MB/s (loss=0.00% delivery=0.00)
+10:36:24.650223 [congestion] INCREASE (phase1): 2524.35 -> 3155.44 MB/s (loss=0.00% delivery=0.06)
+10:36:24.650223 [sender] queued 106 new NACKs (273 total pending)
+10:36:24.675144 [congestion] INCREASE (phase1): 3155.44 -> 3944.30 MB/s (loss=0.00% delivery=0.00)
+10:36:24.699757 [congestion] INCREASE (phase1): 3944.30 -> 4930.38 MB/s (loss=0.00% delivery=9.14)
+10:36:24.700723 [sender] queued 61 new NACKs (334 total pending)
+10:36:24.725694 [congestion] INCREASE (phase1): 4930.38 -> 6162.98 MB/s (loss=0.00% delivery=0.00)
+10:36:24.725694 [sender] queued 71 new NACKs (71 total pending)
+10:36:24.775702 [congestion] INCREASE (phase1): 6162.98 -> 7703.72 MB/s (loss=0.00% delivery=58.65)
+10:36:24.776205 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.825474 [congestion] INCREASE (phase1): 7703.72 -> 9629.65 MB/s (loss=0.00% delivery=5.42)
+10:36:24.825474 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.851000 [congestion] INCREASE (phase1): 9629.65 -> 12037.06 MB/s (loss=0.00% delivery=9.17)
+10:36:24.851000 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.856998 [sender] progress: 40% (69164/172916) actual=43.92 MB/s target=12037.06 MB/s
+10:36:24.875812 [congestion] INCREASE (phase1): 12037.06 -> 15046.33 MB/s (loss=0.00% delivery=0.00)
+10:36:24.875812 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.900504 [congestion] INCREASE (phase1): 15046.33 -> 18807.91 MB/s (loss=0.00% delivery=9.19)
+10:36:24.900504 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.925905 [congestion] INCREASE (phase1): 18807.91 -> 23509.89 MB/s (loss=0.00% delivery=0.00)
+10:36:24.925905 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.950670 [congestion] INCREASE (phase1): 23509.89 -> 29387.36 MB/s (loss=0.00% delivery=0.00)
+10:36:24.950670 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.975859 [congestion] INCREASE (phase1): 29387.36 -> 36734.20 MB/s (loss=0.00% delivery=0.00)
+10:36:24.975859 [sender] queued 167 new NACKs (167 total pending)
+10:36:24.994459 [sender] progress: 50% (86455/172916) actual=51.62 MB/s target=36734.20 MB/s
+10:36:25.000120 [congestion] INCREASE (phase1): 36734.20 -> 45917.75 MB/s (loss=0.00% delivery=9.20)
+10:36:25.001120 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.026120 [congestion] INCREASE (phase1): 45917.75 -> 57397.19 MB/s (loss=0.00% delivery=0.00)
+10:36:25.026141 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.050652 [congestion] INCREASE (phase1): 57397.19 -> 71746.48 MB/s (loss=0.00% delivery=0.00)
+10:36:25.075212 [congestion] INCREASE (phase1): 71746.48 -> 89683.10 MB/s (loss=0.00% delivery=0.00)
+10:36:25.075212 [sender] queued 167 new NACKs (334 total pending)
+10:36:25.100674 [congestion] INCREASE (phase1): 89683.10 -> 112103.88 MB/s (loss=0.00% delivery=9.20)
+10:36:25.125883 [congestion] INCREASE (phase1): 112103.88 -> 140129.85 MB/s (loss=0.00% delivery=0.00)
+10:36:25.156936 [congestion] INCREASE (phase1): 140129.85 -> 175162.31 MB/s (loss=0.00% delivery=0.00)
+10:36:25.156936 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.175666 [congestion] INCREASE (phase1): 175162.31 -> 218952.89 MB/s (loss=0.00% delivery=0.00)
+10:36:25.175666 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.200775 [congestion] INCREASE (phase1): 218952.89 -> 273691.11 MB/s (loss=0.00% delivery=18.09)
+10:36:25.201290 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.225786 [congestion] INCREASE (phase1): 273691.11 -> 342113.88 MB/s (loss=0.00% delivery=0.00)
+10:36:25.225786 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.250860 [congestion] INCREASE (phase1): 342113.88 -> 427642.35 MB/s (loss=0.00% delivery=18.39)
+10:36:25.250860 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.273860 [sender] progress: 60% (103746/172916) actual=55.25 MB/s target=427642.35 MB/s
+10:36:25.275861 [congestion] INCREASE (phase1): 427642.35 -> 534552.94 MB/s (loss=0.00% delivery=0.00)
+10:36:25.275861 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.301087 [congestion] INCREASE (phase1): 534552.94 -> 668191.18 MB/s (loss=0.00% delivery=0.00)
+10:36:25.301393 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.325785 [congestion] INCREASE (phase1): 668191.18 -> 835238.97 MB/s (loss=0.00% delivery=0.00)
+10:36:25.325785 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.350687 [congestion] INCREASE (phase1): 835238.97 -> 1044048.71 MB/s (loss=0.00% delivery=9.20)
+10:36:25.351202 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.375804 [congestion] INCREASE (phase1): 1044048.71 -> 1305060.89 MB/s (loss=0.00% delivery=0.00)
+10:36:25.375804 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.400309 [congestion] INCREASE (phase1): 1305060.89 -> 1631326.12 MB/s (loss=0.00% delivery=0.00)
+10:36:25.400309 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.425309 [congestion] INCREASE (phase1): 1631326.12 -> 2039157.65 MB/s (loss=0.00% delivery=0.00)
+10:36:25.426089 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.451123 [congestion] INCREASE (phase1): 2039157.65 -> 2548947.06 MB/s (loss=0.00% delivery=9.19)
+10:36:25.451123 [sender] queued 134 new NACKs (301 total pending)
+10:36:25.475148 [congestion] INCREASE (phase1): 2548947.06 -> 3186183.82 MB/s (loss=0.00% delivery=0.00)
+10:36:25.500197 [congestion] INCREASE (phase1): 3186183.82 -> 3982729.78 MB/s (loss=0.00% delivery=0.00)
+10:36:25.525125 [congestion] INCREASE (phase1): 3982729.78 -> 4978412.22 MB/s (loss=0.00% delivery=0.00)
+10:36:25.557308 [congestion] INCREASE (phase1): 4978412.22 -> 6223015.28 MB/s (loss=0.00% delivery=0.00)
+10:36:25.557400 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.561663 [sender] progress: 70% (121037/172916) actual=58.00 MB/s target=6223015.28 MB/s
+10:36:25.575634 [congestion] INCREASE (phase1): 6223015.28 -> 7778769.10 MB/s (loss=0.00% delivery=0.00)
+10:36:25.575634 [sender] queued 32 new NACKs (32 total pending)
+10:36:25.600785 [congestion] INCREASE (phase1): 7778769.10 -> 9723461.37 MB/s (loss=0.00% delivery=18.36)
+10:36:25.625801 [congestion] INCREASE (phase1): 9723461.37 -> 12154326.71 MB/s (loss=0.00% delivery=0.00)
+10:36:25.694375 [congestion] INCREASE (phase1): 12154326.71 -> 15192908.39 MB/s (loss=0.00% delivery=57.01)
+10:36:25.701375 [sender] progress: 80% (138328/172916) actual=63.21 MB/s target=15192908.39 MB/s
+10:36:25.743943 [congestion] INCREASE (phase1): 15192908.39 -> 18991135.49 MB/s (loss=0.00% delivery=3.01)
+10:36:25.743943 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.794445 [congestion] INCREASE (phase1): 18991135.49 -> 23738919.36 MB/s (loss=0.00% delivery=0.00)
+10:36:25.794445 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.819603 [congestion] INCREASE (phase1): 23738919.36 -> 29673649.21 MB/s (loss=0.00% delivery=0.00)
+10:36:25.819690 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.843780 [congestion] INCREASE (phase1): 29673649.21 -> 37092061.51 MB/s (loss=0.00% delivery=0.00)
+10:36:25.869693 [congestion] INCREASE (phase1): 37092061.51 -> 46365076.88 MB/s (loss=0.00% delivery=0.00)
+10:36:25.869693 [sender] queued 167 new NACKs (334 total pending)
+10:36:25.894348 [congestion] INCREASE (phase1): 46365076.88 -> 57956346.10 MB/s (loss=0.00% delivery=9.19)
+10:36:25.919137 [congestion] INCREASE (phase1): 57956346.10 -> 72445432.63 MB/s (loss=0.00% delivery=0.00)
+10:36:25.943826 [congestion] INCREASE (phase1): 72445432.63 -> 90556790.79 MB/s (loss=0.00% delivery=0.00)
+10:36:25.969258 [congestion] INCREASE (phase1): 90556790.79 -> 113195988.49 MB/s (loss=0.00% delivery=0.00)
+10:36:25.969258 [sender] queued 167 new NACKs (167 total pending)
+10:36:25.976010 [sender] progress: 90% (155619/172916) actual=65.16 MB/s target=113195988.49 MB/s
+10:36:25.994294 [congestion] INCREASE (phase1): 113195988.49 -> 141494985.61 MB/s (loss=0.00% delivery=18.38)
+10:36:25.994294 [sender] queued 167 new NACKs (167 total pending)
+10:36:26.019324 [congestion] INCREASE (phase1): 141494985.61 -> 176868732.01 MB/s (loss=0.00% delivery=0.00)
+10:36:26.019324 [sender] queued 167 new NACKs (167 total pending)
+10:36:26.044401 [congestion] INCREASE (phase1): 176868732.01 -> 221085915.01 MB/s (loss=0.00% delivery=9.19)
+10:36:26.044401 [sender] queued 167 new NACKs (167 total pending)
+10:36:26.068910 [congestion] INCREASE (phase1): 221085915.01 -> 276357393.76 MB/s (loss=0.00% delivery=0.00)
+10:36:26.068910 [sender] queued 167 new NACKs (167 total pending)
+10:36:26.094614 [congestion] INCREASE (phase1): 276357393.76 -> 345446742.20 MB/s (loss=0.00% delivery=0.00)
+10:36:26.094614 [sender] queued 167 new NACKs (167 total pending)
+10:36:26.115492 [sender] progress: 100% (172910/172916) actual=69.46 MB/s target=345446742.20 MB/s
+10:36:26.115492 [sender] sent 2 tail block parity packets for block 1729 (16 data shards)
+10:36:26.116018 [sender] all 172916 packets sent in 3.426s (69.45 MB/s) | CC: +85 =0 -0
+10:36:26.116018 [sender] waiting for TRANSFER_COMPLETE...
+10:36:26.119523 [congestion] INCREASE (phase1): 345446742.20 -> 431808427.75 MB/s (loss=0.00% delivery=0.00)
+10:36:26.119666 [sender] queued 167 new NACKs (167 total pending)
+10:36:26.144197 [congestion] INCREASE (phase1): 431808427.75 -> 539760534.69 MB/s (loss=0.00% delivery=9.19)
+10:36:26.144690 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.168715 [congestion] INCREASE (phase1): 539760534.69 -> 674700668.37 MB/s (loss=0.00% delivery=0.00)
+10:36:26.169656 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.194371 [congestion] INCREASE (phase1): 674700668.37 -> 843375835.46 MB/s (loss=0.00% delivery=0.00)
+10:36:26.194675 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.219699 [congestion] INCREASE (phase1): 843375835.46 -> 1054219794.32 MB/s (loss=0.00% delivery=0.00)
+10:36:26.220139 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.270375 [congestion] INCREASE (phase1): 1054219794.32 -> 1317774742.90 MB/s (loss=0.00% delivery=0.00)
+10:36:26.270589 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.371166 [congestion] INCREASE (phase1): 1317774742.90 -> 1647218428.63 MB/s (loss=0.00% delivery=2.27)
+10:36:26.371665 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.471209 [congestion] INCREASE (phase1): 1647218428.63 -> 2059023035.79 MB/s (loss=0.00% delivery=2.30)
+10:36:26.471628 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.571395 [congestion] INCREASE (phase1): 2059023035.79 -> 2573778794.73 MB/s (loss=0.00% delivery=2.30)
+10:36:26.571395 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.671373 [congestion] INCREASE (phase1): 2573778794.73 -> 3217223493.42 MB/s (loss=0.00% delivery=2.29)
+10:36:26.671725 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.771066 [congestion] INCREASE (phase1): 3217223493.42 -> 4021529366.77 MB/s (loss=0.00% delivery=2.30)
+10:36:26.771628 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.871060 [congestion] INCREASE (phase1): 4021529366.77 -> 5026911708.46 MB/s (loss=0.00% delivery=2.30)
+10:36:26.871458 [sender] teardown: retransmitting 167 NACKed packets
+10:36:26.970145 [congestion] INCREASE (phase1): 5026911708.46 -> 6283639635.58 MB/s (loss=0.00% delivery=2.31)
+10:36:26.970800 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.071702 [congestion] INCREASE (phase1): 6283639635.58 -> 7854549544.48 MB/s (loss=0.00% delivery=2.28)
+10:36:27.071702 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.171608 [congestion] INCREASE (phase1): 7854549544.48 -> 9818186930.60 MB/s (loss=0.00% delivery=2.30)
+10:36:27.171740 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.271059 [congestion] INCREASE (phase1): 9818186930.60 -> 12272733663.24 MB/s (loss=0.00% delivery=2.30)
+10:36:27.271463 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.371373 [congestion] INCREASE (phase1): 12272733663.24 -> 15340917079.06 MB/s (loss=0.00% delivery=2.29)
+10:36:27.371423 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.471580 [congestion] INCREASE (phase1): 15340917079.06 -> 19176146348.82 MB/s (loss=0.00% delivery=2.30)
+10:36:27.471580 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.571793 [congestion] INCREASE (phase1): 19176146348.82 -> 23970182936.02 MB/s (loss=0.00% delivery=2.29)
+10:36:27.571793 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.671731 [congestion] INCREASE (phase1): 23970182936.02 -> 29962728670.03 MB/s (loss=0.00% delivery=2.30)
+10:36:27.671731 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.771209 [congestion] INCREASE (phase1): 29962728670.03 -> 37453410837.54 MB/s (loss=0.00% delivery=2.30)
+10:36:27.771630 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.871210 [congestion] INCREASE (phase1): 37453410837.54 -> 46816763546.92 MB/s (loss=0.00% delivery=2.30)
+10:36:27.871571 [sender] teardown: retransmitting 167 NACKed packets
+10:36:27.971402 [congestion] INCREASE (phase1): 46816763546.92 -> 58520954433.65 MB/s (loss=0.00% delivery=2.30)
+10:36:27.971520 [sender] teardown: retransmitting 167 NACKed packets
+10:36:28.070313 [congestion] INCREASE (phase1): 58520954433.65 -> 73151193042.07 MB/s (loss=0.00% delivery=2.30)
+10:36:28.071270 [sender] teardown: retransmitting 167 NACKed packets
+10:36:28.170212 [congestion] INCREASE (phase1): 73151193042.07 -> 91438991302.58 MB/s (loss=0.00% delivery=2.31)
+10:36:28.170958 [sender] teardown: retransmitting 21 NACKed packets
+10:36:28.315210 [sender] received TRANSFER_COMPLETE
+10:36:28.315297 [sender] sent ACK_CLOSE, entering linger state
+10:36:31.316373 [sender] linger complete, session finished
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft>
