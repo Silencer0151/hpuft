@@ -48,17 +48,18 @@ hpuft recv [-listen :9000] [-out ./output]
   -out      directory to write received files (default: .)
 ```
 
-### `serve` — persistent pull daemon (single-lane)
+### `serve` — persistent bidirectional daemon (single-lane)
 ```bash
 hpuft serve [-listen :9001] [-dir .]
 
-  -listen   address to listen on for PULL_REQ packets (default: :9001)
-  -dir      directory of files available to serve (default: .)
+  -listen   control port for PULL_REQ and PUSH_REQ packets (default: :9001)
+  -dir      directory to serve files from and accept pushes into (default: .)
 ```
 
 The serve daemon scans `--dir` at startup and builds an allowlist of available
 files. It handles one transfer at a time — concurrent requests receive
 `SERVER_BUSY` and can retry. The daemon stays running after each transfer.
+Pushed files are validated and added to the live manifest on success.
 
 ### `get` — pull a file from a serve daemon (NAT-friendly)
 ```bash
@@ -72,6 +73,23 @@ hpuft get -file <name> [-addr host:9001] [-out .]
 The `get` command punches a NAT hole by sending a `PULL_REQ` to the serve
 daemon. The daemon fires back the `SESSION_REQ` (and the full transfer) through
 the open hole — no port forwarding required on the client side.
+
+### `push` — push a file to a serve daemon
+```bash
+hpuft push -file <path> [-addr host:9001] [-debug]
+
+  -file   path to the file to push (required)
+  -addr   address of the serve daemon (default: 127.0.0.1:9001)
+  -debug  stream raw protocol telemetry to stderr
+```
+
+The `push` command deposits a file into the serve daemon's directory.
+Three security rules are always enforced server-side:
+1. **Base-name only** — path traversal in the filename is stripped to the final component.
+2. **No overwrite** — if the file already exists the push is rejected with `FILE_EXISTS`.
+3. **Post-hash promotion** — the file is staged as `.tmp` during transfer and only
+   renamed to its final path after xxHash64 verification passes. Failed transfers
+   leave no partial file on disk.
 
 ### `proxy` — lossy UDP proxy for testing
 ```bash
@@ -111,6 +129,18 @@ hpuft serve -listen :9001 -dir ~/shared
 
 # Client pulls a file (no port forwarding needed on the client)
 hpuft get -file bigfile.iso -addr server-ip:9001 -out ./downloads
+```
+
+### Bidirectional hub (serve + push + get)
+```bash
+# Server — persistent daemon, serves from ~/shared and accepts pushes
+hpuft serve -listen :9001 -dir ~/shared
+
+# Client pushes a file to the server (no port-forwarding needed on server)
+hpuft push -file ./upload.bin -addr server-ip:9001
+
+# Different client pulls a file (no port-forwarding needed on client)
+hpuft get -file upload.bin -addr server-ip:9001 -out ./downloads
 ```
 
 ### Simulated 5% loss test
