@@ -1,11 +1,3 @@
-// Command integration runs end-to-end transfer tests through a lossy proxy.
-//
-// Usage:
-//
-//	go run cmd/integration/main.go [-files file1,file2,...] [-loss 0,1,5,10,15]
-//
-// Files default to testdata/small.txt and testdata/random.bin.
-// If a file doesn't exist, it's skipped with a warning.
 package main
 
 import (
@@ -18,22 +10,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
 
-type testResult struct {
-	File           string
-	Loss           float64
-	Duration       time.Duration
-	ThroughputMBps float64
-	Pass           bool
-	Error          string
-}
+func runTest(args []string) {
+	fs := flag.NewFlagSet("test", flag.ExitOnError)
+	fs.Usage = func() {
+		log.Print("usage: hpuft test [-files f1,f2,...] [-loss 0,1,5,10,15] [-out dir] [-timeout 120]")
+		fs.PrintDefaults()
+	}
 
-func main() {
 	var (
 		filesStr string
 		lossStr  string
@@ -41,15 +29,14 @@ func main() {
 		timeout  int
 	)
 
-	flag.StringVar(&filesStr, "files", "", "comma-separated list of files to transfer (default: auto-detect testdata/)")
-	flag.StringVar(&lossStr, "loss", "0,1,5,10,15", "comma-separated loss percentages to test")
-	flag.StringVar(&outDir, "out", "", "output directory for received files (default: temp dir)")
-	flag.IntVar(&timeout, "timeout", 120, "per-transfer timeout in seconds")
-	flag.Parse()
+	fs.StringVar(&filesStr, "files", "", "comma-separated list of files to transfer (default: auto-detect testdata/)")
+	fs.StringVar(&lossStr, "loss", "0,1,5,10,15", "comma-separated loss percentages to test")
+	fs.StringVar(&outDir, "out", "", "output directory for received files (default: temp dir)")
+	fs.IntVar(&timeout, "timeout", 120, "per-transfer timeout in seconds")
+	fs.Parse(args)
 
 	log.SetFlags(log.Ltime)
 
-	// Parse loss rates
 	var lossRates []float64
 	for _, s := range strings.Split(lossStr, ",") {
 		s = strings.TrimSpace(s)
@@ -63,19 +50,16 @@ func main() {
 		lossRates = append(lossRates, v)
 	}
 
-	// Discover test files
 	var files []string
 	if filesStr != "" {
 		files = strings.Split(filesStr, ",")
 	} else {
 		files = discoverTestFiles("testdata")
 	}
-
 	if len(files) == 0 {
 		log.Fatal("no test files found")
 	}
 
-	// Validate files exist
 	var validFiles []string
 	for _, f := range files {
 		f = strings.TrimSpace(f)
@@ -86,39 +70,47 @@ func main() {
 		validFiles = append(validFiles, f)
 	}
 	files = validFiles
-
 	if len(files) == 0 {
 		log.Fatal("no valid test files found")
 	}
 
-	log.Printf("=== HP-UDP Integration Test Suite ===")
-	log.Printf("files: %v", files)
-	log.Printf("loss rates: %v%%", lossRates)
-	log.Printf("")
+	// Resolve the running binary so subprocesses call back into this binary.
+	self, err := os.Executable()
+	if err != nil {
+		log.Fatalf("resolve executable: %v", err)
+	}
 
-	// Build binaries
-	log.Printf("building binaries...")
-	buildAll()
-
-	// Output directory
 	if outDir == "" {
-		var err error
-		outDir, err = os.MkdirTemp("", "hpuft-integration-*")
+		outDir, err = os.MkdirTemp("", "hpuft-test-*")
 		if err != nil {
 			log.Fatalf("create temp dir: %v", err)
 		}
 		defer os.RemoveAll(outDir)
 	}
 
-	// Run tests
-	var results []testResult
+	log.Printf("=== HP-UDP Integration Test Suite ===")
+	log.Printf("binary:  %s", self)
+	log.Printf("files:   %v", files)
+	log.Printf("loss:    %v%%", lossRates)
+	log.Printf("")
+
+	type result struct {
+		file           string
+		loss           float64
+		duration       time.Duration
+		throughputMBps float64
+		pass           bool
+		errMsg         string
+	}
+
+	var results []result
 	passed, failed := 0, 0
 
 	for _, loss := range lossRates {
 		for _, file := range files {
-			r := runTransfer(file, loss, outDir, timeout)
-			results = append(results, r)
-			if r.Pass {
+			r := runOneTransfer(self, file, loss, outDir, timeout)
+			results = append(results, result(r))
+			if r.pass {
 				passed++
 			} else {
 				failed++
@@ -126,7 +118,6 @@ func main() {
 		}
 	}
 
-	// Print summary
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════════════════════╗")
 	fmt.Println("║                    INTEGRATION TEST RESULTS                     ║")
@@ -136,15 +127,15 @@ func main() {
 
 	for _, r := range results {
 		status := "PASS"
-		if !r.Pass {
+		if !r.pass {
 			status = "FAIL"
 		}
-		name := filepath.Base(r.File)
+		name := filepath.Base(r.file)
 		if len(name) > 30 {
 			name = name[:27] + "..."
 		}
 		fmt.Printf("║  %-30s %5.1f%% %7.1fs %7.2f MB/s %4s ║\n",
-			name, r.Loss, r.Duration.Seconds(), r.ThroughputMBps, status)
+			name, r.loss, r.duration.Seconds(), r.throughputMBps, status)
 	}
 
 	fmt.Println("╠══════════════════════════════════════════════════════════════════╣")
@@ -156,24 +147,32 @@ func main() {
 		fmt.Println()
 		fmt.Println("FAILURES:")
 		for _, r := range results {
-			if !r.Pass {
-				fmt.Printf("  %s @ %.1f%% loss: %s\n", filepath.Base(r.File), r.Loss, r.Error)
+			if !r.pass {
+				fmt.Printf("  %s @ %.1f%% loss: %s\n", filepath.Base(r.file), r.loss, r.errMsg)
 			}
 		}
 		os.Exit(1)
 	}
 }
 
-func runTransfer(file string, lossPct float64, outDir string, timeoutSec int) testResult {
+type transferResult struct {
+	file           string
+	loss           float64
+	duration       time.Duration
+	throughputMBps float64
+	pass           bool
+	errMsg         string
+}
+
+func runOneTransfer(self, file string, lossPct float64, outDir string, timeoutSec int) transferResult {
 	fileInfo, err := os.Stat(file)
 	if err != nil {
-		return testResult{File: file, Loss: lossPct, Error: err.Error()}
+		return transferResult{file: file, loss: lossPct, errMsg: err.Error()}
 	}
 	fileSize := fileInfo.Size()
 
-	// Pick random ports to avoid conflicts
-	receiverPort := randomPort()
-	proxyPort := randomPort()
+	receiverPort := freePort()
+	proxyPort := freePort()
 
 	recvDir := filepath.Join(outDir, fmt.Sprintf("loss_%.0f", lossPct))
 	os.MkdirAll(recvDir, 0755)
@@ -184,28 +183,25 @@ func runTransfer(file string, lossPct float64, outDir string, timeoutSec int) te
 		filepath.Base(file), lossPct, receiverPort, proxyPort)
 
 	// Start receiver
-	receiver := exec.Command(binPath("hpuft-receiver"),
+	recv := exec.Command(self, "recv",
 		"-listen", fmt.Sprintf(":%d", receiverPort),
 		"-out", recvDir,
 	)
 	var recvOut bytes.Buffer
-	receiver.Stdout = &recvOut
-	receiver.Stderr = &recvOut
-	if err := receiver.Start(); err != nil {
-		return testResult{File: file, Loss: lossPct, Error: fmt.Sprintf("start receiver: %v", err)}
+	recv.Stdout = &recvOut
+	recv.Stderr = &recvOut
+	if err := recv.Start(); err != nil {
+		return transferResult{file: file, loss: lossPct, errMsg: fmt.Sprintf("start receiver: %v", err)}
 	}
-	defer func() {
-		receiver.Process.Kill()
-		receiver.Wait()
-	}()
+	defer func() { recv.Process.Kill(); recv.Wait() }()
 	time.Sleep(200 * time.Millisecond)
 
-	// Start proxy (skip if 0% loss — connect directly)
+	// Start proxy (skip at 0% loss — connect sender directly to receiver)
 	var senderTarget string
 	var proxy *exec.Cmd
 
 	if lossPct > 0 {
-		proxy = exec.Command(binPath("hpuft-proxy"),
+		proxy = exec.Command(self, "proxy",
 			"-listen", fmt.Sprintf(":%d", proxyPort),
 			"-target", fmt.Sprintf("127.0.0.1:%d", receiverPort),
 			"-loss", fmt.Sprintf("%.1f", lossPct),
@@ -215,155 +211,105 @@ func runTransfer(file string, lossPct float64, outDir string, timeoutSec int) te
 		proxy.Stdout = &proxyOut
 		proxy.Stderr = &proxyOut
 		if err := proxy.Start(); err != nil {
-			return testResult{File: file, Loss: lossPct, Error: fmt.Sprintf("start proxy: %v", err)}
+			return transferResult{file: file, loss: lossPct, errMsg: fmt.Sprintf("start proxy: %v", err)}
 		}
-		defer func() {
-			proxy.Process.Kill()
-			proxy.Wait()
-		}()
+		defer func() { proxy.Process.Kill(); proxy.Wait() }()
 		time.Sleep(200 * time.Millisecond)
 		senderTarget = fmt.Sprintf("127.0.0.1:%d", proxyPort)
 	} else {
 		senderTarget = fmt.Sprintf("127.0.0.1:%d", receiverPort)
 	}
 
-	// Start sender
-	// Use -nodelay for integration tests: the goal is integrity verification,
-	// not congestion control behavior. CC is tested separately.
 	absFile, _ := filepath.Abs(file)
-	sender := exec.Command(binPath("hpuft-sender"),
+	send := exec.Command(self, "send",
 		"-file", absFile,
 		"-addr", senderTarget,
 		"-nodelay",
 	)
 	var sendOut bytes.Buffer
-	sender.Stdout = &sendOut
-	sender.Stderr = &sendOut
+	send.Stdout = &sendOut
+	send.Stderr = &sendOut
 
 	start := time.Now()
-	if err := sender.Start(); err != nil {
-		return testResult{File: file, Loss: lossPct, Error: fmt.Sprintf("start sender: %v", err)}
+	if err := send.Start(); err != nil {
+		return transferResult{file: file, loss: lossPct, errMsg: fmt.Sprintf("start sender: %v", err)}
 	}
 
-	// Wait with timeout
 	done := make(chan error, 1)
-	go func() { done <- sender.Wait() }()
+	go func() { done <- send.Wait() }()
 
 	select {
 	case err := <-done:
 		if err != nil {
-			return testResult{
-				File:     file,
-				Loss:     lossPct,
-				Duration: time.Since(start),
-				Error:    fmt.Sprintf("sender error: %v\nSENDER:\n%s\nRECEIVER:\n%s", err, sendOut.String(), recvOut.String()),
+			return transferResult{
+				file:     file,
+				loss:     lossPct,
+				duration: time.Since(start),
+				errMsg:   fmt.Sprintf("sender error: %v\nSENDER:\n%s\nRECEIVER:\n%s", err, sendOut.String(), recvOut.String()),
 			}
 		}
 	case <-time.After(time.Duration(timeoutSec) * time.Second):
-		sender.Process.Kill()
-		return testResult{
-			File:     file,
-			Loss:     lossPct,
-			Duration: time.Duration(timeoutSec) * time.Second,
-			Error:    fmt.Sprintf("timeout after %ds\nsender: %s\nreceiver: %s", timeoutSec, sendOut.String(), recvOut.String()),
+		send.Process.Kill()
+		return transferResult{
+			file:     file,
+			loss:     lossPct,
+			duration: time.Duration(timeoutSec) * time.Second,
+			errMsg:   fmt.Sprintf("timeout after %ds\nsender: %s\nreceiver: %s", timeoutSec, sendOut.String(), recvOut.String()),
 		}
 	}
 
 	duration := time.Since(start)
 
-	// Wait for receiver to finish
 	recvDone := make(chan error, 1)
-	go func() { recvDone <- receiver.Wait() }()
+	go func() { recvDone <- recv.Wait() }()
 
 	select {
 	case err := <-recvDone:
 		if err != nil {
-			return testResult{
-				File:     file,
-				Loss:     lossPct,
-				Duration: duration,
-				Error:    fmt.Sprintf("receiver error: %v\n%s", err, recvOut.String()),
+			return transferResult{
+				file:     file,
+				loss:     lossPct,
+				duration: duration,
+				errMsg:   fmt.Sprintf("receiver error: %v\n%s", err, recvOut.String()),
 			}
 		}
 	case <-time.After(15 * time.Second):
-		return testResult{
-			File:     file,
-			Loss:     lossPct,
-			Duration: duration,
-			Error:    fmt.Sprintf("receiver didn't finish within 15s of sender completing\n%s", recvOut.String()),
+		return transferResult{
+			file:     file,
+			loss:     lossPct,
+			duration: duration,
+			errMsg:   fmt.Sprintf("receiver didn't finish within 15s of sender completing\n%s", recvOut.String()),
 		}
 	}
 
-	// Verify file integrity
 	original, err := os.ReadFile(file)
 	if err != nil {
-		return testResult{File: file, Loss: lossPct, Duration: duration, Error: fmt.Sprintf("read original: %v", err)}
+		return transferResult{file: file, loss: lossPct, duration: duration, errMsg: fmt.Sprintf("read original: %v", err)}
 	}
-
 	received, err := os.ReadFile(receivedPath)
 	if err != nil {
-		return testResult{File: file, Loss: lossPct, Duration: duration, Error: fmt.Sprintf("read received: %v", err)}
+		return transferResult{file: file, loss: lossPct, duration: duration, errMsg: fmt.Sprintf("read received: %v", err)}
 	}
-
 	if !bytes.Equal(original, received) {
-		return testResult{
-			File:     file,
-			Loss:     lossPct,
-			Duration: duration,
-			Error:    fmt.Sprintf("INTEGRITY FAIL: original=%d bytes, received=%d bytes", len(original), len(received)),
+		return transferResult{
+			file:     file,
+			loss:     lossPct,
+			duration: duration,
+			errMsg:   fmt.Sprintf("INTEGRITY FAIL: original=%d bytes, received=%d bytes", len(original), len(received)),
 		}
 	}
 
 	throughput := float64(fileSize) / duration.Seconds() / 1e6
-
 	log.Printf("[test] PASS %s @ %.1f%% loss in %.1fs (%.2f MB/s)",
 		filepath.Base(file), lossPct, duration.Seconds(), throughput)
 
-	return testResult{
-		File:           file,
-		Loss:           lossPct,
-		Duration:       duration,
-		ThroughputMBps: throughput,
-		Pass:           true,
+	return transferResult{
+		file:           file,
+		loss:           lossPct,
+		duration:       duration,
+		throughputMBps: throughput,
+		pass:           true,
 	}
-}
-
-func buildAll() {
-	binaries := []struct {
-		output string
-		pkg    string
-	}{
-		{"hpuft-sender", "./cmd/sender"},
-		{"hpuft-receiver", "./cmd/receiver"},
-		{"hpuft-proxy", "./cmd/proxy"},
-	}
-
-	for _, b := range binaries {
-		output := b.output
-		if runtime.GOOS == "windows" {
-			output += ".exe"
-		}
-		absOut, _ := filepath.Abs(output)
-		cmd := exec.Command("go", "build", "-o", absOut, b.pkg)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			log.Fatalf("build %s: %v", b.pkg, err)
-		}
-	}
-
-	// Store absolute path prefix for binary lookup
-	binDir, _ = filepath.Abs(".")
-	log.Printf("binaries built in %s", binDir)
-}
-
-var binDir string
-
-func binPath(name string) string {
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	return filepath.Join(binDir, name)
 }
 
 func discoverTestFiles(dir string) []string {
@@ -371,7 +317,6 @@ func discoverTestFiles(dir string) []string {
 	if err != nil {
 		return nil
 	}
-
 	var files []string
 	for _, e := range entries {
 		if e.IsDir() || strings.HasSuffix(e.Name(), ".go") {
@@ -382,8 +327,7 @@ func discoverTestFiles(dir string) []string {
 	return files
 }
 
-func randomPort() int {
-	// Find a free port
+func freePort() int {
 	l, err := net.ListenPacket("udp", ":0")
 	if err != nil {
 		return 10000 + rand.Intn(50000)
