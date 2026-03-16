@@ -52,14 +52,18 @@ hpuft recv [-listen :9000] [-out ./output]
 ```bash
 hpuft serve [-listen :9001] [-dir .]
 
-  -listen   control port for PULL_REQ and PUSH_REQ packets (default: :9001)
+  -listen   port for PULL_REQ, PUSH_REQ, and all transfer data (default: :9001)
   -dir      directory to serve files from and accept pushes into (default: .)
 ```
 
-The serve daemon scans `--dir` at startup and builds an allowlist of available
+The serve daemon scans `-dir` at startup and builds an allowlist of available
 files. It handles one transfer at a time — concurrent requests receive
 `SERVER_BUSY` and can retry. The daemon stays running after each transfer.
 Pushed files are validated and added to the live manifest on success.
+
+**Cross-NAT use**: Forward only `-listen` on your router. All control and data
+traffic flows through this single port. The NAT hole punched by the initial
+`PULL_REQ` or `PUSH_REQ` covers the entire transfer — no second port-forward rule needed.
 
 ### `get` — pull a file from a serve daemon (NAT-friendly)
 ```bash
@@ -131,15 +135,15 @@ hpuft serve -listen :9001 -dir ~/shared
 hpuft get -file bigfile.iso -addr server-ip:9001 -out ./downloads
 ```
 
-### Bidirectional hub (serve + push + get)
+### Bidirectional hub (serve + push + get, cross-NAT)
 ```bash
-# Server — persistent daemon, serves from ~/shared and accepts pushes
+# Server — forward only port 9001 on your router
 hpuft serve -listen :9001 -dir ~/shared
 
-# Client pushes a file to the server (no port-forwarding needed on server)
+# Client A pushes a file
 hpuft push -file ./upload.bin -addr server-ip:9001
 
-# Different client pulls a file (no port-forwarding needed on client)
+# Client B pulls a file (no port-forwarding needed on client side)
 hpuft get -file upload.bin -addr server-ip:9001 -out ./downloads
 ```
 

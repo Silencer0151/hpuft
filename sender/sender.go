@@ -52,6 +52,21 @@ type Config struct {
 	// Quiet suppresses all sender-internal output (used by serve daemon).
 	// The serve command handles its own structured event logging.
 	Quiet bool
+
+	// MuxConn, if non-nil, is used for all writes instead of dialling a new
+	// socket. The serve daemon passes its control socket here so PULL traffic
+	// flows through the single control port. Push clients pass their handshake
+	// socket so the source address matches what the server expects.
+	// Must be set together with MuxAddr.
+	MuxConn *net.UDPConn
+
+	// MuxAddr is the destination for WriteToUDP when MuxConn is set.
+	MuxAddr *net.UDPAddr
+
+	// RecvChan, if non-nil, supplies incoming packets instead of reading from
+	// the socket. The serve daemon's control loop forwards packets here so the
+	// sender goroutine never needs its own socket read path.
+	RecvChan <-chan []byte
 }
 
 // DefaultConfig returns sender config with spec defaults.
@@ -111,8 +126,6 @@ func New(cfg Config) *Sender {
 // Send performs a complete file transfer.
 func (s *Sender) Send() error {
 	// --- Logger setup ---
-	// dbgLog receives verbose protocol/CC events; only enabled with --debug.
-	// In normal and quiet modes it discards everything.
 	var dbgLog *log.Logger
 	if s.cfg.Debug && !s.cfg.Quiet {
 		dbgLog = log.New(os.Stderr, "", log.Ltime|log.Lmicroseconds)
@@ -134,19 +147,38 @@ func (s *Sender) Send() error {
 	}
 	dbgLog.Printf("[sender] file hash: 0x%016X", checksum)
 
-	// --- Step 2: Open UDP socket ---
-	remoteAddr, err := net.ResolveUDPAddr("udp", s.cfg.RemoteAddr)
-	if err != nil {
-		return fmt.Errorf("resolve remote addr: %w", err)
+	// --- Step 2: Socket setup ---
+	// MuxConn path: use the caller's shared socket (serve control port or
+	// push client's handshake socket). No dial, no close, no write buffer.
+	// Normal path: dial a fresh connected socket to the remote address.
+	var conn *net.UDPConn
+	recvChan := s.cfg.RecvChan
+
+	if s.cfg.MuxConn != nil {
+		conn = s.cfg.MuxConn
+	} else {
+		remoteAddr, err := net.ResolveUDPAddr("udp", s.cfg.RemoteAddr)
+		if err != nil {
+			return fmt.Errorf("resolve remote addr: %w", err)
+		}
+		conn, err = net.DialUDP("udp", nil, remoteAddr)
+		if err != nil {
+			return fmt.Errorf("dial udp: %w", err)
+		}
+		defer conn.Close()
+		conn.SetWriteBuffer(16 * 1024 * 1024)
 	}
 
-	conn, err := net.DialUDP("udp", nil, remoteAddr)
-	if err != nil {
-		return fmt.Errorf("dial udp: %w", err)
+	// writeFn sends raw bytes to the correct destination.
+	// In mux mode: unconnected socket → WriteToUDP with the stored remote addr.
+	// In normal mode: connected socket → Write.
+	writeFn := func(raw []byte) {
+		if s.cfg.MuxAddr != nil {
+			conn.WriteToUDP(raw, s.cfg.MuxAddr)
+		} else {
+			conn.Write(raw)
+		}
 	}
-	defer conn.Close()
-
-	conn.SetWriteBuffer(16 * 1024 * 1024)
 
 	// --- Step 3: Generate SessionID and send SESSION_REQ ---
 	sessionID := s.cfg.SessionID
@@ -175,9 +207,7 @@ func (s *Sender) Send() error {
 	}
 
 	dbgLog.Printf("[sender] sending SESSION_REQ: sessionID=0x%08X -> %s", sessionID, s.cfg.RemoteAddr)
-	if _, err := conn.Write(reqRaw); err != nil {
-		return fmt.Errorf("send SESSION_REQ: %w", err)
-	}
+	writeFn(reqRaw)
 
 	// --- Step 4: Open file and prepare send state ---
 	file, err := os.Open(s.cfg.FilePath)
@@ -223,22 +253,13 @@ func (s *Sender) Send() error {
 
 	// --- Step 6: Start heartbeat listener goroutine ---
 	var nackMu sync.Mutex
-	// nackPending is a set of sequence numbers awaiting retransmission.
-	// Using a map instead of a slice deduplicates NACKs: the same seq
-	// arriving in multiple consecutive heartbeats is only retransmitted
-	// once per drain cycle, preventing the ~167-entry queue from growing
-	// without bound when the receiver persistently reports the same gaps.
 	nackPending := make(map[uint64]struct{})
 
-	// --- Step 7 (pre-declared): Chunk cache for NACK retransmission ---
-	// Declared here so the heartbeat goroutine can prune acknowledged entries.
 	sentChunks := make(map[uint64][]byte)
 	var sentMu sync.Mutex
 
-	// doneCh signals the heartbeat goroutine to stop
 	doneCh := make(chan struct{})
 
-	// transferComplete is set when we receive TRANSFER_COMPLETE or SESSION_REJECT
 	type teardownMsg struct {
 		pktType protocol.PacketType
 		payload []byte
@@ -248,19 +269,37 @@ func (s *Sender) Send() error {
 	go func() {
 		hbBuf := make([]byte, protocol.MTUHardCap)
 		for {
-			select {
-			case <-doneCh:
-				return
-			default:
-			}
+			var n int
 
-			conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-			n, err := conn.Read(hbBuf)
-			if err != nil {
-				if os.IsTimeout(err) {
+			if recvChan != nil {
+				// Mux mode: receive packets from the control loop channel.
+				select {
+				case <-doneCh:
+					return
+				case raw, ok := <-recvChan:
+					if !ok {
+						return
+					}
+					n = copy(hbBuf, raw)
+				case <-time.After(200 * time.Millisecond):
 					continue
 				}
-				return
+			} else {
+				// Normal mode: read directly from the socket.
+				select {
+				case <-doneCh:
+					return
+				default:
+				}
+				conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+				var err error
+				n, err = conn.Read(hbBuf)
+				if err != nil {
+					if os.IsTimeout(err) {
+						continue
+					}
+					return
+				}
 			}
 
 			pkt, err := protocol.UnmarshalPacket(hbBuf[:n])
@@ -283,12 +322,10 @@ func (s *Sender) Send() error {
 					bucket.OnHeartbeat(&hb)
 				}
 
-				// End calibration burst early on first heartbeat
 				if calibration != nil {
 					calibration.OnHeartbeat()
 				}
 
-				// Update FEC parity ratio based on observed loss
 				blockEncoder.UpdateLossRate(hb.LossRate)
 
 				if len(hb.NACKs) > 0 {
@@ -307,11 +344,6 @@ func (s *Sender) Send() error {
 					}
 				}
 
-				// Prune acknowledged entries from the chunk cache.
-				// All sequences ≤ HighestContiguous have been received at the
-				// destination and can never be NACKed again. Without pruning,
-				// sentChunks retains every chunk for the entire transfer
-				// (~470 MB for a 237 MB file), causing repeated GC pauses.
 				if hb.HighestContiguous > 0 {
 					sentMu.Lock()
 					for seq := range sentChunks {
@@ -339,11 +371,6 @@ func (s *Sender) Send() error {
 	startTime := time.Now()
 
 	for seqNum < totalChunks {
-		// --- Priority: retransmit NACKed packets ---
-		// Cap retransmits per iteration so new data always makes forward progress.
-		// Without this, 100+ NACKs monopolize the link and seqNum never advances.
-		// nackPending is a deduplicating set: the same seq from multiple
-		// consecutive heartbeats is only drained once.
 		const maxNACKsPerIteration = 3
 		nackMu.Lock()
 		var nacksToSend []uint64
@@ -362,8 +389,6 @@ func (s *Sender) Send() error {
 			sentMu.Unlock()
 
 			if !ok {
-				// Cache was pruned because HighestContiguous advanced past this
-				// sequence (FEC or late arrival recovered it). Silently skip.
 				continue
 			}
 
@@ -380,8 +405,7 @@ func (s *Sender) Send() error {
 
 			hdrSize, _ := protocol.MarshalHeader(sendBuf, &hdr)
 			copy(sendBuf[hdrSize:], chunk)
-
-			conn.Write(sendBuf[:hdrSize+len(chunk)])
+			writeFn(sendBuf[:hdrSize+len(chunk)])
 
 			if bucket != nil {
 				bucket.Pace(hdrSize + len(chunk))
@@ -410,7 +434,6 @@ func (s *Sender) Send() error {
 			hdr.Flags = protocol.FlagEndOfFile
 		}
 
-		// Add calibration flag during burst phase
 		if calibration != nil {
 			hdr.Flags |= calibration.Flags()
 		}
@@ -419,37 +442,27 @@ func (s *Sender) Send() error {
 		copy(sendBuf[hdrSize:], readBuf[:n])
 		totalSize := hdrSize + n
 
-		// Cache for NACK retransmission
 		chunkCopy := make([]byte, n)
 		copy(chunkCopy, readBuf[:n])
 		sentMu.Lock()
 		sentChunks[seqNum] = chunkCopy
 		sentMu.Unlock()
 
-		if _, err := conn.Write(sendBuf[:totalSize]); err != nil {
-			close(doneCh)
-			return fmt.Errorf("send DATA seq=%d: %w", seqNum, err)
-		}
+		writeFn(sendBuf[:totalSize])
 
-		// Update progress atomics for the progress bar goroutine.
 		s.bytesSent.Store(int64(seqNum) * int64(chunkSize))
 
-		// Track calibration burst progress
 		if calibration != nil {
 			calibration.PacketSent()
 		}
 
-		// --- FEC: feed to block encoder, send parity if block is complete ---
 		parityResult := blockEncoder.AddShard(hdr.BlockGroup, readBuf[:n])
 		if parityResult != nil {
-			sendParityPackets(conn, sessionID, parityResult, sendBuf, bucket, s.cfg.SendDelay)
+			sendParityPackets(writeFn, sessionID, parityResult, sendBuf, bucket, s.cfg.SendDelay)
 		}
 
 		seqNum++
 
-		// --- Pacing ---
-		// During calibration burst: use fixed spacing
-		// After calibration: use token bucket or fixed delay
 		if calibration != nil && calibration.Pace() {
 			// calibration handled the pacing
 		} else if bucket != nil {
@@ -458,13 +471,12 @@ func (s *Sender) Send() error {
 			time.Sleep(s.cfg.SendDelay)
 		}
 	}
-	// Final byte count (last chunk may be shorter)
 	s.bytesSent.Store(int64(fileSize))
 
 	// --- FEC: flush tail block parity ---
 	tailResult := blockEncoder.FlushTail()
 	if tailResult != nil {
-		sendParityPackets(conn, sessionID, tailResult, sendBuf, bucket, s.cfg.SendDelay)
+		sendParityPackets(writeFn, sessionID, tailResult, sendBuf, bucket, s.cfg.SendDelay)
 		dbgLog.Printf("[sender] sent %d tail block parity packets for block %d (%d data shards)",
 			tailResult.ParityCount, tailResult.BlockGroup, tailResult.DataCount)
 	}
@@ -485,18 +497,15 @@ func (s *Sender) Send() error {
 	dbgLog.Printf("[sender] waiting for TRANSFER_COMPLETE...")
 
 	// --- Step 9: Wait for TRANSFER_COMPLETE ---
-	// Stop the heartbeat goroutine so it doesn't compete for socket reads.
-	// Check if it already received a teardown message first.
 	select {
 	case msg := <-teardownCh:
 		close(doneCh)
-		return s.handleTeardown(conn, sessionID, msg.pktType, msg.payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
+		return s.handleTeardown(conn, writeFn, recvChan, sessionID, msg.pktType, msg.payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
 	default:
 	}
 
-	close(doneCh) // stop heartbeat goroutine
+	close(doneCh)
 
-	// Drain any NACKs that were queued before we stopped the goroutine
 	nackMu.Lock()
 	pendingNACKs := make([]uint64, 0, len(nackPending))
 	for seq := range nackPending {
@@ -505,24 +514,40 @@ func (s *Sender) Send() error {
 	nackPending = make(map[uint64]struct{})
 	nackMu.Unlock()
 
-	retransmitNACKs(conn, sessionID, pendingNACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
+	retransmitNACKs(writeFn, sessionID, pendingNACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
 
-	// Now we own the socket — handle teardown synchronously
-	conn.SetReadDeadline(time.Now().Add(s.cfg.Session.SenderProbeTimeout))
+	// Teardown read loop — own the socket (or drain the channel).
+	probeDeadline := time.NewTimer(s.cfg.Session.SenderProbeTimeout)
+	defer probeDeadline.Stop()
 	rawBuf := make([]byte, protocol.MTUHardCap)
 
 	for {
+		var pkt protocol.Packet
+		var parseErr error
 
-		n, err := conn.Read(rawBuf)
-		if err != nil {
-			if os.IsTimeout(err) {
+		if recvChan != nil {
+			select {
+			case raw, ok := <-recvChan:
+				if !ok {
+					return fmt.Errorf("channel closed waiting for TRANSFER_COMPLETE")
+				}
+				pkt, parseErr = protocol.UnmarshalPacket(raw)
+			case <-probeDeadline.C:
 				return fmt.Errorf("timeout waiting for TRANSFER_COMPLETE")
 			}
-			return fmt.Errorf("read: %w", err)
+		} else {
+			conn.SetReadDeadline(time.Now().Add(s.cfg.Session.SenderProbeTimeout))
+			n, err := conn.Read(rawBuf)
+			if err != nil {
+				if os.IsTimeout(err) {
+					return fmt.Errorf("timeout waiting for TRANSFER_COMPLETE")
+				}
+				return fmt.Errorf("read: %w", err)
+			}
+			pkt, parseErr = protocol.UnmarshalPacket(rawBuf[:n])
 		}
 
-		pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
-		if err != nil {
+		if parseErr != nil {
 			continue
 		}
 		if pkt.Header.SessionID != sessionID {
@@ -531,7 +556,7 @@ func (s *Sender) Send() error {
 
 		switch pkt.Header.Type {
 		case protocol.PacketTransferComplete, protocol.PacketSessionReject:
-			return s.handleTeardown(conn, sessionID, pkt.Header.Type, pkt.Payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
+			return s.handleTeardown(conn, writeFn, recvChan, sessionID, pkt.Header.Type, pkt.Payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
 
 		case protocol.PacketHeartbeat:
 			hb, err := protocol.UnmarshalHeartbeat(pkt.Payload)
@@ -544,10 +569,14 @@ func (s *Sender) Send() error {
 			if len(hb.NACKs) > 0 {
 				dbgLog.Printf("[sender] teardown: retransmitting %d NACKed packets", len(hb.NACKs))
 				s.nacksSent.Add(int64(len(hb.NACKs)))
-				retransmitNACKs(conn, sessionID, hb.NACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
+				retransmitNACKs(writeFn, sessionID, hb.NACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
 			}
-			// Reset deadline — we're still making progress
-			conn.SetReadDeadline(time.Now().Add(s.cfg.Session.SenderProbeTimeout))
+			// Reset deadline — still making progress
+			if recvChan != nil {
+				probeDeadline.Reset(s.cfg.Session.SenderProbeTimeout)
+			} else {
+				conn.SetReadDeadline(time.Now().Add(s.cfg.Session.SenderProbeTimeout))
+			}
 		}
 	}
 }
@@ -555,6 +584,8 @@ func (s *Sender) Send() error {
 // handleTeardown processes TRANSFER_COMPLETE or SESSION_REJECT and manages linger.
 func (s *Sender) handleTeardown(
 	conn *net.UDPConn,
+	writeFn func([]byte),
+	recvChan <-chan []byte,
 	sessionID uint32,
 	pktType protocol.PacketType,
 	payload []byte,
@@ -575,37 +606,66 @@ func (s *Sender) handleTeardown(
 			},
 		}
 		ackRaw, _ := protocol.MarshalPacket(&ackPkt)
-		conn.Write(ackRaw)
+		writeFn(ackRaw)
 
 		dbgLog.Printf("[sender] sent ACK_CLOSE, entering linger state")
 
-		lingerEnd := time.Now().Add(s.cfg.Session.LingerDuration)
-		conn.SetReadDeadline(lingerEnd)
+		lingerTimer := time.NewTimer(s.cfg.Session.LingerDuration)
+		defer lingerTimer.Stop()
 		rawBuf := make([]byte, protocol.MTUHardCap)
 
-		for time.Now().Before(lingerEnd) {
-			n, err := conn.Read(rawBuf)
-			if err != nil {
-				break
+		for {
+			var pkt protocol.Packet
+			var err error
+
+			if recvChan != nil {
+				select {
+				case raw, ok := <-recvChan:
+					if !ok {
+						goto lingerDone
+					}
+					pkt, err = protocol.UnmarshalPacket(raw)
+				case <-lingerTimer.C:
+					goto lingerDone
+				}
+			} else {
+				lingerEnd := time.Now().Add(s.cfg.Session.LingerDuration)
+				for time.Now().Before(lingerEnd) {
+					conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+					n, err := conn.Read(rawBuf)
+					if err != nil {
+						if os.IsTimeout(err) {
+							continue
+						}
+						break
+					}
+					p, err := protocol.UnmarshalPacket(rawBuf[:n])
+					if err != nil || p.Header.Type != protocol.PacketTransferComplete || p.Header.SessionID != sessionID {
+						continue
+					}
+					writeFn(ackRaw)
+				}
+				conn.SetReadDeadline(time.Time{})
+				goto lingerDone
 			}
-			pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
+
 			if err != nil {
 				continue
 			}
 			if pkt.Header.Type == protocol.PacketTransferComplete &&
 				pkt.Header.SessionID == sessionID {
-				conn.Write(ackRaw)
+				writeFn(ackRaw)
 			}
 		}
 
+	lingerDone:
 		sentChunks = nil
 		log.Printf("[sender] linger complete, session finished")
 		return nil
 
 	case protocol.PacketSessionReject:
 		if len(payload) > 0 {
-			reason := protocol.RejectReason(payload[0])
-			return fmt.Errorf("transfer rejected by receiver: %s", reason)
+			return fmt.Errorf("transfer rejected by receiver: %s", protocol.RejectReason(payload[0]))
 		}
 		return fmt.Errorf("transfer rejected by receiver")
 
@@ -615,11 +675,8 @@ func (s *Sender) handleTeardown(
 }
 
 // retransmitNACKs sends cached data packets for the given sequence numbers.
-// If bucket is non-nil each packet is paced through it, preventing retransmit
-// bursts from flooding a congested link (particularly during teardown when a
-// backlog of heartbeats may be drained all at once).
 func retransmitNACKs(
-	conn *net.UDPConn,
+	writeFn func([]byte),
 	sessionID uint32,
 	nacks []uint64,
 	sendBuf []byte,
@@ -653,13 +710,13 @@ func retransmitNACKs(
 		}
 		hs, _ := protocol.MarshalHeader(sendBuf, &hdr)
 		copy(sendBuf[hs:], chunk)
-		conn.Write(sendBuf[:hs+len(chunk)])
+		writeFn(sendBuf[:hs+len(chunk)])
 	}
 }
 
 // sendParityPackets transmits parity packets for a completed FEC block.
 func sendParityPackets(
-	conn *net.UDPConn,
+	writeFn func([]byte),
 	sessionID uint32,
 	result *ParityResult,
 	sendBuf []byte,
@@ -670,21 +727,17 @@ func sendParityPackets(
 		hdr := protocol.Header{
 			Type:        protocol.PacketParity,
 			SessionID:   sessionID,
-			SequenceNum: uint64(i), // parity index within block
+			SequenceNum: uint64(i),
 			BlockGroup:  result.BlockGroup,
 			PayloadLen:  uint16(len(payload)),
 		}
-
-		// Set EOF flag on the last parity packet if this is potentially the tail block
-		// (The receiver uses this to know no more blocks are coming)
 
 		hdrSize, _ := protocol.MarshalHeader(sendBuf, &hdr)
 		copy(sendBuf[hdrSize:], payload)
 		totalSize := hdrSize + len(payload)
 
-		conn.Write(sendBuf[:totalSize])
+		writeFn(sendBuf[:totalSize])
 
-		// Pace parity packets too
 		if bucket != nil {
 			bucket.Pace(totalSize)
 		} else if fixedDelay > 0 {

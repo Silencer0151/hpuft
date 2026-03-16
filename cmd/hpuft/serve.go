@@ -40,13 +40,18 @@ func runServe(args []string) {
 	defer conn.Close()
 	conn.SetReadBuffer(16 * 1024 * 1024)
 
-	// Startup events — always visible.
 	fmt.Fprintf(os.Stderr, "[serve] Online. Listening on %s\n", conn.LocalAddr())
 	fmt.Fprintf(os.Stderr, "[serve] Manifest loaded: %d authorized files found in %s\n", len(manifest), *dir)
 
 	// busy is 0 when idle, 1 when a transfer is in progress.
 	var busy int32
-	var busyClient string // address string of the active client, for BUSY log
+	var busyClient string
+
+	// activeChan is the forwarding channel for the active transfer goroutine.
+	// The main loop copies every non-control packet here when busy==1.
+	// Protected by activeMu for safe set/clear across goroutines.
+	var activeMu sync.Mutex
+	var activeChan chan []byte
 
 	rawBuf := make([]byte, protocol.MTUHardCap)
 
@@ -57,6 +62,24 @@ func runServe(args []string) {
 			continue
 		}
 
+		// If a transfer is in progress, forward the raw packet bytes to the
+		// active goroutine. It decodes its own packets — the main loop just
+		// passes bytes through. Drop on channel full; sender/receiver retransmit.
+		if atomic.LoadInt32(&busy) == 1 {
+			raw := make([]byte, n)
+			copy(raw, rawBuf[:n])
+			activeMu.Lock()
+			ch := activeChan
+			activeMu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- raw:
+				default:
+				}
+			}
+			continue
+		}
+
 		pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
 		if err != nil {
 			continue
@@ -64,17 +87,17 @@ func runServe(args []string) {
 
 		switch pkt.Header.Type {
 		case protocol.PacketPullReq:
-			handlePullReq(conn, clientAddr, &pkt, manifest, &manifestMu, &busy, &busyClient)
-
+			handlePullReq(conn, clientAddr, &pkt, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan)
 		case protocol.PacketPushReq:
-			handlePushReq(conn, clientAddr, &pkt, *dir, manifest, &manifestMu, &busy, &busyClient)
+			handlePushReq(conn, clientAddr, &pkt, *dir, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan)
 		}
 	}
 }
 
 func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
 	manifest map[string]string, manifestMu *sync.RWMutex,
-	busy *int32, busyClient *string) {
+	busy *int32, busyClient *string,
+	activeMu *sync.Mutex, activeChan *chan []byte) {
 
 	req, err := protocol.UnmarshalPullReq(pkt.Payload)
 	if err != nil || req.FileName == "" {
@@ -101,34 +124,51 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		return
 	}
 
+	// Create the forwarding channel before the goroutine starts.
+	// The main loop won't forward packets until busy==1, which was set above
+	// in this same goroutine (the main read loop), so no race.
+	ch := make(chan []byte, 256)
+	activeMu.Lock()
+	*activeChan = ch
+	activeMu.Unlock()
+
 	log.Printf("[serve] ACCEPTED %s: PULL_REQ for %q", clientAddr, req.FileName)
 
-	go func(filePath, fileName, clientAddrStr string, sessionID uint32) {
-		defer atomic.StoreInt32(busy, 0)
+	go func(filePath, fileName string, sessionID uint32, clientAddr *net.UDPAddr) {
+		defer func() {
+			atomic.StoreInt32(busy, 0)
+			activeMu.Lock()
+			*activeChan = nil
+			activeMu.Unlock()
+		}()
 
 		cfg := sender.DefaultConfig()
 		cfg.FilePath = filePath
-		cfg.RemoteAddr = clientAddrStr
+		cfg.RemoteAddr = clientAddr.String() // for logging
 		cfg.SessionID = sessionID
-		cfg.Quiet = true // suppress all [sender] internal logs; serve handles its own events
+		cfg.MuxConn = conn
+		cfg.MuxAddr = clientAddr
+		cfg.RecvChan = ch
+		cfg.Quiet = true
 
 		start := time.Now()
 		s := sender.New(cfg)
 		if err := s.Send(); err != nil {
-			log.Printf("[serve] TRANSFER FAILED: %q to %s — %v", fileName, clientAddrStr, err)
+			log.Printf("[serve] TRANSFER FAILED: %q to %s — %v", fileName, clientAddr, err)
 			return
 		}
 		elapsed := time.Since(start)
 		p := s.Progress()
 		mbps := float64(p.TotalBytes) / elapsed.Seconds() / 1e6
 		log.Printf("[serve] TRANSFER COMPLETE: %q to %s in %s (%.1f MB/s)",
-			fileName, clientAddrStr, elapsed.Round(time.Millisecond), mbps)
-	}(filePath, req.FileName, clientAddr.String(), pkt.Header.SessionID)
+			fileName, clientAddr, elapsed.Round(time.Millisecond), mbps)
+	}(filePath, req.FileName, pkt.Header.SessionID, clientAddr)
 }
 
 func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
 	dir string, manifest map[string]string, manifestMu *sync.RWMutex,
-	busy *int32, busyClient *string) {
+	busy *int32, busyClient *string,
+	activeMu *sync.Mutex, activeChan *chan []byte) {
 
 	req, err := protocol.UnmarshalPushReq(pkt.Payload)
 	if err != nil || req.FileName == "" {
@@ -161,43 +201,46 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		return
 	}
 
-	// --- Bind ephemeral data port ---
-	dataConn, err := net.ListenUDP("udp", &net.UDPAddr{})
-	if err != nil {
-		sendReject(conn, clientAddr, pkt.Header.SessionID, protocol.RejectServerBusy)
-		atomic.StoreInt32(busy, 0)
-		log.Printf("[serve] PUSH_REQ: failed to bind data port: %v", err)
-		return
-	}
-
-	port := uint16(dataConn.LocalAddr().(*net.UDPAddr).Port)
-
 	// --- Reply PUSH_ACCEPT ---
+	// Data flows over the control socket, so the "port" is just the control
+	// port the client already knows. The push client uses its existing socket.
+	controlPort := uint16(conn.LocalAddr().(*net.UDPAddr).Port)
 	acceptPkt := protocol.Packet{
 		Header: protocol.Header{
 			Type:      protocol.PacketPushAccept,
 			SessionID: pkt.Header.SessionID,
 		},
-		Payload: protocol.MarshalPushAccept(&protocol.PushAcceptPayload{Port: port}),
+		Payload: protocol.MarshalPushAccept(&protocol.PushAcceptPayload{Port: controlPort}),
 	}
 	raw, err := protocol.MarshalPacket(&acceptPkt)
 	if err != nil {
-		dataConn.Close()
 		atomic.StoreInt32(busy, 0)
 		return
 	}
+
+	ch := make(chan []byte, 256)
+	activeMu.Lock()
+	*activeChan = ch
+	activeMu.Unlock()
+
 	conn.WriteToUDP(raw, clientAddr)
 
-	log.Printf("[serve] ACCEPTED %s: PUSH_REQ for %q (data port %d)", clientAddr, safeName, port)
+	log.Printf("[serve] ACCEPTED %s: PUSH_REQ for %q", clientAddr, safeName)
 
-	go func(safeName, finalPath string, sessionID uint32) {
-		defer atomic.StoreInt32(busy, 0)
-		defer dataConn.Close()
+	go func(safeName, finalPath string, sessionID uint32, clientAddr *net.UDPAddr) {
+		defer func() {
+			atomic.StoreInt32(busy, 0)
+			activeMu.Lock()
+			*activeChan = nil
+			activeMu.Unlock()
+		}()
 
 		tmpPath := finalPath + ".tmp"
 
 		cfg := receiver.DefaultConfig()
-		cfg.Conn = dataConn
+		cfg.Conn = conn
+		cfg.SenderAddr = clientAddr
+		cfg.RecvChan = ch
 		cfg.OutputPath = tmpPath
 
 		r, err := receiver.New(cfg)
@@ -231,7 +274,7 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		mbps := float64(p.TotalBytes) / elapsed.Seconds() / 1e6
 		log.Printf("[serve] PUSH COMPLETE: %q from %s in %s (%.1f MB/s) — added to manifest",
 			safeName, clientAddr, elapsed.Round(time.Millisecond), mbps)
-	}(safeName, finalPath, pkt.Header.SessionID)
+	}(safeName, finalPath, pkt.Header.SessionID, clientAddr)
 }
 
 // buildManifest scans dir (non-recursively) and returns an allowlist map of

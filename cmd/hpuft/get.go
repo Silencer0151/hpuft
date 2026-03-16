@@ -78,6 +78,7 @@ func runGet(args []string) {
 	}
 
 	// Wait for SESSION_REQ or SESSION_REJECT.
+	// All data flows through the single control port — no probe packet needed.
 	rawBuf := make([]byte, protocol.MTUHardCap)
 	localConn.SetReadDeadline(time.Now().Add(15 * time.Second))
 

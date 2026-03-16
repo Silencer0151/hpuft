@@ -83,7 +83,7 @@ func runPush(args []string) {
 	rawBuf := make([]byte, protocol.MTUHardCap)
 	localConn.SetReadDeadline(time.Now().Add(15 * time.Second))
 
-	var dataPort uint16
+	accepted := false
 	for {
 		n, _, err := localConn.ReadFromUDP(rawBuf)
 		if err != nil {
@@ -113,34 +113,24 @@ func runPush(args []string) {
 			os.Exit(1)
 
 		case protocol.PacketPushAccept:
-			accept, err := protocol.UnmarshalPushAccept(pkt.Payload)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[push] malformed PUSH_ACCEPT: %v\n", err)
-				os.Exit(1)
-			}
-			dataPort = accept.Port
+			accepted = true
 		}
 
-		if dataPort != 0 {
+		if accepted {
 			break
 		}
 	}
 	localConn.SetReadDeadline(time.Time{})
 
-	// Build data address: serve's host + ephemeral data port.
-	serveHost, _, err := net.SplitHostPort(*serveAddr)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[push] parse serve addr: %v\n", err)
-		os.Exit(1)
-	}
-	dataAddr := fmt.Sprintf("%s:%d", serveHost, dataPort)
-
-	fmt.Fprintf(os.Stdout, "[push] PUSH_ACCEPT received. Sending to data port %d...\n", dataPort)
+	// Data flows over the same control socket — no new connection needed.
+	fmt.Fprintf(os.Stdout, "[push] PUSH_ACCEPT received. Starting transfer...\n")
 
 	cfg := sender.DefaultConfig()
 	cfg.FilePath = *filePath
-	cfg.RemoteAddr = dataAddr
+	cfg.RemoteAddr = *serveAddr // for logging
 	cfg.SessionID = sessionID
+	cfg.MuxConn = localConn
+	cfg.MuxAddr = rAddr
 	cfg.Debug = *debug
 
 	s := sender.New(cfg)

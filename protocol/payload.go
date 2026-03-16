@@ -203,6 +203,36 @@ func UnmarshalPushAccept(data []byte) (PushAcceptPayload, error) {
 	return PushAcceptPayload{Port: binary.BigEndian.Uint16(data[0:2])}, nil
 }
 
+// --- PULL_ACCEPT Payload ---
+//
+// Wire layout:
+//
+//	Offset  Size    Field
+//	0       2 bytes Port (ephemeral or fixed data port the sender will use)
+//
+// PullAcceptPayload is sent by serve in response to PULL_REQ when a dedicated
+// data port is configured. The client sends a probe packet to this port so its
+// NAT allows the server's sender traffic through.
+type PullAcceptPayload struct {
+	Port uint16
+}
+
+// MarshalPullAccept serializes a PullAcceptPayload into bytes.
+func MarshalPullAccept(p *PullAcceptPayload) []byte {
+	buf := make([]byte, 2)
+	binary.BigEndian.PutUint16(buf[0:2], p.Port)
+	return buf
+}
+
+// UnmarshalPullAccept parses a PullAcceptPayload from bytes.
+func UnmarshalPullAccept(data []byte) (PullAcceptPayload, error) {
+	if len(data) < 2 {
+		return PullAcceptPayload{}, fmt.Errorf("%w: need at least 2 bytes, got %d",
+			ErrPayloadTooShort, len(data))
+	}
+	return PullAcceptPayload{Port: binary.BigEndian.Uint16(data[0:2])}, nil
+}
+
 // UnmarshalHeartbeat parses a HeartbeatPayload from bytes.
 func UnmarshalHeartbeat(data []byte) (HeartbeatPayload, error) {
 	if len(data) < HeartbeatFixedSize {

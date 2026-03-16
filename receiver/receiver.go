@@ -41,6 +41,17 @@ type Config struct {
 	// Used by serve's push handler to write directly to a .tmp staging path.
 	OutputPath string
 
+	// SenderAddr, if non-nil, is used as the destination for heartbeats and
+	// TRANSFER_COMPLETE in mux mode (when RecvChan is set). In socket mode
+	// the sender address is captured from the SESSION_REQ source.
+	SenderAddr *net.UDPAddr
+
+	// RecvChan, if non-nil, supplies incoming packets instead of reading from
+	// the socket. The serve daemon's control loop forwards packets here so the
+	// receiver goroutine never needs its own socket read path.
+	// SenderAddr must also be set when RecvChan is set.
+	RecvChan <-chan []byte
+
 	// Debug enables verbose protocol logging to stderr.
 	// When false noisy internal logs are suppressed and the caller shows a
 	// progress bar instead.
@@ -137,6 +148,36 @@ func (r *Receiver) Run() error {
 		reqPayload = r.cfg.IncomingSession.Req
 		dbgLog.Printf("[receiver] session handed off from get: sessionID=0x%08X file=%q size=%d",
 			sessionID, reqPayload.FileName, reqPayload.FileSize)
+	} else if r.cfg.RecvChan != nil {
+		// Mux mode: read SESSION_REQ forwarded from the serve control loop.
+		// SenderAddr is pre-set from the PUSH_REQ clientAddr captured by serve.
+		senderAddr = r.cfg.SenderAddr
+		timeout := time.NewTimer(15 * time.Second)
+		defer timeout.Stop()
+		waitDone := false
+		for !waitDone {
+			select {
+			case raw, ok := <-r.cfg.RecvChan:
+				if !ok {
+					return fmt.Errorf("channel closed waiting for SESSION_REQ")
+				}
+				pkt, err := protocol.UnmarshalPacket(raw)
+				if err != nil || pkt.Header.Type != protocol.PacketSessionReq {
+					continue
+				}
+				req, err := protocol.UnmarshalSessionReq(pkt.Payload)
+				if err != nil {
+					continue
+				}
+				sessionID = pkt.Header.SessionID
+				reqPayload = req
+				waitDone = true
+			case <-timeout.C:
+				return fmt.Errorf("timeout waiting for SESSION_REQ")
+			}
+		}
+		dbgLog.Printf("[receiver] SESSION_REQ via channel: sessionID=0x%08X file=%q size=%d",
+			sessionID, reqPayload.FileName, reqPayload.FileSize)
 	} else {
 		dbgLog.Printf("[receiver] listening on %s", r.conn.LocalAddr())
 
@@ -229,11 +270,18 @@ func (r *Receiver) Run() error {
 	eofReceived := false
 
 	for !recvBuf.IsComplete() {
-		r.conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+		var pkt protocol.Packet
+		var pktErr error
 
-		n, _, err := r.conn.ReadFromUDP(rawBuf)
-		if err != nil {
-			if os.IsTimeout(err) {
+		if r.cfg.RecvChan != nil {
+			select {
+			case raw, ok := <-r.cfg.RecvChan:
+				if !ok {
+					return fmt.Errorf("channel closed during transfer")
+				}
+				lastPacketTime = time.Now()
+				pkt, pktErr = protocol.UnmarshalPacket(raw)
+			case <-time.After(50 * time.Millisecond):
 				if time.Since(lastPacketTime) > inactivityTimeout {
 					hbGen.Stop()
 					return fmt.Errorf("inactivity timeout: no packets for %v", inactivityTimeout)
@@ -241,13 +289,25 @@ func (r *Receiver) Run() error {
 				writer.Flush()
 				continue
 			}
-			return fmt.Errorf("read: %w", err)
+		} else {
+			r.conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+			n, _, err := r.conn.ReadFromUDP(rawBuf)
+			if err != nil {
+				if os.IsTimeout(err) {
+					if time.Since(lastPacketTime) > inactivityTimeout {
+						hbGen.Stop()
+						return fmt.Errorf("inactivity timeout: no packets for %v", inactivityTimeout)
+					}
+					writer.Flush()
+					continue
+				}
+				return fmt.Errorf("read: %w", err)
+			}
+			lastPacketTime = time.Now()
+			pkt, pktErr = protocol.UnmarshalPacket(rawBuf[:n])
 		}
 
-		lastPacketTime = time.Now()
-
-		pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
-		if err != nil {
+		if pktErr != nil {
 			continue
 		}
 
@@ -321,8 +381,8 @@ func (r *Receiver) Run() error {
 				isNew, err := recvBuf.Insert(rs.SeqNum, rs.Payload[:payloadSize])
 				if err == nil && isNew {
 					hbGen.RecordPacket(payloadSize)
-				r.bytesReceived.Add(int64(payloadSize))
-				r.rebuilt.Add(1)
+					r.bytesReceived.Add(int64(payloadSize))
+					r.rebuilt.Add(1)
 				}
 			}
 
@@ -389,6 +449,7 @@ func (r *Receiver) Run() error {
 	completeRaw, _ := protocol.MarshalPacket(&completePkt)
 
 	ackReceived := false
+teardownLoop:
 	for attempt := 0; attempt <= r.cfg.Session.ReceiverTeardownRetries; attempt++ {
 		if attempt > 0 {
 			dbgLog.Printf("[receiver] retransmitting TRANSFER_COMPLETE (attempt %d/%d)",
@@ -397,23 +458,38 @@ func (r *Receiver) Run() error {
 
 		r.conn.WriteToUDP(completeRaw, senderAddr)
 
-		r.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-		n, _, err := r.conn.ReadFromUDP(rawBuf)
-		if err != nil {
-			if os.IsTimeout(err) {
+		if r.cfg.RecvChan != nil {
+			select {
+			case raw, ok := <-r.cfg.RecvChan:
+				if !ok {
+					break teardownLoop
+				}
+				pkt, err := protocol.UnmarshalPacket(raw)
+				if err == nil && pkt.Header.Type == protocol.PacketACKClose && pkt.Header.SessionID == sessionID {
+					ackReceived = true
+					break teardownLoop
+				}
+			case <-time.After(1 * time.Second):
+			}
+		} else {
+			r.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+			n, _, err := r.conn.ReadFromUDP(rawBuf)
+			if err != nil {
+				if os.IsTimeout(err) {
+					continue
+				}
+				return fmt.Errorf("read during teardown: %w", err)
+			}
+
+			pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
+			if err != nil {
 				continue
 			}
-			return fmt.Errorf("read during teardown: %w", err)
-		}
 
-		pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
-		if err != nil {
-			continue
-		}
-
-		if pkt.Header.Type == protocol.PacketACKClose && pkt.Header.SessionID == sessionID {
-			ackReceived = true
-			break
+			if pkt.Header.Type == protocol.PacketACKClose && pkt.Header.SessionID == sessionID {
+				ackReceived = true
+				break teardownLoop
+			}
 		}
 	}
 

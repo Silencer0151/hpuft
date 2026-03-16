@@ -17,6 +17,7 @@ const (
 	PacketPullReq          PacketType = 0x07
 	PacketPushReq          PacketType = 0x08
 	PacketPushAccept       PacketType = 0x09
+	PacketPullAccept       PacketType = 0x0A
 )
 
 func (p PacketType) String() string {
@@ -41,6 +42,8 @@ func (p PacketType) String() string {
 		return "PUSH_REQ"
 	case PacketPushAccept:
 		return "PUSH_ACCEPT"
+	case PacketPullAccept:
+		return "PULL_ACCEPT"
 	default:
 		return "UNKNOWN"
 	}
