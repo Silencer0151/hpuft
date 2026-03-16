@@ -444,7 +444,7 @@ FinalPayloadSize = FileSize % MaxPayload                 // bytes in last DATA p
     <p>This adds approximately one packet per RTT of additional bandwidth, gently probing for headroom without risking a burst of loss.</p>
 
     <h4>Decision Logic</h4>
-    <p>Let <code>L</code> = reported <code>LossRate</code> in basis points. On each Heartbeat reception:</p>
+    <p>Let <code>L</code> = reported <code>LossRate</code> in basis points, <code>E</code> = effective delivery rate (<code>min(NetworkDeliveryRate, StorageFlushRate)</code>), <code>S</code> = current send rate. On each Heartbeat reception, the <strong>delivery-collapse guard is checked first</strong>:</p>
     <table>
         <thead>
             <tr>
@@ -454,6 +454,11 @@ FinalPayloadSize = FileSize % MaxPayload                 // bytes in last DATA p
             </tr>
         </thead>
         <tbody>
+            <tr>
+                <td><code>NACKCount &gt; 0</code> AND <code>E &lt; S × 0.5</code></td>
+                <td><strong>Hold</strong> + permanently <strong>transition to Phase 2</strong>. Evaluated before loss thresholds.</td>
+                <td>OS socket buffer overflow. Packets are dropped before reaching the receiver application — reported LossRate stays 0% (no FEC failures counted) while delivery collapses. NACKs confirm real packet loss. Entering Phase 2 fires the 1.5× ceiling immediately, cutting the target rate to near actual link capacity.</td>
+            </tr>
             <tr>
                 <td><code>L &lt; 100</code> (loss &lt; 1%)</td>
                 <td><strong>Increase</strong> (once per RTT): Phase 1: <code>S × 1.25</code>. Phase 2: <code>S + MaxPayload/RTT</code>.</td>
@@ -561,6 +566,7 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
 
     <h3>B. Teardown NACK Handling</h3>
     <p>During the teardown wait (after all data is sent, before TRANSFER_COMPLETE arrives), the sender continues to process Heartbeat packets synchronously. If a Heartbeat contains NACKs, the sender retransmits the requested packets from its chunk cache and resets the read deadline. This ensures the receiver can complete even if some late packets were lost.</p>
+    <p>Teardown retransmits are <strong>paced through the token bucket</strong> at the congestion controller's current rate. Without pacing, a backlog of queued Heartbeats (e.g., after a brief receive gap) can be drained all at once, causing the sender to fire hundreds of retransmit packets in tens of milliseconds — a burst that overwhelms the same congested link that caused the NACKs in the first place. See Lesson J for the observed failure case.</p>
 
     <h3>C. Hash Mismatch</h3>
     <p>If the receiver completes all data reception but the <code>xxHash64</code> does not match the expected value from <code>SESSION_REQ</code>:</p>
@@ -632,6 +638,20 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <ol>
         <li><strong>Two-tier ceiling (Phase 1: 4×, Phase 2: 1.5×).</strong> The fix went through two iterations. Applying a uniform 1.5× ceiling during Phase 1 ramp-up caused the opposite problem: with a 4.19 MB/s peak delivery measurement at heartbeat 6, a 1.5× ceiling produced a 6.28 MB/s cap — <em>below</em> the current send rate — locking the sender at ~5.68 MB/s for a 42-second transfer on a 110 MB/s Gigabit link. Making the ceiling Phase 2-only solved the ramp-up problem but exposed a new failure: on a clean Gigabit LAN where FEC absorbs all OS socket buffer drops, LossRate remains 0% throughout, Phase 2 is never entered, and without any ceiling the multiplicative probe compounded to 345 trillion MB/s (observed). The two-tier ceiling resolves both: Phase 1 uses 4× as a loose runaway brake (capping at ~400 MB/s on a Gigabit LAN, which effectively disables pacing without absurd log output), and Phase 2 uses 1.5× as a tight avoidance bound (by Phase 2 entry the delivery rate was measured near actual link capacity, so 1.5× is meaningful).</li>
         <li><strong>NACK deduplication.</strong> The sender's retransmit queue was a plain slice. Each heartbeat appended the full NACK list again (167 entries × every ~25 ms = the queue grew without bound). The fix is to use a set (hash map of pending sequence numbers): a sequence already waiting for retransmission is not added a second time. This prevents the queue from accumulating thousands of stale duplicate entries and ensures the 3-retransmits-per-iteration cap is spent on distinct missing packets. The Phase 2 C port should maintain a fixed-size bitset or hash set of pending NACK sequences rather than a FIFO queue.</li>
+    </ol>
+
+    <h3>J. OS Socket Buffer Drops Are Invisible to the Loss Rate Signal (LFN)</h3>
+    <p>On a real Long Fat Network (1 GB file sent over a ~20 MB/s WAN link), Phase 1 multiplicative probing ramped the sender from 2 MB/s to 71 MB/s (the 4× Phase 1 ceiling) in under 5 seconds. The link could only sustain ~20 MB/s. The excess was absorbed by OS socket buffers, which then overflowed. From that point, packets were dropped at the OS layer before reaching the receiver application. The observed effect:</p>
+    <ul>
+        <li><strong>LossRate stayed 0.00% for the entire 3-minute transfer.</strong> The receiver's loss counter is FEC-failure-based: <code>packetsLost / (packetsReceived + packetsLost)</code>. When the OS drops all packets in a heartbeat window, <code>packetsReceived = 0</code> and <code>packetsLost = 0</code>, so <code>totalPackets = 0</code> and the guard clause produces 0% loss. The CC never detected any congestion.</li>
+        <li><strong>167 NACKs persisted for the entire transfer.</strong> The early burst blew through ~800 FEC blocks before any heartbeat arrived. With the OS dropping most packets, those blocks could not be FEC-recovered. The sender retransmitted them on every heartbeat, but each retransmit went out at the 71 MB/s ceiling rate, flooding the link again and preventing recovery.</li>
+        <li><strong>Teardown never completed.</strong> The sender sent all data but the receiver could never verify the hash because the 167 missing sequences were never recovered. After 3.5 minutes the sender timed out waiting for TRANSFER_COMPLETE.</li>
+    </ul>
+    <p>Additionally, a secondary failure compounded the problem during teardown: a 7-second gap in heartbeat reception caused a backlog to accumulate. When heartbeats resumed, the sender drained the entire queue at once — 39 calls to the retransmit function in 45ms, each firing all 167 packets at wire speed (~199 MB/s burst on a 20 MB/s link).</p>
+    <p>Two fixes address this:</p>
+    <ol>
+        <li><strong>Delivery-collapse guard.</strong> Before evaluating the loss-rate thresholds, <code>OnHeartbeat</code> checks: <code>NACKCount &gt; 0 AND E &lt; S × 0.5</code>. If both are true, the sender holds and permanently enters Phase 2. The Phase 2 ceiling (1.5× peak delivery) fires immediately, cutting the target from 71 MB/s to ~26 MB/s. With the rate near actual link capacity, the normal loss signals take over and back it down further. The <code>NACKCount</code> condition is critical — it prevents false holds on cold-start windows where delivery is transiently near zero but the link is healthy.</li>
+        <li><strong>Paced teardown retransmits.</strong> The retransmit function now accepts the token bucket and calls <code>Pace()</code> for each packet. A backlog of 39 queued heartbeats retransmitting 167 packets each is spread over ~600ms at 15 MB/s rather than firing in 45ms, giving the receiver time to process them and advance <code>HighestContiguous</code>.</li>
     </ol>
 
     <h2>Appendix A: Protocol Constants (Defaults)</h2>
