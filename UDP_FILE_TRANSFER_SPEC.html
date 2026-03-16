@@ -202,7 +202,10 @@
                     <code>0x03</code> HEARTBEAT,
                     <code>0x04</code> SESSION_REJECT,
                     <code>0x05</code> TRANSFER_COMPLETE,
-                    <code>0x06</code> ACK_CLOSE.
+                    <code>0x06</code> ACK_CLOSE,
+                    <code>0x07</code> PULL_REQ,
+                    <code>0x08</code> PUSH_REQ,
+                    <code>0x09</code> PUSH_ACCEPT.
                 </td>
             </tr>
             <tr>
@@ -653,6 +656,55 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
         <li><strong>Delivery-collapse guard.</strong> Before evaluating the loss-rate thresholds, <code>OnHeartbeat</code> checks: <code>NACKCount &gt; 0 AND E &lt; S × 0.5</code>. If both are true, the sender holds and permanently enters Phase 2. The Phase 2 ceiling (1.5× peak delivery) fires immediately, cutting the target from 71 MB/s to ~26 MB/s. With the rate near actual link capacity, the normal loss signals take over and back it down further. The <code>NACKCount</code> condition is critical — it prevents false holds on cold-start windows where delivery is transiently near zero but the link is healthy.</li>
         <li><strong>Paced teardown retransmits.</strong> The retransmit function now accepts the token bucket and calls <code>Pace()</code> for each packet. A backlog of 39 queued heartbeats retransmitting 167 packets each is spread over ~600ms at 15 MB/s rather than firing in 45ms, giving the receiver time to process them and advance <code>HighestContiguous</code>.</li>
     </ol>
+
+    <h2>11. Serve Daemon — Bidirectional File Hub</h2>
+    <p>The serve daemon is a persistent single-lane UDP server that manages a file manifest and services both pull requests (clients fetch files) and push requests (clients deposit files). It listens on a single control port and handles one transfer at a time — concurrent requests receive <code>SERVER_BUSY</code> and may retry.</p>
+
+    <h3>A. SESSION_REJECT Reason Codes</h3>
+    <p>All <code>SESSION_REJECT</code> packets carry a single reason-code byte in the payload:</p>
+    <table>
+        <thead>
+            <tr><th>Code</th><th>Name</th><th>Meaning</th></tr>
+        </thead>
+        <tbody>
+            <tr><td><code>0x01</code></td><td><code>SESSION_ID_COLLISION</code></td><td>The submitted SessionID is already active on the server.</td></tr>
+            <tr><td><code>0x02</code></td><td><code>HASH_MISMATCH</code></td><td>Received file hash does not match the value declared in SESSION_REQ.</td></tr>
+            <tr><td><code>0x03</code></td><td><code>SERVER_BUSY</code></td><td>A transfer is already in progress; try again later.</td></tr>
+            <tr><td><code>0x04</code></td><td><code>FILE_NOT_FOUND</code></td><td>The requested filename is not in the serve manifest.</td></tr>
+            <tr><td><code>0x05</code></td><td><code>FILE_EXISTS</code></td><td>A push was rejected because the filename already exists on the server (no-overwrite policy).</td></tr>
+        </tbody>
+    </table>
+
+    <h3>B. PULL_REQ — Client-Initiated Pull (NAT Traversal)</h3>
+    <p>The PULL_REQ mechanism allows a client behind NAT to retrieve a file from a serve daemon that has a public IP address, without any port-forwarding configuration on the client side.</p>
+    <p><strong>Wire format:</strong> Packet type <code>0x07</code>. Payload is a null-terminated UTF-8 filename with no fixed-size prefix.</p>
+    <p><strong>Flow:</strong></p>
+    <ol>
+        <li><strong>Client</strong> generates a random <code>SessionID</code> (same crypto/rand path as §4A), binds a local UDP socket on an OS-assigned ephemeral port, and sends <code>PULL_REQ</code> to the server's control port. This outbound packet punches the NAT hole: the NAT mapping records <em>client-ip:ephemeral-port → server-ip:control-port</em>.</li>
+        <li><strong>Server</strong> receives <code>PULL_REQ</code>. If busy or filename not in manifest, sends <code>SESSION_REJECT</code> back to the client's address. Otherwise, it fires a normal <code>SESSION_REQ</code> to the client's address from a new outbound connection. Because the server's IP was the destination of the punching packet, port-restricted-cone NAT routers (the most common home router class) allow this inbound from the same IP on any source port.</li>
+        <li><strong>Client</strong> receives the <code>SESSION_REQ</code> on its bound socket, records the sender's address (server ephemeral port), and enters the normal receiver flow using its existing socket — no rebind required. The same socket that sent <code>PULL_REQ</code> carries the entire transfer.</li>
+        <li>The server's sender goroutine uses the <code>SessionID</code> supplied in the <code>PULL_REQ</code> header, eliminating an extra round-trip for ID assignment.</li>
+    </ol>
+
+    <h3>C. PUSH_REQ / PUSH_ACCEPT — Client-Initiated Push</h3>
+    <p>The push flow allows a client to deposit a file into the serve daemon's directory. Three security invariants are always enforced:</p>
+    <ol>
+        <li><strong>Base-name-only rule:</strong> The filename from the <code>PUSH_REQ</code> payload is sanitized with <code>filepath.Base()</code>. Path traversal sequences such as <code>../../etc/passwd</code> or <code>/absolute/path</code> are reduced to just the final filename component before any further processing.</li>
+        <li><strong>No-overwrite rule:</strong> If a file with the sanitized name already exists in the serve directory, the request is rejected with reason code <code>FILE_EXISTS (0x05)</code>.</li>
+        <li><strong>Post-hash manifest promotion:</strong> The incoming file is written to <code>filename.tmp</code> during the transfer. Only after a successful <code>TRANSFER_COMPLETE</code> (xxHash64 verified) is the <code>.tmp</code> renamed to its final path and added to the live manifest. A failed or interrupted transfer leaves no partial file in the manifest.</li>
+    </ol>
+    <p><strong>PUSH_REQ wire format</strong> (type <code>0x08</code>): 8-byte big-endian <code>FileSize</code> followed by a null-terminated filename. Total payload: 9 bytes minimum.</p>
+    <p><strong>PUSH_ACCEPT wire format</strong> (type <code>0x09</code>): 2-byte big-endian <code>Port</code> — the ephemeral UDP port the server has bound for the incoming data transfer.</p>
+    <p><strong>Flow:</strong></p>
+    <ol>
+        <li><strong>Client</strong> generates a <code>SessionID</code>, sends <code>PUSH_REQ</code> to the control port containing the filename and declared file size.</li>
+        <li><strong>Server</strong> validates (not busy, base-name safe, no existing file), binds an ephemeral <code>net.ListenUDP(:0)</code> data socket, and replies with <code>PUSH_ACCEPT</code> containing the assigned data port.</li>
+        <li><strong>Client</strong> extracts the data port, constructs <code>server-host:data-port</code>, and starts a normal HP-UDP sender using the same <code>SessionID</code> from step 1.</li>
+        <li><strong>Server</strong> runs a normal HP-UDP receiver on the data socket writing to <code>filename.tmp</code>. On success: <code>os.Rename(tmp → final)</code> + manifest promotion under a write-lock. On failure: <code>tmp</code> is deleted and the slot is cleared.</li>
+    </ol>
+
+    <h3>D. Manifest Lifecycle</h3>
+    <p>The manifest is a filename-to-absolute-path map built at daemon startup by a non-recursive directory scan. Symlinks and directories are excluded. Files added to the directory after startup are invisible until the daemon is restarted — this is an intentional security boundary. Successful push transfers atomically add their promoted file to the in-memory manifest under a <code>sync.RWMutex</code> write-lock. PULL_REQ handlers acquire a read-lock when consulting the manifest.</p>
 
     <h2>Appendix A: Protocol Constants (Defaults)</h2>
     <table>
