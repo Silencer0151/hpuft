@@ -96,6 +96,39 @@ func MarshalHeartbeat(p *HeartbeatPayload) []byte {
 	return buf
 }
 
+// --- PULL_REQ Payload ---
+//
+// Wire layout:
+//   Offset  Size      Field
+//   0       variable  FileName (null-terminated)
+
+// PullReqPayload is the structured payload carried inside a PULL_REQ packet.
+type PullReqPayload struct {
+	FileName string // file to request from the serve daemon
+}
+
+// MarshalPullReq serializes a PullReqPayload into bytes.
+func MarshalPullReq(p *PullReqPayload) []byte {
+	nameBytes := []byte(p.FileName)
+	buf := make([]byte, len(nameBytes)+1)
+	copy(buf, nameBytes)
+	buf[len(buf)-1] = 0
+	return buf
+}
+
+// UnmarshalPullReq parses a PullReqPayload from bytes.
+func UnmarshalPullReq(data []byte) (PullReqPayload, error) {
+	if len(data) == 0 {
+		return PullReqPayload{}, fmt.Errorf("empty PULL_REQ payload")
+	}
+	for i, b := range data {
+		if b == 0 {
+			return PullReqPayload{FileName: string(data[:i])}, nil
+		}
+	}
+	return PullReqPayload{FileName: string(data)}, nil
+}
+
 // UnmarshalHeartbeat parses a HeartbeatPayload from bytes.
 func UnmarshalHeartbeat(data []byte) (HeartbeatPayload, error) {
 	if len(data) < HeartbeatFixedSize {

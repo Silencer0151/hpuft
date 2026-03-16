@@ -37,6 +37,11 @@ type Config struct {
 	// NoCongestionControl disables adaptive rate control.
 	// Packets are sent at a fixed rate without adjustment.
 	NoCongestionControl bool
+
+	// SessionID, if non-zero, overrides the randomly generated session ID.
+	// Used by the serve command to reuse the ID from the client's PULL_REQ
+	// so both sides agree on the session without a separate handshake.
+	SessionID uint32
 }
 
 // DefaultConfig returns sender config with spec defaults.
@@ -92,7 +97,10 @@ func (s *Sender) Send() error {
 	conn.SetWriteBuffer(16 * 1024 * 1024)
 
 	// --- Step 3: Generate SessionID and send SESSION_REQ ---
-	sessionID := generateSessionID()
+	sessionID := s.cfg.SessionID
+	if sessionID == 0 {
+		sessionID = generateSessionID()
+	}
 
 	reqPayload := protocol.SessionReqPayload{
 		FileSize:    fileSize,

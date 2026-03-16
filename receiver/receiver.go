@@ -10,11 +10,30 @@ import (
 	"time"
 )
 
+// IncomingSession holds a pre-negotiated session for the 'get' command.
+// When set on Config, Run() skips Phase 1 (waiting for SESSION_REQ) and
+// starts immediately from the already-parsed session data. This allows
+// the get command to punch a NAT hole via PULL_REQ, receive the SESSION_REQ
+// on its own socket, and hand everything to the receiver without rebinding.
+type IncomingSession struct {
+	SenderAddr *net.UDPAddr
+	SessionID  uint32
+	Req        protocol.SessionReqPayload
+}
+
 // Config holds all receiver configuration.
 type Config struct {
 	ListenAddr string // e.g., ":9000"
 	OutputDir  string // directory to write received files
 	Session    protocol.SessionConfig
+
+	// Conn, if non-nil, is used instead of binding a new socket on ListenAddr.
+	// The caller retains ownership and is responsible for closing it.
+	Conn *net.UDPConn
+
+	// IncomingSession, if non-nil, skips Phase 1 (SESSION_REQ wait).
+	// Must be set together with Conn.
+	IncomingSession *IncomingSession
 }
 
 // DefaultConfig returns a receiver config with spec defaults.
@@ -28,12 +47,18 @@ func DefaultConfig() Config {
 
 // Receiver manages a UDP socket and handles incoming file transfers.
 type Receiver struct {
-	cfg  Config
-	conn *net.UDPConn
+	cfg     Config
+	conn    *net.UDPConn
+	ownConn bool // true if we created the conn (must close on Run exit)
 }
 
-// New creates a new Receiver bound to the configured listen address.
+// New creates a new Receiver. If cfg.Conn is non-nil it is used directly
+// (caller owns it); otherwise a new socket is bound on cfg.ListenAddr.
 func New(cfg Config) (*Receiver, error) {
+	if cfg.Conn != nil {
+		return &Receiver{cfg: cfg, conn: cfg.Conn, ownConn: false}, nil
+	}
+
 	addr, err := net.ResolveUDPAddr("udp", cfg.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("resolve listen addr: %w", err)
@@ -47,51 +72,62 @@ func New(cfg Config) (*Receiver, error) {
 	// Set a large read buffer to reduce kernel drops under burst
 	conn.SetReadBuffer(16 * 1024 * 1024) // 16 MB
 
-	return &Receiver{cfg: cfg, conn: conn}, nil
+	return &Receiver{cfg: cfg, conn: conn, ownConn: true}, nil
 }
 
 // Run listens for and handles a single file transfer, then returns.
 // For Phase 1 this handles one session at a time.
 func (r *Receiver) Run() error {
-	defer r.conn.Close()
-
-	log.Printf("[receiver] listening on %s", r.conn.LocalAddr())
+	if r.ownConn {
+		defer r.conn.Close()
+	}
 
 	// --- Phase 1: Wait for SESSION_REQ ---
+	// Skipped when IncomingSession is set (e.g., 'get' command after PULL_REQ handshake).
 	rawBuf := make([]byte, protocol.MTUHardCap)
 	var senderAddr *net.UDPAddr
 	var sessionID uint32
 	var reqPayload protocol.SessionReqPayload
 
-	for {
-		n, addr, err := r.conn.ReadFromUDP(rawBuf)
-		if err != nil {
-			return fmt.Errorf("read: %w", err)
+	if r.cfg.IncomingSession != nil {
+		senderAddr = r.cfg.IncomingSession.SenderAddr
+		sessionID = r.cfg.IncomingSession.SessionID
+		reqPayload = r.cfg.IncomingSession.Req
+		log.Printf("[receiver] session handed off from get: sessionID=0x%08X file=%q size=%d",
+			sessionID, reqPayload.FileName, reqPayload.FileSize)
+	} else {
+		log.Printf("[receiver] listening on %s", r.conn.LocalAddr())
+
+		for {
+			n, addr, err := r.conn.ReadFromUDP(rawBuf)
+			if err != nil {
+				return fmt.Errorf("read: %w", err)
+			}
+
+			pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
+			if err != nil {
+				log.Printf("[receiver] malformed packet from %s: %v", addr, err)
+				continue
+			}
+
+			if pkt.Header.Type != protocol.PacketSessionReq {
+				continue
+			}
+
+			req, err := protocol.UnmarshalSessionReq(pkt.Payload)
+			if err != nil {
+				log.Printf("[receiver] malformed SESSION_REQ: %v", err)
+				continue
+			}
+
+			senderAddr = addr
+			sessionID = pkt.Header.SessionID
+			reqPayload = req
+
+			log.Printf("[receiver] SESSION_REQ from %s: sessionID=0x%08X file=%q size=%d checksum=0x%016X",
+				addr, sessionID, req.FileName, req.FileSize, req.Checksum)
+			break
 		}
-
-		pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
-		if err != nil {
-			log.Printf("[receiver] malformed packet from %s: %v", addr, err)
-			continue
-		}
-
-		if pkt.Header.Type != protocol.PacketSessionReq {
-			continue
-		}
-
-		req, err := protocol.UnmarshalSessionReq(pkt.Payload)
-		if err != nil {
-			log.Printf("[receiver] malformed SESSION_REQ: %v", err)
-			continue
-		}
-
-		senderAddr = addr
-		sessionID = pkt.Header.SessionID
-		reqPayload = req
-
-		log.Printf("[receiver] SESSION_REQ from %s: sessionID=0x%08X file=%q size=%d checksum=0x%016X",
-			addr, sessionID, req.FileName, req.FileSize, req.Checksum)
-		break
 	}
 
 	// --- Phase 2: Validate and allocate buffer ---
