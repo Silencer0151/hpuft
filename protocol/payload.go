@@ -129,6 +129,80 @@ func UnmarshalPullReq(data []byte) (PullReqPayload, error) {
 	return PullReqPayload{FileName: string(data)}, nil
 }
 
+// --- PUSH_REQ Payload ---
+//
+// Wire layout:
+//
+//	Offset  Size      Field
+//	0       8 bytes   FileSize
+//	8       variable  FileName (null-terminated)
+const PushReqFixedSize = 8
+
+// PushReqPayload is sent by the push client to the serve daemon.
+type PushReqPayload struct {
+	FileSize uint64
+	FileName string
+}
+
+// MarshalPushReq serializes a PushReqPayload into bytes.
+func MarshalPushReq(p *PushReqPayload) []byte {
+	nameBytes := []byte(p.FileName)
+	buf := make([]byte, PushReqFixedSize+len(nameBytes)+1)
+	binary.BigEndian.PutUint64(buf[0:8], p.FileSize)
+	copy(buf[PushReqFixedSize:], nameBytes)
+	buf[len(buf)-1] = 0
+	return buf
+}
+
+// UnmarshalPushReq parses a PushReqPayload from bytes.
+func UnmarshalPushReq(data []byte) (PushReqPayload, error) {
+	if len(data) < PushReqFixedSize+1 {
+		return PushReqPayload{}, fmt.Errorf("%w: need at least %d bytes, got %d",
+			ErrPayloadTooShort, PushReqFixedSize+1, len(data))
+	}
+	p := PushReqPayload{
+		FileSize: binary.BigEndian.Uint64(data[0:8]),
+	}
+	nameData := data[PushReqFixedSize:]
+	for i, b := range nameData {
+		if b == 0 {
+			p.FileName = string(nameData[:i])
+			return p, nil
+		}
+	}
+	p.FileName = string(nameData)
+	return p, nil
+}
+
+// --- PUSH_ACCEPT Payload ---
+//
+// Wire layout:
+//
+//	Offset  Size    Field
+//	0       2 bytes Port (ephemeral data port serve is listening on)
+const PushAcceptFixedSize = 2
+
+// PushAcceptPayload is sent by serve to accept an incoming push.
+type PushAcceptPayload struct {
+	Port uint16
+}
+
+// MarshalPushAccept serializes a PushAcceptPayload into bytes.
+func MarshalPushAccept(p *PushAcceptPayload) []byte {
+	buf := make([]byte, PushAcceptFixedSize)
+	binary.BigEndian.PutUint16(buf[0:2], p.Port)
+	return buf
+}
+
+// UnmarshalPushAccept parses a PushAcceptPayload from bytes.
+func UnmarshalPushAccept(data []byte) (PushAcceptPayload, error) {
+	if len(data) < PushAcceptFixedSize {
+		return PushAcceptPayload{}, fmt.Errorf("%w: need at least %d bytes, got %d",
+			ErrPayloadTooShort, PushAcceptFixedSize, len(data))
+	}
+	return PushAcceptPayload{Port: binary.BigEndian.Uint16(data[0:2])}, nil
+}
+
 // UnmarshalHeartbeat parses a HeartbeatPayload from bytes.
 func UnmarshalHeartbeat(data []byte) (HeartbeatPayload, error) {
 	if len(data) < HeartbeatFixedSize {

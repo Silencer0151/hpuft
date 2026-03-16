@@ -2,11 +2,13 @@ package sender
 
 import (
 	"hpuft/protocol"
+	"io"
 	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
 
 // TokenBucket controls the sending rate using a token-based pacer with
 // dual-metric feedback from receiver heartbeats.
@@ -87,7 +89,12 @@ type TokenBucket struct {
 	increases atomic.Int64
 	holds     atomic.Int64
 	decreases atomic.Int64
+
+	// logger receives debug-level CC decisions. nil = no-op (normal mode).
+	logger *log.Logger
 }
+
+var discardLog = log.New(io.Discard, "", 0)
 
 // NewTokenBucket creates a rate controller starting at initialRate bytes/sec.
 func NewTokenBucket(initialRate float64, cc protocol.CongestionConfig) *TokenBucket {
@@ -96,6 +103,20 @@ func NewTokenBucket(initialRate float64, cc protocol.CongestionConfig) *TokenBuc
 		cc:        cc,
 		lastSend:  time.Now(),
 		ewmaAlpha: 0.3, // 0.3 = moderate smoothing (reacts in ~3 samples)
+	}
+}
+
+// SetLogger enables debug-level CC logging to l. Pass nil to silence.
+func (tb *TokenBucket) SetLogger(l *log.Logger) {
+	tb.mu.Lock()
+	tb.logger = l
+	tb.mu.Unlock()
+}
+
+// logf writes to the debug logger if one is set.
+func (tb *TokenBucket) logf(format string, args ...any) {
+	if tb.logger != nil {
+		tb.logger.Printf(format, args...)
 	}
 }
 
@@ -216,7 +237,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	if hb.NACKCount > 0 && tb.rate > 0 && rawEffective < tb.rate*0.5 {
 		if !tb.inPhase2 {
 			tb.inPhase2 = true
-			log.Printf("[congestion] → Phase 2 (additive): delivery collapse %.2f MB/s < 50%% of rate %.2f MB/s (NACKs=%d)",
+			tb.logf("[cc_debug] → Phase 2 (additive): delivery collapse %.2f MB/s < 50%% of rate %.2f MB/s (NACKs=%d)",
 				rawEffective/1e6, tb.rate/1e6, hb.NACKCount)
 		}
 		tb.decreaseStreak = 0
@@ -257,7 +278,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 			tb.lastIncreaseHB = tb.heartbeatCount
 			tb.increases.Add(1)
 			if !tb.atCeiling {
-				log.Printf("[congestion] INCREASE (phase%d): %.2f -> %.2f MB/s (loss=%.2f%% delivery=%.2f)",
+				tb.logf("[cc_debug] INCREASE (phase%d): %.2f -> %.2f MB/s (loss=%.2f%% delivery=%.2f)",
 					map[bool]int{false: 1, true: 2}[tb.inPhase2],
 					oldRate/1e6, tb.rate/1e6, float64(lossBP)/100, rawEffective/1e6)
 			}
@@ -269,7 +290,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		// First entry into this zone permanently transitions to Phase 2.
 		if !tb.inPhase2 {
 			tb.inPhase2 = true
-			log.Printf("[congestion] → Phase 2 (additive): loss=%.2f%% crossed hold zone", float64(lossBP)/100)
+			tb.logf("[cc_debug] → Phase 2 (additive): loss=%.2f%% crossed hold zone", float64(lossBP)/100)
 		}
 		tb.decreaseStreak = 0
 		tb.holds.Add(1)
@@ -282,7 +303,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 			// Drop to 85% of EWMA-smoothed delivery rate so queues can drain.
 			tb.rate = tb.smoothedRate * tb.cc.DecreaseFrac
 			tb.decreases.Add(1)
-			log.Printf("[congestion] DECREASE: %.2f -> %.2f MB/s (loss=%.2f%% delivery=%.2f, streak=%d)",
+			tb.logf("[cc_debug] DECREASE: %.2f -> %.2f MB/s (loss=%.2f%% delivery=%.2f, streak=%d)",
 				oldRate/1e6, tb.rate/1e6, float64(lossBP)/100, rawEffective/1e6, tb.decreaseStreak)
 		} else {
 			tb.holds.Add(1)
@@ -329,7 +350,7 @@ applyCeiling:
 
 	if wasCapped && !tb.atCeiling {
 		tb.atCeiling = true
-		log.Printf("[congestion] CEILING: rate capped at %.2f MB/s (%.1fx peak delivery %.2f MB/s)",
+		tb.logf("[cc_debug] CEILING: rate capped at %.2f MB/s (%.1fx peak delivery %.2f MB/s)",
 			tb.rate/1e6, ceilingMult, tb.peakRate/1e6)
 	} else if !wasCapped {
 		tb.atCeiling = false

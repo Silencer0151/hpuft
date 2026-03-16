@@ -3,10 +3,12 @@ package receiver
 import (
 	"fmt"
 	"hpuft/protocol"
+	"io"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,6 +36,23 @@ type Config struct {
 	// IncomingSession, if non-nil, skips Phase 1 (SESSION_REQ wait).
 	// Must be set together with Conn.
 	IncomingSession *IncomingSession
+
+	// OutputPath, if non-empty, overrides the default OutputDir+filename path.
+	// Used by serve's push handler to write directly to a .tmp staging path.
+	OutputPath string
+
+	// Debug enables verbose protocol logging to stderr.
+	// When false noisy internal logs are suppressed and the caller shows a
+	// progress bar instead.
+	Debug bool
+}
+
+// ReceiverProgress is a snapshot of live transfer metrics for the progress bar.
+type ReceiverProgress struct {
+	BytesReceived int64
+	TotalBytes    int64
+	Rebuilt       int64 // FEC-recovered packets so far
+	StartNs       int64
 }
 
 // DefaultConfig returns a receiver config with spec defaults.
@@ -50,6 +69,22 @@ type Receiver struct {
 	cfg     Config
 	conn    *net.UDPConn
 	ownConn bool // true if we created the conn (must close on Run exit)
+
+	// Progress atomics — written by Run(), read lock-free by progress bar.
+	bytesReceived atomic.Int64
+	totalBytes    atomic.Int64
+	rebuilt       atomic.Int64
+	startNs       atomic.Int64
+}
+
+// Progress returns a live snapshot for the progress bar goroutine.
+func (r *Receiver) Progress() ReceiverProgress {
+	return ReceiverProgress{
+		BytesReceived: r.bytesReceived.Load(),
+		TotalBytes:    r.totalBytes.Load(),
+		Rebuilt:       r.rebuilt.Load(),
+		StartNs:       r.startNs.Load(),
+	}
 }
 
 // New creates a new Receiver. If cfg.Conn is non-nil it is used directly
@@ -82,6 +117,13 @@ func (r *Receiver) Run() error {
 		defer r.conn.Close()
 	}
 
+	var dbgLog *log.Logger
+	if r.cfg.Debug {
+		dbgLog = log.New(os.Stderr, "", log.Ltime|log.Lmicroseconds)
+	} else {
+		dbgLog = log.New(io.Discard, "", 0)
+	}
+
 	// --- Phase 1: Wait for SESSION_REQ ---
 	// Skipped when IncomingSession is set (e.g., 'get' command after PULL_REQ handshake).
 	rawBuf := make([]byte, protocol.MTUHardCap)
@@ -93,10 +135,10 @@ func (r *Receiver) Run() error {
 		senderAddr = r.cfg.IncomingSession.SenderAddr
 		sessionID = r.cfg.IncomingSession.SessionID
 		reqPayload = r.cfg.IncomingSession.Req
-		log.Printf("[receiver] session handed off from get: sessionID=0x%08X file=%q size=%d",
+		dbgLog.Printf("[receiver] session handed off from get: sessionID=0x%08X file=%q size=%d",
 			sessionID, reqPayload.FileName, reqPayload.FileSize)
 	} else {
-		log.Printf("[receiver] listening on %s", r.conn.LocalAddr())
+		dbgLog.Printf("[receiver] listening on %s", r.conn.LocalAddr())
 
 		for {
 			n, addr, err := r.conn.ReadFromUDP(rawBuf)
@@ -106,7 +148,7 @@ func (r *Receiver) Run() error {
 
 			pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
 			if err != nil {
-				log.Printf("[receiver] malformed packet from %s: %v", addr, err)
+				dbgLog.Printf("[receiver] malformed packet from %s: %v", addr, err)
 				continue
 			}
 
@@ -116,7 +158,7 @@ func (r *Receiver) Run() error {
 
 			req, err := protocol.UnmarshalSessionReq(pkt.Payload)
 			if err != nil {
-				log.Printf("[receiver] malformed SESSION_REQ: %v", err)
+				dbgLog.Printf("[receiver] malformed SESSION_REQ: %v", err)
 				continue
 			}
 
@@ -124,7 +166,7 @@ func (r *Receiver) Run() error {
 			sessionID = pkt.Header.SessionID
 			reqPayload = req
 
-			log.Printf("[receiver] SESSION_REQ from %s: sessionID=0x%08X file=%q size=%d checksum=0x%016X",
+			dbgLog.Printf("[receiver] SESSION_REQ from %s: sessionID=0x%08X file=%q size=%d checksum=0x%016X",
 				addr, sessionID, req.FileName, req.FileSize, req.Checksum)
 			break
 		}
@@ -145,27 +187,33 @@ func (r *Receiver) Run() error {
 	recvBuf := NewReceiveBuffer(reqPayload.FileSize, chunkSize)
 	defer recvBuf.Close()
 
-	outputPath := filepath.Join(r.cfg.OutputDir, filepath.Base(reqPayload.FileName))
+	outputPath := r.cfg.OutputPath
+	if outputPath == "" {
+		outputPath = filepath.Join(r.cfg.OutputDir, filepath.Base(reqPayload.FileName))
+	}
 	writer, err := NewDiskWriter(recvBuf, outputPath, reqPayload.FileSize, chunkSize)
 	if err != nil {
 		return fmt.Errorf("create disk writer: %w", err)
 	}
 	defer writer.Close()
 
-	log.Printf("[receiver] allocated buffer: %d chunks of %d bytes, writing to %s",
+	dbgLog.Printf("[receiver] allocated buffer: %d chunks of %d bytes, writing to %s",
 		recvBuf.Stats().TotalChunks, chunkSize, outputPath)
+
+	r.totalBytes.Store(int64(reqPayload.FileSize))
+	r.startNs.Store(time.Now().UnixNano())
 
 	// --- Phase 3: Start heartbeat generator ---
 	hbGen := NewHeartbeatGenerator(r.conn, senderAddr, sessionID, recvBuf, writer)
 	hbGen.Start()
 	defer hbGen.Stop()
 
-	log.Printf("[receiver] heartbeat generator started")
+	dbgLog.Printf("[receiver] heartbeat generator started")
 
 	// --- Phase 3b: Create FEC block decoder ---
 	fecCfg := protocol.DefaultFECConfig()
 	blockDecoder := NewBlockDecoder(fecCfg.BlockSize, recvBuf)
-	log.Printf("[receiver] FEC decoder enabled: block_size=%d", fecCfg.BlockSize)
+	dbgLog.Printf("[receiver] FEC decoder enabled: block_size=%d", fecCfg.BlockSize)
 
 	// --- Phase 4: Receive DATA and PARITY packets ---
 	flushTicker := time.NewTicker(50 * time.Millisecond)
@@ -213,13 +261,14 @@ func (r *Receiver) Run() error {
 
 			isNew, err := recvBuf.Insert(pkt.Header.SequenceNum, pkt.Payload)
 			if err != nil {
-				log.Printf("[receiver] insert error seq=%d: %v", pkt.Header.SequenceNum, err)
+				dbgLog.Printf("[receiver] insert error seq=%d: %v", pkt.Header.SequenceNum, err)
 				continue
 			}
 
 			// Track metrics for heartbeat
 			if isNew {
 				hbGen.RecordPacket(len(pkt.Payload))
+				r.bytesReceived.Add(int64(len(pkt.Payload)))
 			}
 
 			// Always update the echo timestamp (RTT measurement) and
@@ -245,6 +294,8 @@ func (r *Receiver) Run() error {
 				isNew, err := recvBuf.Insert(rs.SeqNum, rs.Payload[:payloadSize])
 				if err == nil && isNew {
 					hbGen.RecordPacket(payloadSize)
+					r.bytesReceived.Add(int64(payloadSize))
+					r.rebuilt.Add(1)
 				}
 			}
 
@@ -270,6 +321,8 @@ func (r *Receiver) Run() error {
 				isNew, err := recvBuf.Insert(rs.SeqNum, rs.Payload[:payloadSize])
 				if err == nil && isNew {
 					hbGen.RecordPacket(payloadSize)
+				r.bytesReceived.Add(int64(payloadSize))
+				r.rebuilt.Add(1)
 				}
 			}
 
@@ -293,7 +346,7 @@ func (r *Receiver) Run() error {
 	// --- Phase 5: Stop heartbeat and finalize ---
 	hbGen.Stop()
 
-	log.Printf("[receiver] all %d chunks received, finalizing...", recvBuf.Stats().TotalChunks)
+	dbgLog.Printf("[receiver] all %d chunks received, finalizing...", recvBuf.Stats().TotalChunks)
 
 	computedHash, err := writer.Finalize()
 	if err != nil {
@@ -302,11 +355,11 @@ func (r *Receiver) Run() error {
 
 	stats := recvBuf.Stats()
 	fecStats := blockDecoder.Stats()
-	log.Printf("[receiver] transfer stats: received=%d duplicates=%d | FEC: blocks_recovered=%d shards_recovered=%d",
+	dbgLog.Printf("[receiver] transfer stats: received=%d duplicates=%d | FEC: blocks_recovered=%d shards_recovered=%d",
 		stats.PacketsReceived, stats.Duplicates, fecStats.BlocksRecovered, fecStats.ShardsRecovered)
 
 	if computedHash != reqPayload.Checksum {
-		log.Printf("[receiver] HASH MISMATCH: computed=0x%016X expected=0x%016X",
+		dbgLog.Printf("[receiver] HASH MISMATCH: computed=0x%016X expected=0x%016X",
 			computedHash, reqPayload.Checksum)
 
 		rejectPkt := protocol.Packet{
@@ -324,7 +377,7 @@ func (r *Receiver) Run() error {
 			computedHash, reqPayload.Checksum)
 	}
 
-	log.Printf("[receiver] hash verified: 0x%016X", computedHash)
+	dbgLog.Printf("[receiver] hash verified: 0x%016X", computedHash)
 
 	// --- Phase 6: Graceful Teardown ---
 	completePkt := protocol.Packet{
@@ -338,7 +391,7 @@ func (r *Receiver) Run() error {
 	ackReceived := false
 	for attempt := 0; attempt <= r.cfg.Session.ReceiverTeardownRetries; attempt++ {
 		if attempt > 0 {
-			log.Printf("[receiver] retransmitting TRANSFER_COMPLETE (attempt %d/%d)",
+			dbgLog.Printf("[receiver] retransmitting TRANSFER_COMPLETE (attempt %d/%d)",
 				attempt, r.cfg.Session.ReceiverTeardownRetries)
 		}
 
@@ -365,13 +418,13 @@ func (r *Receiver) Run() error {
 	}
 
 	if ackReceived {
-		log.Printf("[receiver] ACK_CLOSE received, entering linger state")
+		dbgLog.Printf("[receiver] ACK_CLOSE received, entering linger state")
 	} else {
-		log.Printf("[receiver] no ACK_CLOSE after retries, proceeding with unilateral teardown (transfer verified)")
+		dbgLog.Printf("[receiver] no ACK_CLOSE after retries, proceeding with unilateral teardown (transfer verified)")
 	}
 
 	time.Sleep(r.cfg.Session.LingerDuration)
 
-	log.Printf("[receiver] transfer complete: %s (%d bytes)", outputPath, reqPayload.FileSize)
+	dbgLog.Printf("[receiver] transfer complete: %s (%d bytes)", outputPath, reqPayload.FileSize)
 	return nil
 }

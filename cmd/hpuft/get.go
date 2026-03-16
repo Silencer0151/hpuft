@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"hpuft/protocol"
 	"hpuft/receiver"
 	"log"
@@ -17,17 +18,22 @@ func runGet(args []string) {
 	serveAddr := fs.String("addr", "127.0.0.1:9001", "serve daemon address (host:port)")
 	fileName := fs.String("file", "", "name of the file to request (required)")
 	outDir := fs.String("out", ".", "directory to write the received file")
+	debug := fs.Bool("debug", false, "stream raw protocol telemetry to stderr")
 	fs.Parse(args)
 
 	if *fileName == "" {
-		log.Fatal("usage: hpuft get -file <name> [-addr host:port] [-out dir]")
+		fmt.Fprintln(os.Stderr, "usage: hpuft get -file <name> [-addr host:port] [-out dir] [-debug]")
+		os.Exit(1)
 	}
 
-	log.SetFlags(log.Ltime | log.Lmicroseconds)
+	if *debug {
+		log.SetFlags(log.Ltime | log.Lmicroseconds)
+		log.SetOutput(os.Stderr)
+	}
 
-	// Ensure output directory exists.
 	if err := os.MkdirAll(*outDir, 0755); err != nil {
-		log.Fatalf("create output dir: %v", err)
+		fmt.Fprintf(os.Stderr, "[get] create output dir: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Bind a local socket on an OS-assigned ephemeral port.
@@ -36,24 +42,24 @@ func runGet(args []string) {
 	// SESSION_REQ and all subsequent transfer traffic.
 	localConn, err := net.ListenUDP("udp", &net.UDPAddr{})
 	if err != nil {
-		log.Fatalf("bind local socket: %v", err)
+		fmt.Fprintf(os.Stderr, "[get] bind local socket: %v\n", err)
+		os.Exit(1)
 	}
 	defer localConn.Close()
 	localConn.SetReadBuffer(16 * 1024 * 1024)
 
-	log.Printf("[get] local socket: %s", localConn.LocalAddr())
-
-	// Resolve serve address.
 	rAddr, err := net.ResolveUDPAddr("udp", *serveAddr)
 	if err != nil {
-		log.Fatalf("resolve serve addr: %v", err)
+		fmt.Fprintf(os.Stderr, "[get] resolve serve addr: %v\n", err)
+		os.Exit(1)
 	}
 
-	// Generate a session ID. The serve daemon will reuse this ID in its
-	// SESSION_REQ so both sides agree without a separate negotiation step.
+	// Generate a session ID. The serve daemon reuses it in its SESSION_REQ.
 	sessionID := newGetSessionID()
 
 	// Build and send PULL_REQ — this punches the outbound NAT hole.
+	fmt.Fprintf(os.Stdout, "[get] Punching NAT hole via PULL_REQ for %q -> %s\n", *fileName, *serveAddr)
+
 	pullPkt := protocol.Packet{
 		Header: protocol.Header{
 			Type:      protocol.PacketPullReq,
@@ -63,17 +69,15 @@ func runGet(args []string) {
 	}
 	pullRaw, err := protocol.MarshalPacket(&pullPkt)
 	if err != nil {
-		log.Fatalf("marshal PULL_REQ: %v", err)
+		fmt.Fprintf(os.Stderr, "[get] marshal PULL_REQ: %v\n", err)
+		os.Exit(1)
 	}
-
 	if _, err := localConn.WriteToUDP(pullRaw, rAddr); err != nil {
-		log.Fatalf("send PULL_REQ: %v", err)
+		fmt.Fprintf(os.Stderr, "[get] send PULL_REQ: %v\n", err)
+		os.Exit(1)
 	}
-	log.Printf("[get] PULL_REQ sent for %q to %s (sessionID=0x%08X)", *fileName, *serveAddr, sessionID)
 
 	// Wait for SESSION_REQ or SESSION_REJECT.
-	// The serve daemon dials back to our address; port-restricted cone NAT
-	// allows inbound from the serve IP on any port once we've sent to it.
 	rawBuf := make([]byte, protocol.MTUHardCap)
 	localConn.SetReadDeadline(time.Now().Add(15 * time.Second))
 
@@ -84,9 +88,11 @@ func runGet(args []string) {
 		n, from, err := localConn.ReadFromUDP(rawBuf)
 		if err != nil {
 			if os.IsTimeout(err) {
-				log.Fatalf("[get] timeout: no response from %s after 15s", *serveAddr)
+				fmt.Fprintf(os.Stderr, "[get] timeout: no response from %s after 15s\n", *serveAddr)
+				os.Exit(1)
 			}
-			log.Fatalf("[get] read: %v", err)
+			fmt.Fprintf(os.Stderr, "[get] read: %v\n", err)
+			os.Exit(1)
 		}
 
 		pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
@@ -103,17 +109,17 @@ func runGet(args []string) {
 			if len(pkt.Payload) > 0 {
 				reason = protocol.RejectReason(pkt.Payload[0]).String()
 			}
-			log.Fatalf("[get] rejected by serve: %s", reason)
+			fmt.Fprintf(os.Stderr, "[get] rejected by serve: %s\n", reason)
+			os.Exit(1)
 
 		case protocol.PacketSessionReq:
 			req, err := protocol.UnmarshalSessionReq(pkt.Payload)
 			if err != nil {
-				log.Fatalf("[get] malformed SESSION_REQ: %v", err)
+				fmt.Fprintf(os.Stderr, "[get] malformed SESSION_REQ: %v\n", err)
+				os.Exit(1)
 			}
 			serveSenderAddr = from
 			sessionReq = req
-			log.Printf("[get] SESSION_REQ received from %s: file=%q size=%d",
-				from, req.FileName, req.FileSize)
 		}
 
 		if serveSenderAddr != nil {
@@ -121,14 +127,15 @@ func runGet(args []string) {
 		}
 	}
 
-	// Clear the deadline before handing off to the receiver.
 	localConn.SetReadDeadline(time.Time{})
 
-	// Hand the existing socket and pre-parsed session to the receiver.
-	// Phase 1 (waiting for SESSION_REQ) is skipped since we already have it.
+	fmt.Fprintf(os.Stdout, "[get] Received SESSION_REQ. Allocating %s ring buffer...\n",
+		humanBytes(int64(sessionReq.FileSize)))
+
 	cfg := receiver.DefaultConfig()
 	cfg.OutputDir = *outDir
 	cfg.Conn = localConn
+	cfg.Debug = *debug
 	cfg.IncomingSession = &receiver.IncomingSession{
 		SenderAddr: serveSenderAddr,
 		SessionID:  sessionID,
@@ -137,11 +144,32 @@ func runGet(args []string) {
 
 	r, err := receiver.New(cfg)
 	if err != nil {
-		log.Fatalf("[get] init receiver: %v", err)
+		fmt.Fprintf(os.Stderr, "[get] init receiver: %v\n", err)
+		os.Exit(1)
 	}
 
-	if err := r.Run(); err != nil {
-		log.Fatalf("[get] transfer failed: %v", err)
+	if !*debug {
+		done := make(chan struct{})
+		go RunRecvProgress(r, done)
+		start := time.Now()
+		err = r.Run()
+		close(done)
+		time.Sleep(20 * time.Millisecond)
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\n[get] FAILED: %v\n", err)
+			os.Exit(1)
+		}
+		elapsed := time.Since(start)
+		mbps := float64(sessionReq.FileSize) / elapsed.Seconds() / 1e6
+		fmt.Fprintf(os.Stdout, "[get] TRANSFER COMPLETE: %s in %s (%.1f MB/s) | FEC rebuilt: %d pkts\n",
+			*fileName, elapsed.Round(time.Millisecond), mbps, r.Progress().Rebuilt)
+	} else {
+		if err := r.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "[get] FAILED: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stdout, "[get] TRANSFER COMPLETE\n")
 	}
 }
 

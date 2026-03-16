@@ -6,6 +6,7 @@
 //	hpuft recv   [-listen :9000] [-out ./output]
 //	hpuft serve  [-listen :9001] [-dir .]
 //	hpuft get    -file <name> [-addr host:9001] [-out .]
+//	hpuft push   -file <path> [-addr host:9001]
 //	hpuft proxy  [-listen :9500] [-target host:9000] [-loss pct] [-seed n]
 //	hpuft test   [-files f1,f2] [-loss 0,1,5,10,15] [-timeout 120]
 package main
@@ -32,6 +33,8 @@ func main() {
 		runServe(args)
 	case "get":
 		runGet(args)
+	case "push":
+		runPush(args)
 	case "proxy":
 		runProxy(args)
 	case "test":
@@ -51,6 +54,7 @@ Commands:
   recv   Listen for an incoming push transfer
   serve  Persistent daemon: serve files on request (single-lane)
   get    Pull a file from a serve daemon (NAT-traversal friendly)
+  push   Push a file to a serve daemon (bidirectional hub)
   proxy  Lossy UDP proxy for testing
   test   Run end-to-end integration tests
 
