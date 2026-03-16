@@ -203,6 +203,28 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	oldRate := tb.rate
 	lossBP := hb.LossRate // basis points: 100 = 1.00%
 
+	// Delivery-collapse guard: when the OS socket buffer is overwhelmed, the
+	// receiver drops packets before the application layer sees them. The
+	// receiver reports 0% loss (no FEC failures counted) while delivery
+	// collapses to near zero. Without this check the CC sees 0% loss and
+	// keeps probing upward, permanently locking into the 4× Phase 1 ceiling.
+	//
+	// Condition: delivery < 50% of current rate AND there are outstanding
+	// NACKs (distinguishes "real congestion" from a cold-start empty window).
+	// Action: hold rate and permanently enter Phase 2 so the tighter 1.5×
+	// ceiling fires immediately, cutting the target rate to near link capacity.
+	if hb.NACKCount > 0 && tb.rate > 0 && rawEffective < tb.rate*0.5 {
+		if !tb.inPhase2 {
+			tb.inPhase2 = true
+			log.Printf("[congestion] → Phase 2 (additive): delivery collapse %.2f MB/s < 50%% of rate %.2f MB/s (NACKs=%d)",
+				rawEffective/1e6, tb.rate/1e6, hb.NACKCount)
+		}
+		tb.decreaseStreak = 0
+		tb.holds.Add(1)
+		// Skip the switch — fall through to ceiling/floor checks below.
+		goto applyCeiling
+	}
+
 	switch {
 	case lossBP < 100:
 		// < 1% loss: link has headroom, probe upward once per RTT.
@@ -267,6 +289,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		}
 	}
 
+applyCeiling:
 	// Apply explicit max rate cap if configured
 	if tb.maxRate > 0 && tb.rate > tb.maxRate {
 		tb.rate = tb.maxRate
