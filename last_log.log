@@ -1,290 +1,177 @@
-=== testing from another location (NAT NOT WORKING?!) ===
-SERVER:
-PS C:\Users\nitro\Downloads> .\hpuft.exe serve -listen :2001
-[serve] Online. Listening on [::]:2001
-[serve] Manifest loaded: 11 authorized files found in .
-16:39:49.053853 [serve] REJECTED 71.62.235.16:52846: PULL_REQ for "large.txt" (Not in manifest)
-16:41:17.845393 [serve] ACCEPTED 71.62.235.16:59499: PUSH_REQ for "darksouls3_2022.09.05.mp4" (data port 64829)
-16:45:05.566417 [serve] REJECTED 71.62.235.16:35910: SERVER_BUSY (Transferring to 71.62.235.16:59499)
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file test50.bin -addr 192.168.50.82:9001 -out received/
+[get] Punching NAT hole via PULL_REQ for "test50.bin" -> 192.168.50.82:9001
+[get] Received SESSION_REQ. Allocating 50 MB ring buffer...
+[====================] 50 MB 100% |  10.4 MB/s | Rebuilt: 0| Rebuilt: 0
+[get] TRANSFER COMPLETE: test50.bin in 5.08s (10.3 MB/s) | FEC rebuilt: 0 pkts
+derrybm@killdozer:~/projects/hpuft$
 
-CLIENT:
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file ./received/darksouls3_2022.09.05.mp4 -addr 73.99.176.159:2001
-[push] Target: darksouls3_2022.09.05.mp4 (227 MB)
-[push] Pushing to 73.99.176.159:2001...
-[push] PUSH_ACCEPT received. Sending to data port 64829...
-2026/03/16 16:41:17 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 16:41:17 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[====================] 227 MB 100% |   2.0 MB/s | NACKs: 00 | NACKs: 0
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\
+[serve] Online. Listening on [::]:9001
+[serve] Manifest loaded: 8 authorized files found in .\received\
+18:43:40.520778 [serve] ACCEPTED 192.168.50.9:33179: PULL_REQ for "test50.bin"
+18:43:40.545836 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+18:43:40.546355 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+18:43:45.605439 [sender] linger complete, session finished
+18:43:45.605521 [serve] TRANSFER COMPLETE: "test50.bin" to 192.168.50.9:33179 in 5.084s (10.3 MB/s)
 
-[push] FAILED: timeout waiting for TRANSFER_COMPLETE
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file ./received/darksouls3_2022.09.05.mp4 -addr 73.99.176.159:2001 -nodelay
-flag provided but not defined: -nodelay
-Usage of push:
-  -addr string
-        serve daemon address (host:port) (default "127.0.0.1:9001")
-  -debug
-        stream raw protocol telemetry to stderr
-  -file string
-        path to file to push (required)
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file ./received/darksouls3_2022.09.05.mp4 -addr 73.99.176.159:2001 -debug
-[push] Target: darksouls3_2022.09.05.mp4 (227 MB)
-[push] Pushing to 73.99.176.159:2001...
-[push] rejected by serve: SERVER_BUSY
+
+derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/test50_linux.bin -addr 192.168.50.82:9001
+[push] Target: test50_linux.bin (50 MB)
+[push] Pushing to 192.168.50.82:9001...
+[push] PUSH_ACCEPT received. Starting transfer...
+2026/03/16 18:45:25 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+2026/03/16 18:45:25 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+[====================] 50 MB 100% |  23.3 MB/s | NACKs: 02026/03/16 18:45:35 [sender] linger complete, session finished
+[====================] 50 MB 100% |  23.3 MB/s | NACKs: 0
+[push] TRANSFER COMPLETE: test50_linux.bin in 10.313s (5.1 MB/s)
 derrybm@killdozer:~/projects/hpuft$
 
 
-
-SERVER AT HOME LOG (client just reported time out)
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -dir .\received\ -listen :2001
-[serve] Online. Listening on [::]:2001
-[serve] Manifest loaded: 6 authorized files found in .\received\
-15:41:42.291447 [serve] ACCEPTED 73.99.176.159:51988: PULL_REQ for "large.txt"
-15:41:42.318341 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-15:41:42.318846 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-15:42:22.706878 [serve] TRANSFER FAILED: "large.txt" to 73.99.176.159:51988 — timeout waiting for TRANSFER_COMPLETE
-15:42:50.728637 [serve] ACCEPTED 73.99.176.159:63316: PULL_REQ for "large.txt"
-15:42:50.740707 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-15:42:50.740707 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-15:43:31.129648 [serve] TRANSFER FAILED: "large.txt" to 73.99.176.159:63316 — timeout waiting for TRANSFER_COMPLETE
-15:44:35.619650 [serve] ACCEPTED 73.99.176.159:55811: PULL_REQ for "large.txt"
-15:44:35.639195 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-15:44:35.639700 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-15:45:16.262121 [serve] TRANSFER FAILED: "large.txt" to 73.99.176.159:55811 — timeout waiting for TRANSFER_COMPLETE
-16:12:06.593230 [serve] ACCEPTED 192.168.50.1:54999: PULL_REQ for "large.txt"
-16:12:06.610329 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-16:12:06.610329 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-16:12:46.958642 [serve] TRANSFER FAILED: "large.txt" to 192.168.50.1:54999 — timeout waiting for TRANSFER_COMPLETE
+18:45:24.716926 [serve] ACCEPTED 192.168.50.9:44448: PUSH_REQ for "test50_linux.bin"
+18:45:35.007261 [serve] PUSH COMPLETE: "test50_linux.bin" from 192.168.50.9:44448 in 10.288s (5.1 MB/s) — added to manifest
 
 
+derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/test50_linux.bin -addr 192.168.50.82:9001
+[push] Target: test50_linux.bin (50 MB)
+[push] Pushing to 192.168.50.82:9001...
+[push] PUSH_ACCEPT received. Starting transfer...
+2026/03/16 18:47:59 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+2026/03/16 18:47:59 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+[====================] 50 MB 100% |  23.3 MB/s | NACKs: 02026/03/16 18:48:10 [sender] linger complete, session finished
+[====================] 50 MB 100% |  23.3 MB/s | NACKs: 0
+[push] TRANSFER COMPLETE: test50_linux.bin in 10.342s (5.1 MB/s)
+derrybm@killdozer:~/projects/hpuft$
 
-==== local testing section ====
+client2 somehow pushed the file while the other one was still pushing:
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft> ./hpuft push -file .\testdata\terminal_6.txt -addr 192.168.50.82:9001
+[push] Target: terminal_6.txt (8 KB)
+[push] Pushing to 192.168.50.82:9001...
 
-SERVER:
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -dir .\received\ -listen :2001
-[serve] Manifest loaded: 5 authorized files found in .\received\
-17:35:24.937313 [serve] ACCEPTED 192.168.50.9:49530: PUSH_REQ for "darksouls3_2022.09.05.mp4" (data port 55598)
-17:35:38.356207 [serve] PUSH COMPLETE: "darksouls3_2022.09.05.mp4" from 192.168.50.9:49530 in 13.418s (17.7 MB/s) — added to manifest
-17:36:46.864047 [serve] ACCEPTED 192.168.50.9:59865: PULL_REQ for "large.txt"
-17:36:46.883304 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-17:36:46.884476 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-17:36:51.909305 [sender] linger complete, session finished
-17:36:51.909396 [serve] TRANSFER COMPLETE: "large.txt" to 192.168.50.9:59865 in 5.045s (10.2 MB/s)
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -dir .\received\ -listen :2001
-[serve] Online. Listening on [::]:2001
-[serve] Manifest loaded: 7 authorized files found in .\received\
-17:38:02.158581 [serve] ACCEPTED 192.168.50.9:35158: PULL_REQ for "setup_quake.exe"
-17:38:03.290415 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-17:38:03.290975 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-17:38:16.562529 [sender] linger complete, session finished
-17:38:16.562529 [serve] TRANSFER COMPLETE: "setup_quake.exe" to 192.168.50.9:35158 in 14.403s (42.2 MB/s)
-17:38:46.307721 [serve] ACCEPTED 192.168.50.9:37150: PULL_REQ for "setup_quake.exe"
-17:38:46.446663 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-17:38:46.446663 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-17:39:04.472366 [sender] linger complete, session finished
-17:39:04.472406 [serve] TRANSFER COMPLETE: "setup_quake.exe" to 192.168.50.9:37150 in 18.164s (33.5 MB/s)
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -dir .\received\ -listen :2001
-[serve] Online. Listening on [::]:2001
-[serve] Manifest loaded: 6 authorized files found in .\received\
-17:39:28.058329 [serve] ACCEPTED 192.168.50.9:43922: PUSH_REQ for "setup_quake.exe" (data port 62432)
-17:40:11.479203 [serve] PUSH COMPLETE: "setup_quake.exe" from 192.168.50.9:43922 in 43.419s (14.0 MB/s) — added to manifest
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -dir .\received\ -listen :2001
-[serve] Online. Listening on [::]:2001
-[serve] Manifest loaded: 6 authorized files found in .\received\
-17:40:53.747952 [serve] ACCEPTED 192.168.50.9:52856: PUSH_REQ for "setup_quake.exe" (data port 57191)
-17:41:16.138321 [serve] PUSH COMPLETE: "setup_quake.exe" from 192.168.50.9:52856 in 22.389s (27.1 MB/s) — added to manifest
+18:47:59.284023 [serve] ACCEPTED 192.168.50.9:35812: PUSH_REQ for "test50_linux.bin"
+18:48:09.603705 [serve] PUSH COMPLETE: "test50_linux.bin" from 192.168.50.9:35812 in 10.319s (5.1 MB/s) — added to manifest
 
 
-CLIENT:
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/darksouls3_2022.09.05.mp4 -addr 192.168.50.82:2001
-[push] Target: darksouls3_2022.09.05.mp4 (227 MB)
-[push] Pushing to 192.168.50.82:2001...
-[push] PUSH_ACCEPT received. Sending to data port 55598...
-2026/03/16 17:35:25 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 17:35:25 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[====================] 227 MB 100% |  88.8 MB/s | NACKs: 02026/03/16 17:35:38 [sender] linger complete, session finished
-[====================] 227 MB 100% |  88.8 MB/s | NACKs: 0
-[push] TRANSFER COMPLETE: darksouls3_2022.09.05.mp4 in 13.439s (17.7 MB/s)
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get
-usage: hpuft get -file <name> [-addr host:port] [-out dir] [-debug]
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file large.txt -addr 192.168.50.82:2001 -out received/
-[get] Punching NAT hole via PULL_REQ for "large.txt" -> 192.168.50.82:2001
-[get] Received SESSION_REQ. Allocating 49 MB ring buffer...
-[====================] 49 MB 100% |  10.3 MB/s | Rebuilt: 0| Rebuilt: 0
-[get] TRANSFER COMPLETE: large.txt in 5.047s (10.2 MB/s) | FEC rebuilt: 0 pkts
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file setup_quake.exe -addr 192.168.50.82:2001 -out received/
-[get] Punching NAT hole via PULL_REQ for "setup_quake.exe" -> 192.168.50.82:2001
-[get] Received SESSION_REQ. Allocating 579 MB ring buffer...
-[====================] 579 MB 100% |  45.8 MB/s | Rebuilt: 0| Rebuilt: 0
-[get] TRANSFER COMPLETE: setup_quake.exe in 13.292s (45.7 MB/s) | FEC rebuilt: 0 pkts
-derrybm@killdozer:~/projects/hpuft$ rm received/setup_quake.exe
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file setup_quake.exe -addr 192.168.50.82:2001 -out received/ -debug
-[get] Punching NAT hole via PULL_REQ for "setup_quake.exe" -> 192.168.50.82:2001
-[get] Received SESSION_REQ. Allocating 579 MB ring buffer...
-17:38:47.023346 [receiver] session handed off from get: sessionID=0x291648A7 file="setup_quake.exe" size=607645056
-17:38:47.026657 [receiver] allocated buffer: 441603 chunks of 1376 bytes, writing to received/setup_quake.exe
-17:38:47.026683 [receiver] heartbeat generator started
-17:38:47.026688 [receiver] FEC decoder enabled: block_size=100
-17:39:01.730339 [receiver] all 441603 chunks received, finalizing...
-17:39:02.047502 [receiver] transfer stats: received=441603 duplicates=21077 | FEC: blocks_recovered=0 shards_recovered=0
-17:39:02.047543 [receiver] hash verified: 0xC4AC3A258846777A
-17:39:02.047888 [receiver] ACK_CLOSE received, entering linger state
-17:39:05.049194 [receiver] transfer complete: received/setup_quake.exe (607645056 bytes)
-[get] TRANSFER COMPLETE
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/setup_quake.exe -addr 192.168.50.82:2001
-[push] Target: setup_quake.exe (579 MB)
-[push] Pushing to 192.168.50.82:2001...
-[push] PUSH_ACCEPT received. Sending to data port 62432...
-2026/03/16 17:39:28 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 17:39:28 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[====================] 579 MB 100% |  18.8 MB/s | NACKs: 02026/03/16 17:40:12 [sender] linger complete, session finished
-[====================] 579 MB 100% |  18.8 MB/s | NACKs: 0
-[push] TRANSFER COMPLETE: setup_quake.exe in 43.442s (14.0 MB/s)
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/setup_quake.exe -addr 192.168.50.82:2001 -debug
-[push] Target: setup_quake.exe (579 MB)
-[push] Pushing to 192.168.50.82:2001...
-[push] PUSH_ACCEPT received. Sending to data port 57191...
-17:40:54.327059 [sender] hashing file: received/setup_quake.exe (607645056 bytes)
-17:40:54.441867 [sender] file hash: 0xC4AC3A258846777A
-17:40:54.441953 [sender] sending SESSION_REQ: sessionID=0xA7FBA7DA -> 192.168.50.82:57191
-17:40:54.442023 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-17:40:54.442028 [sender] congestion control ENABLED, starting rate=2.00 MB/s
-17:40:54.442042 [sender] FEC enabled: block_size=100, initial_parity=5%
-17:40:54.442180 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-17:40:54.945320 [cc_debug] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=1.19)
-17:40:55.444905 [cc_debug] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.44)
-17:40:55.945230 [cc_debug] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=1.86)
-17:40:56.445033 [cc_debug] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=3.45)
-17:40:56.945733 [cc_debug] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.63)
-17:40:57.445361 [cc_debug] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=3.34)
-17:40:57.945832 [cc_debug] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=5.56)
-17:40:58.446044 [cc_debug] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=6.60)
-17:40:59.098019 [cc_debug] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=10.63)
-17:40:59.647028 [cc_debug] INCREASE (phase1): 14.90 -> 18.63 MB/s (loss=0.00% delivery=13.13)
-17:41:00.197206 [cc_debug] INCREASE (phase1): 18.63 -> 23.28 MB/s (loss=0.00% delivery=16.80)
-17:41:00.746864 [cc_debug] INCREASE (phase1): 23.28 -> 29.10 MB/s (loss=0.00% delivery=20.84)
-17:41:01.297753 [cc_debug] INCREASE (phase1): 29.10 -> 36.38 MB/s (loss=0.00% delivery=24.86)
-17:41:01.847656 [cc_debug] INCREASE (phase1): 36.38 -> 45.47 MB/s (loss=0.00% delivery=29.66)
-17:41:02.397219 [cc_debug] INCREASE (phase1): 45.47 -> 56.84 MB/s (loss=0.00% delivery=35.61)
-17:41:02.596868 [sender] queued 4 new NACKs (4 total pending)
-17:41:02.647383 [sender] queued 167 new NACKs (167 total pending)
-17:41:02.697049 [cc_debug] → Phase 2 (additive): delivery collapse 4.62 MB/s < 50% of rate 56.84 MB/s (NACKs=95)
-17:41:02.697065 [sender] queued 95 new NACKs (95 total pending)
-17:41:02.847858 [sender] queued 3 new NACKs (3 total pending)
-17:41:02.947187 [sender] queued 32 new NACKs (32 total pending)
-17:41:02.997184 [cc_debug] INCREASE (phase2): 56.84 -> 56.85 MB/s (loss=0.00% delivery=44.61)
-17:41:03.046863 [sender] queued 17 new NACKs (17 total pending)
-17:41:03.097638 [sender] queued 22 new NACKs (22 total pending)
-17:41:03.447353 [sender] queued 3 new NACKs (3 total pending)
-17:41:03.496915 [sender] queued 33 new NACKs (33 total pending)
-17:41:03.546968 [cc_debug] INCREASE (phase2): 56.85 -> 56.85 MB/s (loss=0.00% delivery=44.99)
-17:41:03.546982 [sender] queued 2 new NACKs (2 total pending)
-17:41:03.746884 [sender] queued 4 new NACKs (4 total pending)
-17:41:04.047331 [sender] queued 33 new NACKs (33 total pending)
-17:41:04.097340 [cc_debug] INCREASE (phase2): 56.85 -> 56.85 MB/s (loss=0.00% delivery=44.81)
-17:41:04.397398 [sender] queued 4 new NACKs (4 total pending)
-17:41:04.497271 [sender] queued 6 new NACKs (6 total pending)
-17:41:04.647010 [cc_debug] INCREASE (phase2): 56.85 -> 56.85 MB/s (loss=0.00% delivery=45.70)
-17:41:04.727140 [sender] queued 167 new NACKs (167 total pending)
-17:41:04.747803 [sender] queued 167 new NACKs (167 total pending)
-17:41:04.797247 [sender] queued 167 new NACKs (167 total pending)
-17:41:04.847131 [sender] queued 167 new NACKs (167 total pending)
-17:41:04.898114 [sender] queued 167 new NACKs (167 total pending)
-17:41:04.947246 [sender] queued 167 new NACKs (167 total pending)
-17:41:04.997375 [sender] queued 65 new NACKs (65 total pending)
-17:41:05.097119 [sender] queued 87 new NACKs (87 total pending)
-17:41:05.148425 [sender] queued 6 new NACKs (6 total pending)
-17:41:05.197239 [cc_debug] INCREASE (phase2): 56.85 -> 56.86 MB/s (loss=0.00% delivery=45.42)
-17:41:05.247685 [sender] queued 5 new NACKs (5 total pending)
-17:41:05.547462 [sender] queued 12 new NACKs (12 total pending)
-17:41:05.647521 [sender] queued 30 new NACKs (30 total pending)
-17:41:05.697250 [sender] queued 20 new NACKs (20 total pending)
-17:41:05.746958 [cc_debug] INCREASE (phase2): 56.86 -> 56.86 MB/s (loss=0.00% delivery=47.35)
-17:41:05.746976 [sender] queued 3 new NACKs (3 total pending)
-17:41:05.847273 [sender] queued 13 new NACKs (13 total pending)
-17:41:05.947386 [sender] queued 36 new NACKs (36 total pending)
-17:41:06.047031 [sender] queued 33 new NACKs (33 total pending)
-17:41:06.297587 [cc_debug] INCREASE (phase2): 56.86 -> 56.86 MB/s (loss=0.00% delivery=45.25)
-17:41:06.347972 [sender] queued 4 new NACKs (4 total pending)
-17:41:06.547299 [sender] queued 139 new NACKs (139 total pending)
-17:41:06.747365 [sender] queued 27 new NACKs (27 total pending)
-17:41:06.847391 [cc_debug] INCREASE (phase2): 56.86 -> 56.86 MB/s (loss=0.00% delivery=45.23)
-17:41:06.947936 [sender] queued 16 new NACKs (16 total pending)
-17:41:06.997389 [sender] queued 37 new NACKs (37 total pending)
-17:41:07.047714 [sender] queued 4 new NACKs (4 total pending)
-17:41:07.397152 [cc_debug] INCREASE (phase2): 56.86 -> 56.86 MB/s (loss=0.00% delivery=44.15)
-17:41:07.397168 [sender] queued 8 new NACKs (8 total pending)
-17:41:07.447576 [sender] queued 21 new NACKs (21 total pending)
-17:41:07.497289 [sender] queued 4 new NACKs (4 total pending)
-17:41:07.697409 [sender] queued 2 new NACKs (2 total pending)
-17:41:07.797375 [sender] queued 35 new NACKs (35 total pending)
-17:41:07.847350 [sender] queued 1 new NACKs (1 total pending)
-17:41:07.947288 [cc_debug] INCREASE (phase2): 56.86 -> 56.87 MB/s (loss=0.00% delivery=44.42)
-17:41:08.097129 [sender] queued 35 new NACKs (35 total pending)
-17:41:08.147375 [sender] queued 23 new NACKs (23 total pending)
-17:41:08.197632 [sender] queued 1 new NACKs (1 total pending)
-17:41:08.247656 [sender] queued 5 new NACKs (5 total pending)
-17:41:08.447814 [sender] queued 4 new NACKs (4 total pending)
-17:41:08.497267 [cc_debug] INCREASE (phase2): 56.87 -> 56.87 MB/s (loss=0.00% delivery=45.62)
-17:41:08.597010 [sender] queued 4 new NACKs (4 total pending)
-17:41:08.647495 [sender] queued 7 new NACKs (7 total pending)
-17:41:08.847156 [sender] queued 14 new NACKs (14 total pending)
-17:41:08.947641 [sender] queued 8 new NACKs (8 total pending)
-17:41:08.998776 [sender] queued 53 new NACKs (53 total pending)
-17:41:09.047079 [cc_debug] INCREASE (phase2): 56.87 -> 56.87 MB/s (loss=0.00% delivery=45.44)
-17:41:09.097084 [sender] queued 9 new NACKs (9 total pending)
-17:41:09.147340 [sender] queued 10 new NACKs (10 total pending)
-17:41:09.247050 [sender] queued 1 new NACKs (1 total pending)
-17:41:09.297284 [sender] queued 3 new NACKs (3 total pending)
-17:41:09.347347 [sender] queued 8 new NACKs (8 total pending)
-17:41:09.496961 [sender] queued 8 new NACKs (8 total pending)
-17:41:09.547758 [sender] queued 102 new NACKs (102 total pending)
-17:41:09.597517 [cc_debug] INCREASE (phase2): 56.87 -> 56.87 MB/s (loss=0.00% delivery=46.31)
-17:41:09.597530 [sender] queued 1 new NACKs (1 total pending)
-17:41:09.647620 [sender] queued 7 new NACKs (7 total pending)
-17:41:09.697916 [sender] queued 11 new NACKs (11 total pending)
-17:41:09.797229 [sender] queued 7 new NACKs (7 total pending)
-17:41:09.948087 [sender] queued 4 new NACKs (4 total pending)
-17:41:09.997723 [sender] queued 19 new NACKs (19 total pending)
-17:41:10.147409 [cc_debug] INCREASE (phase2): 56.87 -> 56.88 MB/s (loss=0.00% delivery=42.58)
-17:41:10.197219 [sender] queued 33 new NACKs (33 total pending)
-17:41:10.297910 [sender] queued 12 new NACKs (12 total pending)
-17:41:10.347550 [sender] queued 18 new NACKs (18 total pending)
-17:41:10.447675 [sender] queued 3 new NACKs (3 total pending)
-17:41:10.547497 [sender] queued 7 new NACKs (7 total pending)
-17:41:10.597270 [sender] queued 6 new NACKs (6 total pending)
-17:41:10.648433 [sender] queued 5 new NACKs (5 total pending)
-17:41:10.697269 [cc_debug] INCREASE (phase2): 56.88 -> 56.88 MB/s (loss=0.00% delivery=46.95)
-17:41:10.847354 [sender] queued 3 new NACKs (3 total pending)
-17:41:11.247100 [cc_debug] INCREASE (phase2): 56.88 -> 56.88 MB/s (loss=0.00% delivery=46.33)
-17:41:11.397471 [sender] queued 6 new NACKs (6 total pending)
-17:41:11.447206 [sender] queued 3 new NACKs (3 total pending)
-17:41:11.497611 [sender] queued 1 new NACKs (1 total pending)
-17:41:11.797395 [cc_debug] INCREASE (phase2): 56.88 -> 56.88 MB/s (loss=0.00% delivery=45.91)
-17:41:11.898331 [sender] queued 4 new NACKs (4 total pending)
-17:41:12.047616 [sender] queued 13 new NACKs (13 total pending)
-17:41:12.097616 [sender] queued 4 new NACKs (4 total pending)
-17:41:12.347416 [cc_debug] INCREASE (phase2): 56.88 -> 56.89 MB/s (loss=0.00% delivery=44.29)
-17:41:12.447227 [sender] queued 28 new NACKs (28 total pending)
-17:41:12.497663 [sender] queued 4 new NACKs (4 total pending)
-17:41:12.547718 [sender] queued 3 new NACKs (3 total pending)
-17:41:12.697291 [sender] queued 33 new NACKs (33 total pending)
-17:41:12.797078 [sender] queued 55 new NACKs (55 total pending)
-17:41:12.847548 [sender] queued 40 new NACKs (40 total pending)
-17:41:12.897730 [cc_debug] INCREASE (phase2): 56.89 -> 56.89 MB/s (loss=0.00% delivery=44.81)
-17:41:12.897755 [sender] queued 17 new NACKs (17 total pending)
-17:41:13.047487 [sender] queued 2 new NACKs (2 total pending)
-17:41:13.097478 [sender] queued 1 new NACKs (1 total pending)
-17:41:13.197192 [sender] queued 15 new NACKs (15 total pending)
-17:41:13.247687 [sender] queued 6 new NACKs (6 total pending)
-17:41:13.298888 [sender] queued 12 new NACKs (12 total pending)
-17:41:13.398008 [sender] queued 3 new NACKs (3 total pending)
-17:41:13.447507 [cc_debug] INCREASE (phase2): 56.89 -> 56.89 MB/s (loss=0.00% delivery=47.08)
-17:41:13.447522 [sender] queued 3 new NACKs (3 total pending)
-17:41:13.519533 [sender] sent 2 tail block parity packets for block 4416 (3 data shards)
-17:41:13.519542 [sender] all 441603 packets sent in 19.077s (31.85 MB/s) | CC: +35 =37 -0
-17:41:13.519550 [sender] waiting for TRANSFER_COMPLETE...
-17:41:13.716003 [sender] received TRANSFER_COMPLETE
-17:41:13.716090 [sender] sent ACK_CLOSE, entering linger state
-17:41:16.718328 [sender] linger complete, session finished
+derrybm@killdozer:~/projects/hpuft$ dd if=/dev/urandom of=received/test100.bin bs=1M count=100
+100+0 records in
+100+0 records out
+104857600 bytes (105 MB, 100 MiB) copied, 0.358922 s, 292 MB/s
+derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/test100.bin -addr 192.168.50.82:9001
+[push] Target: test100.bin (100 MB)
+[push] Pushing to 192.168.50.82:9001...
+[push] PUSH_ACCEPT received. Starting transfer...
+2026/03/16 18:51:55 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+2026/03/16 18:51:55 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+[====================] 100 MB 100% |  45.5 MB/s | NACKs: 02026/03/16 18:52:07 [sender] linger complete, session finished
+[====================] 100 MB 100% |  45.5 MB/s | NACKs: 0
+[push] TRANSFER COMPLETE: test100.bin in 12.223s (8.6 MB/s)
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file test100.bin -addr 192.168.50.82:9001 -out received/
+[get] Punching NAT hole via PULL_REQ for "test100.bin" -> 192.168.50.82:9001
+[get] Received SESSION_REQ. Allocating 100 MB ring buffer...
+[====================] 100 MB 100% |  19.3 MB/s | Rebuilt: 0| Rebuilt: 0
+[get] TRANSFER COMPLETE: test100.bin in 5.464s (19.2 MB/s) | FEC rebuilt: 0 pkts
+derrybm@killdozer:~/projects/hpuft$
+
+18:50:50.364699 [serve] ACCEPTED 192.168.50.9:40925: PULL_REQ for "test50.bin"
+18:50:50.382648 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+18:50:50.383269 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+18:50:55.208644 [sender] linger complete, session finished
+18:50:55.208644 [serve] TRANSFER COMPLETE: "test50.bin" to 192.168.50.9:40925 in 4.843s (10.8 MB/s)
+18:51:55.133973 [serve] ACCEPTED 192.168.50.9:56009: PUSH_REQ for "test100.bin"
+18:52:07.333211 [serve] PUSH COMPLETE: "test100.bin" from 192.168.50.9:56009 in 12.199s (8.6 MB/s) — added to manifest
+18:52:23.820355 [serve] ACCEPTED 192.168.50.9:56084: PULL_REQ for "test100.bin"
+18:52:23.852310 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+18:52:23.853311 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+18:52:29.296258 [sender] linger complete, session finished
+18:52:29.296258 [serve] TRANSFER COMPLETE: "test100.bin" to 192.168.50.9:56084 in 5.475s (19.2 MB/s)
+
+
+
+derrybm@killdozer:~/projects/hpuft$ dd if=/dev/urandom of=received/big.bin bs=1M count=1024
+1024+0 records in
+1024+0 records out
+1073741824 bytes (1.1 GB, 1.0 GiB) copied, 2.83209 s, 379 MB/s
+derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/big.bin -addr 192.168.50.82:9001
+[push] Target: big.bin (1 GB)
+[push] Pushing to 192.168.50.82:9001...
+[push] PUSH_ACCEPT received. Starting transfer...
+2026/03/16 18:54:09 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+2026/03/16 18:54:09 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+[====================] 1 GB 100% | 176.4 MB/s | NACKs: 02026/03/16 18:54:31 [sender] linger complete, session finished
+[====================] 1 GB 100% | 176.4 MB/s | NACKs: 0
+[push] TRANSFER COMPLETE: big.bin in 22.859s (47.0 MB/s)
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -out received/
+[get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
+[get] Received SESSION_REQ. Allocating 1 GB ring buffer...
+[====================] 1 GB 100% |  69.9 MB/s | Rebuilt: 0| Rebuilt: 0
+[get] TRANSFER COMPLETE: big.bin in 15.589s (68.9 MB/s) | FEC rebuilt: 0 pkts
+derrybm@killdozer:~/projects/hpuft$
+
+18:54:08.163764 [serve] ACCEPTED 192.168.50.9:60852: PUSH_REQ for "big.bin"
+18:54:31.001093 [serve] PUSH COMPLETE: "big.bin" from 192.168.50.9:60852 in 22.837s (47.0 MB/s) — added to manifest
+18:54:52.905050 [serve] ACCEPTED 192.168.50.9:56134: PULL_REQ for "big.bin"
+18:54:53.171119 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+18:54:53.171119 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+18:55:08.740447 [sender] linger complete, session finished
+18:55:08.740447 [serve] TRANSFER COMPLETE: "big.bin" to 192.168.50.9:56134 in 15.835s (67.8 MB/s)
+
+
+
+derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/nihilus_cosplay.jpg -addr 192.168.50.82:9001 -debug
+[push] Target: nihilus_cosplay.jpg (28 MB)
+[push] Pushing to 192.168.50.82:9001...
+[push] PUSH_ACCEPT received. Starting transfer...
+18:59:23.623614 [sender] hashing file: received/nihilus_cosplay.jpg (29445262 bytes)
+18:59:23.630839 [sender] file hash: 0x9FDB4EBB36D98F35
+18:59:23.630854 [sender] sending SESSION_REQ: sessionID=0x68181570 -> 192.168.50.82:9001
+18:59:23.630895 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+18:59:23.630900 [sender] congestion control ENABLED, starting rate=2.00 MB/s
+18:59:23.630910 [sender] FEC enabled: block_size=100, initial_parity=5%
+18:59:23.631076 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+18:59:24.232797 [cc_debug] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=1.22)
+18:59:24.833146 [cc_debug] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=2.22)
+18:59:25.432824 [cc_debug] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=1.91)
+18:59:26.032495 [cc_debug] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=3.38)
+18:59:26.633081 [cc_debug] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.58)
+18:59:27.232819 [cc_debug] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=3.51)
+18:59:27.832953 [cc_debug] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=6.21)
+18:59:28.432655 [cc_debug] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=3.09)
+18:59:29.133299 [cc_debug] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=10.36)
+18:59:29.496943 [sender] all 21400 packets sent in 5.866s (5.02 MB/s) | CC: +9 =0 -0
+18:59:29.497011 [sender] waiting for TRANSFER_COMPLETE...
+18:59:29.522684 [sender] received TRANSFER_COMPLETE
+18:59:29.522784 [sender] sent ACK_CLOSE, entering linger state
+18:59:32.527969 [sender] linger complete, session finished
 [push] TRANSFER COMPLETE
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file nihilus_cosplay.jpg -addr 192.168.50.82:9001 -out received/ -debug
+[get] Punching NAT hole via PULL_REQ for "nihilus_cosplay.jpg" -> 192.168.50.82:9001
+[get] Received SESSION_REQ. Allocating 28 MB ring buffer...
+18:59:47.995124 [receiver] session handed off from get: sessionID=0x29317006 file="nihilus_cosplay.jpg" size=29445262
+18:59:48.002829 [receiver] allocated buffer: 21400 chunks of 1376 bytes, writing to received/nihilus_cosplay.jpg
+18:59:48.002856 [receiver] heartbeat generator started
+18:59:48.002860 [receiver] FEC decoder enabled: block_size=100
+18:59:49.559176 [receiver] all 21400 chunks received, finalizing...
+18:59:49.630615 [receiver] transfer stats: received=21400 duplicates=0 | FEC: blocks_recovered=0 shards_recovered=0
+18:59:49.630648 [receiver] hash verified: 0x9FDB4EBB36D98F35
+18:59:49.630711 [receiver] retransmitting TRANSFER_COMPLETE (attempt 1/3)
+18:59:49.630741 [receiver] retransmitting TRANSFER_COMPLETE (attempt 2/3)
+18:59:49.630912 [receiver] ACK_CLOSE received, entering linger state
+18:59:52.632201 [receiver] transfer complete: received/nihilus_cosplay.jpg (29445262 bytes)
+[get] TRANSFER COMPLETE
 derrybm@killdozer:~/projects/hpuft$
+
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\
+[serve] Online. Listening on [::]:9001
+[serve] Manifest loaded: 8 authorized files found in .\received\
+18:58:18.433415 [serve] ACCEPTED 192.168.50.9:35254: PULL_REQ for "nihilus_cosplay.jpg"
+18:58:18.454100 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+18:58:18.454625 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+18:58:23.095066 [sender] linger complete, session finished
+18:58:23.095066 [serve] TRANSFER COMPLETE: "nihilus_cosplay.jpg" to 192.168.50.9:35254 in 4.661s (6.3 MB/s)
+18:59:02.373814 [serve] REJECTED 192.168.50.9:36200: PUSH_REQ for "nihilus_cosplay.jpg" (file already exists)
+18:59:22.963075 [serve] ACCEPTED 192.168.50.9:34528: PUSH_REQ for "nihilus_cosplay.jpg"
+18:59:31.862895 [serve] PUSH COMPLETE: "nihilus_cosplay.jpg" from 192.168.50.9:34528 in 8.9s (3.3 MB/s) — added to manifest
+18:59:47.322105 [serve] ACCEPTED 192.168.50.9:53942: PULL_REQ for "nihilus_cosplay.jpg"
+18:59:47.334246 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+18:59:47.334764 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+18:59:51.970959 [sender] linger complete, session finished
+18:59:51.971024 [serve] TRANSFER COMPLETE: "nihilus_cosplay.jpg" to 192.168.50.9:53942 in 4.649s (6.3 MB/s)
