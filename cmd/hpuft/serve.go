@@ -62,10 +62,19 @@ func runServe(args []string) {
 			continue
 		}
 
-		// If a transfer is in progress, forward the raw packet bytes to the
-		// active goroutine. It decodes its own packets — the main loop just
-		// passes bytes through. Drop on channel full; sender/receiver retransmit.
+		// If a transfer is in progress, new PULL_REQ/PUSH_REQ get a SERVER_BUSY
+		// rejection immediately. All other packets are forwarded to the active
+		// goroutine for it to decode. Drop on channel full; sender/receiver retransmit.
 		if atomic.LoadInt32(&busy) == 1 {
+			pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
+			if err == nil {
+				switch pkt.Header.Type {
+				case protocol.PacketPullReq, protocol.PacketPushReq:
+					sendReject(conn, clientAddr, pkt.Header.SessionID, protocol.RejectServerBusy)
+					log.Printf("[serve] REJECTED %s: SERVER_BUSY (Transferring to %s)", clientAddr, busyClient)
+					continue
+				}
+			}
 			raw := make([]byte, n)
 			copy(raw, rawBuf[:n])
 			activeMu.Lock()
