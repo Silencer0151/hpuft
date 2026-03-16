@@ -450,7 +450,7 @@ func (s *Sender) Send() error {
 	nackPending = make(map[uint64]struct{})
 	nackMu.Unlock()
 
-	retransmitNACKs(conn, sessionID, pendingNACKs, sendBuf, sentChunks, &sentMu, totalChunks)
+	retransmitNACKs(conn, sessionID, pendingNACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
 
 	// Now we own the socket — handle teardown synchronously
 	conn.SetReadDeadline(time.Now().Add(s.cfg.Session.SenderProbeTimeout))
@@ -488,7 +488,7 @@ func (s *Sender) Send() error {
 			}
 			if len(hb.NACKs) > 0 {
 				log.Printf("[sender] teardown: retransmitting %d NACKed packets", len(hb.NACKs))
-				retransmitNACKs(conn, sessionID, hb.NACKs, sendBuf, sentChunks, &sentMu, totalChunks)
+				retransmitNACKs(conn, sessionID, hb.NACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
 			}
 			// Reset deadline — we're still making progress
 			conn.SetReadDeadline(time.Now().Add(s.cfg.Session.SenderProbeTimeout))
@@ -558,6 +558,9 @@ func (s *Sender) handleTeardown(
 }
 
 // retransmitNACKs sends cached data packets for the given sequence numbers.
+// If bucket is non-nil each packet is paced through it, preventing retransmit
+// bursts from flooding a congested link (particularly during teardown when a
+// backlog of heartbeats may be drained all at once).
 func retransmitNACKs(
 	conn *net.UDPConn,
 	sessionID uint32,
@@ -566,6 +569,7 @@ func retransmitNACKs(
 	sentChunks map[uint64][]byte,
 	sentMu *sync.Mutex,
 	totalChunks uint64,
+	bucket *TokenBucket,
 ) {
 	for _, nackSeq := range nacks {
 		sentMu.Lock()
@@ -586,6 +590,10 @@ func retransmitNACKs(
 			hdr.Flags = protocol.FlagEndOfFile
 		}
 
+		pktLen := protocol.HeaderSize + len(chunk)
+		if bucket != nil {
+			bucket.Pace(pktLen)
+		}
 		hs, _ := protocol.MarshalHeader(sendBuf, &hdr)
 		copy(sendBuf[hs:], chunk)
 		conn.Write(sendBuf[:hs+len(chunk)])
