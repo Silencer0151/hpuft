@@ -1,115 +1,120 @@
-The default output should be clean, actionable, and human-readable (like wget or rsync). But when you flip a --debug switch, it should dump the raw protocol state machine data you need to diagnose a LFN (Long Fat Network) collapse.
+================================================================================
+  SINGLE-PORT SINGLE-SOCKET: THE SIMPLE APPROACH
+================================================================================
 
-Here is the exact UX and logging specification for the three commands in your fat binary.
-1. Global Logging Principles
+THE KEY INSIGHT
+---------------
+We are single-lane. Exactly one transfer runs at a time. The serve daemon
+already knows whether it is in PULL mode or PUSH mode because it set busy=1
+when it accepted the request. So the control loop does not need session ID
+routing, packet type inspection, or SO_REUSEPORT tricks. It just needs to ask:
 
-    Standard Out vs. Standard Error: All interactive progress bars and human-readable summaries go to stdout. All debug logs, warnings, and errors go to stderr. This ensures that if someone scripts hpuft get target.tar.gz > target.tar.gz, the file data doesn't get corrupted by log text.
+  "Am I busy right now?"
+  - No  -> dispatch PULL_REQ / PUSH_REQ as normal
+  - Yes -> forward this raw packet to whoever is active
 
-    The "In-Place" Progress Bar: For active transfers (push and get), the terminal should not scroll endlessly with log lines. It should use carriage returns (\r) to overwrite a single, highly dense status line at the bottom of the terminal.
-
-2. Command: serve (The Daemon)
-
-Who is watching: Usually no one. It runs in the background or inside a tmux session.
-Behavior: It should be completely silent until a discrete event happens. It does not show a live progress bar, because a server shouldn't waste CPU cycles drawing CLI graphics.
-
-    Startup:
-    [serve] Online. Listening on 0.0.0.0:9000
-    [serve] Manifest loaded: 14 authorized files found in ./shared_folder
-
-    Event: Connection Rejected (Security/Busy):
-    [serve] REJECTED 198.51.100.4: PULL_REQ for 'shadow' (Not in manifest)
-    [serve] REJECTED 203.0.113.8: SERVER_BUSY (Transferring to 198.51.100.4)
-
-    Event: Successful Transfer (Acts as Sender):
-    [serve] ACCEPTED 198.51.100.4: PULL_REQ for 'darksouls3_2022.09.05.mp4'
-    [serve] TRANSFER COMPLETE: 'darksouls3_2022.09.05.mp4' to 198.51.100.4 in 2.1s (110.4 MB/s)
-
-3. Command: push (The Client Sender)
-
-Who is watching: The user actively sending a file.
-Behavior: Needs to show the handshake establishing, and then provide a live look into the Congestion Control (CC) engine's performance.
-
-Default Output Sequence:
-Plaintext
-
-[push] Target: darksouls3_2022.09.05.mp4 (232 MB)
-[push] Hash computed: 0x2681C51BDEAEBA6F
-[push] Sending SESSION_REQ to 198.51.100.4:9000 (SessionID: 0xF4CFD01D)
-[push] Handshake accepted. Calibration train (10 pkts) dispatched.
-
-darksouls3...mp4 [=======>          ]  45% | 115.2 MB/s | ETA: 00:01 | FEC: 5% | NACKs: 0
-
-Notice the progress bar: It shows the exact metrics the sender cares about.
-
-    MB/s: The current EWMA smoothed delivery rate.
-
-    FEC: The current dynamic parity ratio.
-
-    NACKs: Total NACKs the sender has had to retransmit.
-
-Teardown Output:
-Plaintext
-
-[push] EOF sent. Waiting for remote hash verification...
-[push] TRANSFER COMPLETE received. Linger state finished.
-
-4. Command: get (The Client Receiver)
-
-Who is watching: The user actively downloading a file through the NAT hole.
-Behavior: It needs to confirm the NAT punch worked, show memory allocation, and provide a live look into the Receiver's flush rate and FEC recovery.
-
-Default Output Sequence:
-Plaintext
-
-[get] Punching NAT hole via PULL_REQ for 'darksouls3_2022.09.05.mp4' -> 198.51.100.4:9000
-[get] Received SESSION_REQ. Allocating 232 MB ring buffer...
-
-darksouls3...mp4 [=======>          ]  45% | 115.2 MB/s | ETA: 00:01 | Rebuilt: 14 pkts
-
-Notice the progress bar differences: The receiver doesn't care about NACKs sent; it cares about Rebuilt.
-
-    Rebuilt: How many missing packets the Reed-Solomon math successfully reconstructed on the fly without having to ask the sender for a NACK. This proves the UDP engine is doing its job.
-
-Teardown Output:
-Plaintext
-
-[get] EOF received. Flushed to disk.
-[get] Local Hash: 0x2681C51BDEAEBA6F | Remote Hash: 0x2681C51BDEAEBA6F
-[get] Hash MATCH. Transfer successful.
-
-5. The --debug Flag (Under the Hood)
-
-When you are testing your custom protocol algorithms, the progress bar gets suppressed and the terminal streams the raw telemetry.
-
-If you append --debug to push or serve, you should see the exact decisions your CUBIC-style engine is making:
-
-[cc_debug] RTT: 32ms | Dispersion: 1.24 MB/s | Phase: 1 (Probe)
-[cc_debug] HEARTBEAT received: Delivery: 98.4 MB/s | Loss: 0.00%
-[cc_debug] INCREASE (1.25x): Target rate updated to 123.0 MB/s
-[cc_debug] HEARTBEAT received: Delivery: 112.1 MB/s | Loss: 1.50%
-[cc_debug] HOLD (Loss zone entered). Phase 1 terminated. Entering Phase 2 (Additive).
-[cc_debug] Parity ratio dynamically adjusted to 5% (Block size: 100)
+That's it. One socket on one port. The active goroutine decodes its own packets.
 
 
-Below is a breakdown as to what is currently happening:
-1. Verbosity Bleed (The --debug Requirement)
+CONCRETE IMPLEMENTATION
+------------------------
+1. Add  activeChan chan []byte  to the serve state.
+   Buffered (e.g. 256 slots) so a burst of packets doesn't stall the loop.
 
-What's Happening: Your congestion controller is vomiting its state changes ([congestion] INCREASE..., [sender] queued 167 new NACKs...) directly into standard output by default.
-The Correction: All of these log.Printf statements inside congestion.go and the NACK queues in sender.go need to be hidden behind a --debug flag. Normal users do not want to see 40 lines of [congestion] INCREASE (phase1) before their file finishes. The default output should be near-silent until the transfer completes.
-2. serve is Leaking sender Logs
+2. Main read loop changes from:
 
-What's Happening: When your serve daemon accepts the PULL_REQ for the Dark Souls mp4, it correctly prints [serve] serving.... But immediately after, the underlying sender goroutine dumps its entire initialization, hashing, and congestion control sequence to the screen.
-The Correction: serve needs to be able to instantiate the Sender with a "quiet mode" toggle. When running as a daemon, serve should suppress all [sender] logs and only print the start and end of the transfer.
-3. The Missing In-Place Progress Bar
+     switch pkt.Header.Type {
+     case PacketPullReq:  handlePullReq(...)
+     case PacketPushReq:  handlePushReq(...)
+     }
 
-What's Happening: Instead of a clean, overwriting progress bar, the sender is printing new lines every 10%: [sender] progress: 10%..., [sender] progress: 20%.... The receiver (get command) is printing nothing at all between buffer allocation and finalization.
-The Correction: We need to implement a carriage return (\r) print loop. This will anchor a single line to the bottom of the terminal that updates in real-time.
+   to:
 
-    For send / push: It should display a single updating line showing [=========>   ] 45% | 115 MB/s | NACKs: 8.
+     if atomic.LoadInt32(&busy) == 1 {
+         // Clone the bytes and forward; main loop reuses rawBuf.
+         pkt := make([]byte, n)
+         copy(pkt, rawBuf[:n])
+         select {
+         case activeChan <- pkt:
+         default: // channel full: drop, sender/receiver will NACK/retransmit
+         }
+         continue
+     }
+     switch pkt.Header.Type { ... }  // same as before
 
-    For get / recv: It should display [=========>   ] 45% | 115 MB/s | FEC Rebuilt: 0.
+3. sender.Config gets two optional fields:
+     WriteConn    *net.UDPConn   // shared control conn for sends
+     WriteAddr    *net.UDPAddr   // parsed client address for WriteToUDP
+     RecvChan     <-chan []byte  // channel to read packets from
 
-4. Splitting stdout and stderr
+   When these are set, Send() skips net.DialUDP and uses them instead.
+   All conn.Write(raw) calls become conn.WriteToUDP(raw, WriteAddr).
+   The heartbeat/NACK read loop does:
+     buf := <-RecvChan  instead of  conn.Read(buf)
 
-What's Happening: Right now, everything appears to be coming through Go's default log package, which writes to stderr with a timestamp prefix (12:41:15.112571).
-The Correction: To be scriptable (like rsync), standard user output (like the progress bar or final completion message) should go to os.Stdout without timestamp prefixes. Diagnostic logs (when --debug is active) should stay on os.Stderr with the timestamps.
+4. receiver.Config already has Conn. Add:
+     RecvChan  <-chan []byte
+
+   Run() reads from RecvChan when set, conn.ReadFromUDP otherwise.
+   Heartbeat writes go to conn.WriteToUDP(raw, senderAddr) — same as now.
+
+5. serve.go handlePullReq / handlePushReq: create activeChan, pass
+   WriteConn/WriteAddr/RecvChan to sender, pass Conn/RecvChan to receiver.
+   No new sockets bound anywhere.
+
+
+WHAT THIS ELIMINATES
+---------------------
+- The -data port flag entirely
+- The PULL_ACCEPT packet type (0x0A) and its protocol machinery
+- The 200ms sleep before the sender goroutine starts
+- The probe packet logic in get.go
+- The second router port-forward rule
+
+The client just sends PULL_REQ to port 9001. SESSION_REQ comes back from port
+9001. All data flows through port 9001. The NAT hole punched by PULL_REQ covers
+everything because there is only one port.
+
+
+HOW THE STANDALONE COMMANDS ARE UNAFFECTED
+-------------------------------------------
+send / recv / push / get do NOT set WriteConn / WriteAddr / RecvChan.
+Sender and receiver detect nil values and fall back to the current DialUDP /
+ListenUDP socket ownership paths. Zero behaviour change for those commands.
+
+
+COMPLEXITY ESTIMATE
+--------------------
+Sender changes:
+  - Add 3 fields to Config.
+  - Wrap the DialUDP block: if WriteConn != nil { use it } else { dial as now }.
+  - Replace conn.Write(raw) with a small helper:
+      func (s *Sender) write(conn *net.UDPConn, raw []byte) error
+    that calls conn.Write or conn.WriteToUDP(raw, s.cfg.WriteAddr) depending
+    on which mode is active. This helper is called at ~5 sites.
+  - In the heartbeat goroutine, replace the conn.Read loop with a select over
+    RecvChan and a done signal.
+
+Receiver changes:
+  - Add RecvChan <-chan []byte to Config.
+  - In Run(), the inner read becomes:
+      if r.cfg.RecvChan != nil { buf = <-r.cfg.RecvChan }
+      else { n, addr, err = r.conn.ReadFromUDP(rawBuf) }
+
+Serve changes:
+  - activeChan creation and cleanup (set to nil after busy clears).
+  - Forward block in main loop (~8 lines).
+  - Pass the fields in handlePullReq / handlePushReq.
+
+Total: roughly 60-80 lines changed across three files. No new protocol packets.
+No platform-specific code. No new dependencies.
+
+
+VERDICT
+--------
+This is the right approach. The 2-port model should be treated as a stopgap.
+Once this is implemented:
+  - 1 port to forward
+  - Simpler protocol (no PULL_ACCEPT, no probe, no sleep)
+  - Serves as a natural stepping stone toward the Phase 2 C mux architecture
+================================================================================

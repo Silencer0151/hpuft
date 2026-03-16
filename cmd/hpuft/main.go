@@ -4,7 +4,7 @@
 //
 //	hpuft send   -file <path> [-addr host:port] [-rate MB/s] [-nodelay] [-nocc]
 //	hpuft recv   [-listen :9000] [-out ./output]
-//	hpuft serve  [-listen :9001] [-dir .]
+//	hpuft serve  [-listen :9001] [-data :9002] [-dir .]
 //	hpuft get    -file <name> [-addr host:9001] [-out .]
 //	hpuft push   -file <path> [-addr host:9001]
 //	hpuft proxy  [-listen :9500] [-target host:9000] [-loss pct] [-seed n]
