@@ -15,6 +15,8 @@ const (
 	PacketTransferComplete PacketType = 0x05
 	PacketACKClose         PacketType = 0x06
 	PacketPullReq          PacketType = 0x07
+	PacketPushReq          PacketType = 0x08
+	PacketPushAccept       PacketType = 0x09
 )
 
 func (p PacketType) String() string {
@@ -35,6 +37,10 @@ func (p PacketType) String() string {
 		return "ACK_CLOSE"
 	case PacketPullReq:
 		return "PULL_REQ"
+	case PacketPushReq:
+		return "PUSH_REQ"
+	case PacketPushAccept:
+		return "PUSH_ACCEPT"
 	default:
 		return "UNKNOWN"
 	}
@@ -58,6 +64,7 @@ const (
 	RejectHashMismatch       RejectReason = 0x02
 	RejectServerBusy         RejectReason = 0x03
 	RejectFileNotFound       RejectReason = 0x04
+	RejectFileExists         RejectReason = 0x05
 )
 
 func (r RejectReason) String() string {
@@ -70,6 +77,8 @@ func (r RejectReason) String() string {
 		return "SERVER_BUSY"
 	case RejectFileNotFound:
 		return "FILE_NOT_FOUND"
+	case RejectFileExists:
+		return "FILE_EXISTS"
 	default:
 		return "UNKNOWN"
 	}

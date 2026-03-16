@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,6 +43,15 @@ type Config struct {
 	// Used by the serve command to reuse the ID from the client's PULL_REQ
 	// so both sides agree on the session without a separate handshake.
 	SessionID uint32
+
+	// Debug enables verbose protocol and CC logging to stderr.
+	// When false all noisy internal logs are suppressed; a progress bar is
+	// printed to stdout by the caller instead.
+	Debug bool
+
+	// Quiet suppresses all sender-internal output (used by serve daemon).
+	// The serve command handles its own structured event logging.
+	Quiet bool
 }
 
 // DefaultConfig returns sender config with spec defaults.
@@ -56,9 +66,41 @@ func DefaultConfig() Config {
 	}
 }
 
+// SenderProgress is a snapshot of live transfer metrics for the progress bar.
+type SenderProgress struct {
+	BytesSent  int64
+	TotalBytes int64
+	NACKsSent  int64   // cumulative retransmitted packets
+	RateBPS    float64 // current token-bucket target rate
+	StartNs    int64   // Unix ns when Send() started
+}
+
 // Sender manages a file transfer session.
 type Sender struct {
 	cfg Config
+
+	// Progress atomics — written by Send(), read lock-free by progress bar.
+	bytesSent  atomic.Int64
+	totalBytes atomic.Int64
+	nacksSent  atomic.Int64
+	startNs    atomic.Int64
+
+	bucket *TokenBucket // non-nil once Send() creates it
+}
+
+// Progress returns a live snapshot for the progress bar goroutine.
+func (s *Sender) Progress() SenderProgress {
+	var rate float64
+	if s.bucket != nil {
+		rate = s.bucket.Rate()
+	}
+	return SenderProgress{
+		BytesSent:  s.bytesSent.Load(),
+		TotalBytes: s.totalBytes.Load(),
+		NACKsSent:  s.nacksSent.Load(),
+		RateBPS:    rate,
+		StartNs:    s.startNs.Load(),
+	}
 }
 
 // New creates a new Sender.
@@ -68,6 +110,16 @@ func New(cfg Config) *Sender {
 
 // Send performs a complete file transfer.
 func (s *Sender) Send() error {
+	// --- Logger setup ---
+	// dbgLog receives verbose protocol/CC events; only enabled with --debug.
+	// In normal and quiet modes it discards everything.
+	var dbgLog *log.Logger
+	if s.cfg.Debug && !s.cfg.Quiet {
+		dbgLog = log.New(os.Stderr, "", log.Ltime|log.Lmicroseconds)
+	} else {
+		dbgLog = log.New(io.Discard, "", 0)
+	}
+
 	// --- Step 1: Read file info and compute hash ---
 	fileInfo, err := os.Stat(s.cfg.FilePath)
 	if err != nil {
@@ -75,12 +127,12 @@ func (s *Sender) Send() error {
 	}
 	fileSize := uint64(fileInfo.Size())
 
-	log.Printf("[sender] hashing file: %s (%d bytes)", s.cfg.FilePath, fileSize)
+	dbgLog.Printf("[sender] hashing file: %s (%d bytes)", s.cfg.FilePath, fileSize)
 	checksum, err := receiver.HashFile(s.cfg.FilePath)
 	if err != nil {
 		return fmt.Errorf("hash file: %w", err)
 	}
-	log.Printf("[sender] file hash: 0x%016X", checksum)
+	dbgLog.Printf("[sender] file hash: 0x%016X", checksum)
 
 	// --- Step 2: Open UDP socket ---
 	remoteAddr, err := net.ResolveUDPAddr("udp", s.cfg.RemoteAddr)
@@ -122,7 +174,7 @@ func (s *Sender) Send() error {
 		return fmt.Errorf("marshal SESSION_REQ: %w", err)
 	}
 
-	log.Printf("[sender] sending SESSION_REQ: sessionID=0x%08X -> %s", sessionID, s.cfg.RemoteAddr)
+	dbgLog.Printf("[sender] sending SESSION_REQ: sessionID=0x%08X -> %s", sessionID, s.cfg.RemoteAddr)
 	if _, err := conn.Write(reqRaw); err != nil {
 		return fmt.Errorf("send SESSION_REQ: %w", err)
 	}
@@ -149,19 +201,25 @@ func (s *Sender) Send() error {
 	if useCongestionControl {
 		startRate := StartingRate(s.cfg.Calibration, s.cfg.InitialRate, chunkSize)
 		bucket = NewTokenBucket(startRate, s.cfg.Congestion)
+		bucket.SetLogger(dbgLog)
+		s.bucket = bucket
 		calibration = NewCalibrationState(s.cfg.Calibration, s.cfg.InitialRate)
-		log.Printf("[sender] congestion control ENABLED, starting rate=%.2f MB/s", startRate/1e6)
+		dbgLog.Printf("[sender] congestion control ENABLED, starting rate=%.2f MB/s", startRate/1e6)
 	} else if s.cfg.NoDelay {
-		log.Printf("[sender] congestion control DISABLED (nodelay mode)")
+		dbgLog.Printf("[sender] congestion control DISABLED (nodelay mode)")
 	} else if s.cfg.SendDelay > 0 {
-		log.Printf("[sender] congestion control DISABLED (fixed delay=%v)", s.cfg.SendDelay)
+		dbgLog.Printf("[sender] congestion control DISABLED (fixed delay=%v)", s.cfg.SendDelay)
 	}
 
 	// --- Step 5b: Create FEC block encoder ---
 	fecCfg := protocol.DefaultFECConfig()
 	blockEncoder := NewBlockEncoder(fecCfg)
-	log.Printf("[sender] FEC enabled: block_size=%d, initial_parity=%.0f%%",
+	dbgLog.Printf("[sender] FEC enabled: block_size=%d, initial_parity=%.0f%%",
 		fecCfg.BlockSize, fecCfg.InitialParityPct*100)
+
+	// --- Set progress totals ---
+	s.totalBytes.Store(int64(fileSize))
+	s.startNs.Store(time.Now().UnixNano())
 
 	// --- Step 6: Start heartbeat listener goroutine ---
 	var nackMu sync.Mutex
@@ -245,7 +303,7 @@ func (s *Sender) Send() error {
 					total := len(nackPending)
 					nackMu.Unlock()
 					if newCount > 0 {
-						log.Printf("[sender] queued %d new NACKs (%d total pending)", newCount, total)
+						dbgLog.Printf("[sender] queued %d new NACKs (%d total pending)", newCount, total)
 					}
 				}
 
@@ -373,6 +431,9 @@ func (s *Sender) Send() error {
 			return fmt.Errorf("send DATA seq=%d: %w", seqNum, err)
 		}
 
+		// Update progress atomics for the progress bar goroutine.
+		s.bytesSent.Store(int64(seqNum) * int64(chunkSize))
+
 		// Track calibration burst progress
 		if calibration != nil {
 			calibration.PacketSent()
@@ -396,29 +457,15 @@ func (s *Sender) Send() error {
 		} else if s.cfg.SendDelay > 0 {
 			time.Sleep(s.cfg.SendDelay)
 		}
-
-		// Progress logging every 10%
-		if totalChunks >= 10 && seqNum%(totalChunks/10) == 0 {
-			elapsed := time.Since(startTime)
-			bytesPerSec := float64(seqNum*uint64(chunkSize)) / elapsed.Seconds()
-			pct := float64(seqNum) / float64(totalChunks) * 100
-
-			if bucket != nil {
-				rate := bucket.Rate()
-				log.Printf("[sender] progress: %.0f%% (%d/%d) actual=%.2f MB/s target=%.2f MB/s",
-					pct, seqNum, totalChunks, bytesPerSec/1e6, rate/1e6)
-			} else {
-				log.Printf("[sender] progress: %.0f%% (%d/%d) rate=%.2f MB/s",
-					pct, seqNum, totalChunks, bytesPerSec/1e6)
-			}
-		}
 	}
+	// Final byte count (last chunk may be shorter)
+	s.bytesSent.Store(int64(fileSize))
 
 	// --- FEC: flush tail block parity ---
 	tailResult := blockEncoder.FlushTail()
 	if tailResult != nil {
 		sendParityPackets(conn, sessionID, tailResult, sendBuf, bucket, s.cfg.SendDelay)
-		log.Printf("[sender] sent %d tail block parity packets for block %d (%d data shards)",
+		dbgLog.Printf("[sender] sent %d tail block parity packets for block %d (%d data shards)",
 			tailResult.ParityCount, tailResult.BlockGroup, tailResult.DataCount)
 	}
 
@@ -427,15 +474,15 @@ func (s *Sender) Send() error {
 
 	if bucket != nil {
 		stats := bucket.Stats()
-		log.Printf("[sender] all %d packets sent in %v (%.2f MB/s) | CC: +%d =%d -%d",
+		dbgLog.Printf("[sender] all %d packets sent in %v (%.2f MB/s) | CC: +%d =%d -%d",
 			seqNum, elapsed.Round(time.Millisecond), bytesPerSec/1e6,
 			stats.Increases, stats.Holds, stats.Decreases)
 	} else {
-		log.Printf("[sender] all %d packets sent in %v (%.2f MB/s)",
+		dbgLog.Printf("[sender] all %d packets sent in %v (%.2f MB/s)",
 			seqNum, elapsed.Round(time.Millisecond), bytesPerSec/1e6)
 	}
 
-	log.Printf("[sender] waiting for TRANSFER_COMPLETE...")
+	dbgLog.Printf("[sender] waiting for TRANSFER_COMPLETE...")
 
 	// --- Step 9: Wait for TRANSFER_COMPLETE ---
 	// Stop the heartbeat goroutine so it doesn't compete for socket reads.
@@ -443,7 +490,7 @@ func (s *Sender) Send() error {
 	select {
 	case msg := <-teardownCh:
 		close(doneCh)
-		return s.handleTeardown(conn, sessionID, msg.pktType, msg.payload, sendBuf, sentChunks, &sentMu, totalChunks)
+		return s.handleTeardown(conn, sessionID, msg.pktType, msg.payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
 	default:
 	}
 
@@ -484,7 +531,7 @@ func (s *Sender) Send() error {
 
 		switch pkt.Header.Type {
 		case protocol.PacketTransferComplete, protocol.PacketSessionReject:
-			return s.handleTeardown(conn, sessionID, pkt.Header.Type, pkt.Payload, sendBuf, sentChunks, &sentMu, totalChunks)
+			return s.handleTeardown(conn, sessionID, pkt.Header.Type, pkt.Payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
 
 		case protocol.PacketHeartbeat:
 			hb, err := protocol.UnmarshalHeartbeat(pkt.Payload)
@@ -495,7 +542,8 @@ func (s *Sender) Send() error {
 				bucket.OnHeartbeat(&hb)
 			}
 			if len(hb.NACKs) > 0 {
-				log.Printf("[sender] teardown: retransmitting %d NACKed packets", len(hb.NACKs))
+				dbgLog.Printf("[sender] teardown: retransmitting %d NACKed packets", len(hb.NACKs))
+				s.nacksSent.Add(int64(len(hb.NACKs)))
 				retransmitNACKs(conn, sessionID, hb.NACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
 			}
 			// Reset deadline — we're still making progress
@@ -514,10 +562,11 @@ func (s *Sender) handleTeardown(
 	sentChunks map[uint64][]byte,
 	sentMu *sync.Mutex,
 	totalChunks uint64,
+	dbgLog *log.Logger,
 ) error {
 	switch pktType {
 	case protocol.PacketTransferComplete:
-		log.Printf("[sender] received TRANSFER_COMPLETE")
+		dbgLog.Printf("[sender] received TRANSFER_COMPLETE")
 
 		ackPkt := protocol.Packet{
 			Header: protocol.Header{
@@ -528,7 +577,7 @@ func (s *Sender) handleTeardown(
 		ackRaw, _ := protocol.MarshalPacket(&ackPkt)
 		conn.Write(ackRaw)
 
-		log.Printf("[sender] sent ACK_CLOSE, entering linger state")
+		dbgLog.Printf("[sender] sent ACK_CLOSE, entering linger state")
 
 		lingerEnd := time.Now().Add(s.cfg.Session.LingerDuration)
 		conn.SetReadDeadline(lingerEnd)

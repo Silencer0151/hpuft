@@ -2,25 +2,24 @@ package main
 
 import (
 	"flag"
-	"log"
-	"time"
-
+	"fmt"
+	"hpuft/receiver"
 	"hpuft/sender"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
 )
 
 func runSend(args []string) {
 	cfg := sender.DefaultConfig()
 
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
-	fs.Usage = func() {
-		log.Print("usage: hpuft send -file <path> [-addr host:port] [-rate MB/s] [-delay µs] [-nodelay] [-nocc]")
-		fs.PrintDefaults()
-	}
-
 	var delayUS int
 	var rateMBps float64
 	var noDelay bool
 	var noCC bool
+	var debug bool
 
 	fs.StringVar(&cfg.RemoteAddr, "addr", cfg.RemoteAddr, "receiver address")
 	fs.StringVar(&cfg.FilePath, "file", "", "path to file to send (required)")
@@ -28,11 +27,12 @@ func runSend(args []string) {
 	fs.Float64Var(&rateMBps, "rate", 0, "initial send rate in MB/s")
 	fs.BoolVar(&noDelay, "nodelay", false, "send as fast as possible (disables CC)")
 	fs.BoolVar(&noCC, "nocc", false, "disable congestion control (use fixed rate)")
+	fs.BoolVar(&debug, "debug", false, "stream raw protocol and CC telemetry to stderr")
 	fs.Parse(args)
 
 	if cfg.FilePath == "" {
-		fs.Usage()
-		log.Fatal("flag -file is required")
+		fmt.Fprintln(os.Stderr, "usage: hpuft send -file <path> [-addr host:port] [-rate MB/s] [-nodelay] [-nocc] [-debug]")
+		os.Exit(1)
 	}
 
 	if noDelay {
@@ -42,15 +42,56 @@ func runSend(args []string) {
 	} else if rateMBps > 0 {
 		cfg.InitialRate = uint32(rateMBps * 1e6)
 	}
-
 	if noCC {
 		cfg.NoCongestionControl = true
 	}
+	cfg.Debug = debug
 
-	log.SetFlags(log.Ltime | log.Lmicroseconds)
+	// --- Human-readable startup (always on stdout) ---
+	fileInfo, err := os.Stat(cfg.FilePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[send] error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "[send] Target: %s (%s)\n",
+		filepath.Base(cfg.FilePath), humanBytes(fileInfo.Size()))
+
+	checksum, err := receiver.HashFile(cfg.FilePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[send] hash error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "[send] Hash:   0x%016X\n", checksum)
+	fmt.Fprintf(os.Stdout, "[send] Connecting to %s...\n", cfg.RemoteAddr)
+
+	if debug {
+		log.SetFlags(log.Ltime | log.Lmicroseconds)
+		log.SetOutput(os.Stderr)
+	}
 
 	s := sender.New(cfg)
-	if err := s.Send(); err != nil {
-		log.Fatalf("transfer failed: %v", err)
+
+	if !debug {
+		done := make(chan struct{})
+		go RunSendProgress(s, done)
+		start := time.Now()
+		err = s.Send()
+		close(done)
+		time.Sleep(20 * time.Millisecond) // let progress bar goroutine flush final line
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\n[send] FAILED: %v\n", err)
+			os.Exit(1)
+		}
+		elapsed := time.Since(start)
+		mbps := float64(fileInfo.Size()) / elapsed.Seconds() / 1e6
+		fmt.Fprintf(os.Stdout, "[send] TRANSFER COMPLETE: %s in %s (%.1f MB/s)\n",
+			filepath.Base(cfg.FilePath), elapsed.Round(time.Millisecond), mbps)
+	} else {
+		if err := s.Send(); err != nil {
+			fmt.Fprintf(os.Stderr, "[send] FAILED: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stdout, "[send] TRANSFER COMPLETE\n")
 	}
 }
