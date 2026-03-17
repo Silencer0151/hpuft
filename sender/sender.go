@@ -609,11 +609,33 @@ func (s *Sender) Send() error {
 			if bucket != nil {
 				bucket.OnHeartbeat(&hb)
 			}
-			if len(hb.NACKs) > 0 {
+			nacksToProcess := hb.NACKs
+
+			// Tail-drop deadlock prevention.
+			//
+			// The receiver's NACK scan window is bounded by HighestReceived —
+			// it never NACKs sequences it has never seen. If the very last
+			// packets drop, HighestReceived never advances past the drop point,
+			// so the receiver sends heartbeats with 0 NACKs. The sender sees
+			// 0 NACKs, sends nothing, the receiver hits its inactivity timeout.
+			//
+			// Solution: when NACKs are empty but HighestContiguous is short of
+			// the last sequence, the tail has dropped and we inject those
+			// sequences so retransmitNACKs can push them.
+			if len(nacksToProcess) == 0 && hb.HighestContiguous < totalChunks-1 {
+				startSeq := hb.HighestContiguous + 1
+				for seq := startSeq; seq < totalChunks && uint64(len(nacksToProcess)) < 167; seq++ {
+					nacksToProcess = append(nacksToProcess, seq)
+				}
+				dbgLog.Printf("[sender] teardown tail-drop: injecting %d missing packets starting at seq %d",
+					len(nacksToProcess), startSeq)
+			}
+
+			if len(nacksToProcess) > 0 {
 				rtt := nackCooldownRTT()
 				now := time.Now()
 				var toRetransmit []uint64
-				for _, seq := range hb.NACKs {
+				for _, seq := range nacksToProcess {
 					if last, ok := nackCooldown[seq]; !ok || now.Sub(last) >= rtt {
 						nackCooldown[seq] = now
 						toRetransmit = append(toRetransmit, seq)
@@ -621,7 +643,7 @@ func (s *Sender) Send() error {
 				}
 				if len(toRetransmit) > 0 {
 					dbgLog.Printf("[sender] teardown: retransmitting %d/%d NACKed packets (%d on cooldown)",
-						len(toRetransmit), len(hb.NACKs), len(hb.NACKs)-len(toRetransmit))
+						len(toRetransmit), len(nacksToProcess), len(nacksToProcess)-len(toRetransmit))
 					s.nacksSent.Add(int64(len(toRetransmit)))
 					retransmitNACKs(writeFn, sessionID, toRetransmit, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
 				}
