@@ -202,11 +202,16 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		}
 	}
 
-	// --- Effective delivery rate = min(network, storage) ---
+	// --- Effective delivery rate = network delivery rate ---
+	// StorageFlushRate is intentionally excluded. The receiver uses a
+	// pre-allocated full-file ring buffer, so disk lag never causes packet
+	// loss — it only affects how quickly contiguous bytes are committed to
+	// disk. Using min(network, storage) makes rawEffective collapse to near
+	// zero whenever a single out-of-order packet stalls the contiguous flush
+	// frontier (common on any path with ≥ a few ms of jitter), which falsely
+	// triggers the delivery-collapse guard and permanently locks the CC into
+	// Phase 2 with a near-zero peakRate ceiling.
 	rawEffective := float64(hb.NetworkDeliveryRate)
-	if float64(hb.StorageFlushRate) < rawEffective {
-		rawEffective = float64(hb.StorageFlushRate)
-	}
 
 	// --- EWMA smoothing on delivery rate ---
 	if !tb.ewmaInit {
@@ -230,11 +235,14 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	// collapses to near zero. Without this check the CC sees 0% loss and
 	// keeps probing upward, permanently locking into the 4× Phase 1 ceiling.
 	//
-	// Condition: delivery < 50% of current rate AND there are outstanding
+	// Condition: delivery < 25% of current rate AND there are outstanding
 	// NACKs (distinguishes "real congestion" from a cold-start empty window).
+	// Threshold is 25% (not 50%) so that on high-latency paths (50ms+ RTT)
+	// the ~50% in-flight fraction during the warm-up window never accidentally
+	// triggers Phase 2 entry via measurement noise.
 	// Action: hold rate and permanently enter Phase 2 so the tighter 1.5×
 	// ceiling fires immediately, cutting the target rate to near link capacity.
-	if hb.NACKCount > 0 && tb.rate > 0 && rawEffective < tb.rate*0.5 {
+	if hb.NACKCount > 0 && tb.rate > 0 && rawEffective < tb.rate*0.25 {
 		if !tb.inPhase2 {
 			tb.inPhase2 = true
 			tb.logf("[cc_debug] → Phase 2 (additive): delivery collapse %.2f MB/s < 50%% of rate %.2f MB/s (NACKs=%d)",
