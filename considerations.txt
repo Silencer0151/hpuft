@@ -1,4 +1,33 @@
+# HP-UDP Optimization Phase: Getting Go to "GO"
 
+## 1. Memory Optimization: `sentChunks` Sliding Window
+Currently, the sender caches every transmitted chunk in a `map[uint64][]byte` to service NACK retransmissions. If an early packet drops and `HighestContiguous` gets stuck, this map grows without bound, consuming massive amounts of heap memory.
+
+[ ] Create a new `SlidingWindow` struct to replace `sentChunks` in `sender.go`.
+[ ] Implement the window using a pre-allocated ring buffer (e.g., a slice of `[]byte` indexed by `SequenceNum % WindowSize`).
+[ ] Set a safe maximum window size (e.g., 50,000 packets, which is ~68 MB of RAM at 1368 bytes per payload).
+[ ] Update the Heartbeat listener goroutine: When `HighestContiguous` advances, advance the sliding window's tail pointer and release those old buffers back to a `sync.Pool`.
+[ ] Update the main send loop: If the distance between `seqNum` and `HighestContiguous` exceeds the `WindowSize`, block or sleep the main loop until the receiver catches up (this acts as a memory-safe flow control backpressure).
+
+## 2. Syscall Batching: `x/net/ipv4` `WriteBatch`
+Currently, the protocol calls `conn.Write()` (or `WriteToUDP`) for every single 1368-byte payload. At high speeds, this requires tens of thousands of user-kernel context switches per second, acting as the primary CPU bottleneck.
+
+[ ] Run `go get golang.org/x/net/ipv4` to add the extended networking library.
+[ ] In `sender.go`'s `Send()` setup, wrap the UDP connection: `pConn := ipv4.NewPacketConn(conn)`.
+[ ] Create a batch buffer in the main send loop: `batch := make([]ipv4.Message, 64)`.
+[ ] Refactor the main loop: Instead of calling `writeFn` immediately, populate `batch[i].Buffers = [][]byte{sendBuf[:totalSize]}` and increment a batch counter.
+[ ] Refactor the token bucket: Pace the *entire batch size* at once before or after dispatching, rather than pacing individual packets.
+[ ] Dispatch the batch when it reaches 64 packets (or on EOF/flush): `pConn.WriteBatch(batch[:count], 0)`.
+[ ] Apply the same batching logic to `sendParityPackets` so FEC overhead is also dispatched in a single syscall.
+
+## 3. Teardown & Edge Cases
+[ ] Ensure that if the send loop finishes and there are still packets sitting in the `batch` array (count < 64), a final flush is called before entering the teardown loop.
+[ ] Update `retransmitNACKs` to also use `WriteBatch`. Because teardown retransmits are already chunked into batches of 10 to prevent micro-bursting, you can submit all 10 packets in exactly 1 syscall!
+ 
+ 
+ TODO: sentChunks sliding-window memory optimization earlier (to prevent the sender's memory from ballooning if early packets drop).
+ 
+ 
  ok looks like we're working
 
 
