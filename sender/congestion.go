@@ -82,6 +82,12 @@ type TokenBucket struct {
 	// Derived from EchoTimestampNs in heartbeats. 0 = unknown.
 	rttEstimateNs int64
 
+	// lastEchoNs is the highest EchoTimestampNs we have used to compute RTT.
+	// We only update rttEstimateNs when a strictly newer echo arrives, so that
+	// a frozen timestamp (echoed repeatedly while the sender is idle honoring
+	// the NACK cooldown) does not cause RTT to inflate unboundedly.
+	lastEchoNs int64
+
 	// bytesSent tracks bytes sent in the current measurement window
 	bytesSent atomic.Int64
 
@@ -201,11 +207,21 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	tb.heartbeatCount++
 
 	// --- Update RTT estimate from echoed sender timestamp ---
+	// Only accept an echo that is strictly newer than the last one we used.
+	// When the sender is idle (honoring NACK cooldown), the receiver keeps
+	// echoing the same frozen SenderTimestampNs; if we compute
+	//   rtt = now - frozenTs
+	// every heartbeat, RTT inflates unboundedly and the cooldown eventually
+	// exceeds the receiver's inactivity timeout, killing the transfer.
 	if hb.EchoTimestampNs > 0 {
-		rtt := time.Now().UnixNano() - int64(hb.EchoTimestampNs)
-		// Sanity-check: accept RTT between 1ms and 10s
-		if rtt >= int64(time.Millisecond) && rtt < int64(10*time.Second) {
-			tb.rttEstimateNs = rtt
+		echoNs := int64(hb.EchoTimestampNs)
+		if echoNs > tb.lastEchoNs {
+			tb.lastEchoNs = echoNs
+			rtt := time.Now().UnixNano() - echoNs
+			// Sanity-check: accept RTT between 1ms and 10s
+			if rtt >= int64(time.Millisecond) && rtt < int64(10*time.Second) {
+				tb.rttEstimateNs = rtt
+			}
 		}
 	}
 
