@@ -1,0 +1,89 @@
+The Root Cause: Zero-Cooldown Retransmissions
+
+In your tc environment, you have a baseline Round Trip Time (RTT) of ~100ms (50ms delay each way).
+
+When a packet drops (or gets reordered by your 10ms jitter), the receiver's HighestContiguous gets stuck. The receiver then includes that missing sequence number in the NACKs array of every single heartbeat it generates until the gap is filled.
+
+Because your sender operates at high speeds (40.6 MB/s), the receiver is firing heartbeats very frequently. Here is where the fatal loop happens in sender.go:
+
+    The receiver sends Heartbeat #1 with NACK [500].
+
+    The sender gets Heartbeat #1, immediately enters retransmitNACKs, and fires off packet 500.
+
+    The problem: Packet 500 will take 50ms to reach the receiver. During those 50ms, the receiver sends 20 more heartbeats, all saying NACK [500].
+
+    The sender receives those 20 heartbeats and, because the teardown loop has no cooldown logic, it blindly blasts out 20 redundant retransmissions of packet 500.
+
+    This sudden burst of redundant data clogs the link, causing real network congestion, dropping more packets, and triggering even more NACKs. The progress bar hits 100%, but the teardown loop traps itself forever.
+
+🛠️ The Fix: RTT-Aware NACK Debouncing
+
+To fix this, your sender needs to track when it last retransmitted a sequence number and ignore subsequent NACKs for that packet until at least one RTT has passed.
+
+1. Add a cooldown map in sender.go (inside Send()):
+Go
+
+nackCooldown := make(map[uint64]time.Time)
+
+// Helper to check if we are allowed to retransmit
+canRetransmit := func(seq uint64, rtt time.Duration) bool {
+	last, ok := nackCooldown[seq]
+	if !ok || time.Since(last) > rtt {
+		nackCooldown[seq] = time.Now()
+		return true
+	}
+	return false
+}
+
+2. Update the Teardown Loop in sender.go:
+
+Find your teardown loop where PacketHeartbeat is handled, and wrap the retransmission logic with your new RTT cooldown check:
+Go
+
+case protocol.PacketHeartbeat:
+    hb, err := protocol.UnmarshalHeartbeat(pkt.Payload)
+    // ... (existing OnHeartbeat code)
+    
+    if len(hb.NACKs) > 0 {
+        // Use your CC's RTT estimate, plus a 25% safety margin, or default to 200ms
+        rtt := 200 * time.Millisecond
+        if bucket != nil && bucket.rttEstimateNs > 0 {
+            rtt = time.Duration(bucket.rttEstimateNs) * 5 / 4 
+        }
+
+        var toSend []uint64
+        for _, seq := range hb.NACKs {
+            if canRetransmit(seq, rtt) {
+                toSend = append(toSend, seq)
+            }
+        }
+
+        if len(toSend) > 0 {
+            dbgLog.Printf("[sender] teardown: retransmitting %d NACKed packets", len(toSend))
+            s.nacksSent.Add(int64(len(toSend)))
+            retransmitNACKs(writeFn, sessionID, toSend, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
+        }
+    }
+
+(Note: You should also apply this canRetransmit check to the main send loop where you pop items off nackPending, as jitter can cause duplicate NACKs to queue up there as well).
+A Critical Secondary Issue: The "Stuck Frontier" Memory Leak
+
+While looking at your code, I noticed a ticking time bomb in how you manage your send buffer.
+
+In sender.go, you clear out sentChunks based on the receiver's hb.HighestContiguous:
+Go
+
+if hb.HighestContiguous > 0 {
+    sentMu.Lock()
+    for seq := range sentChunks {
+        if seq <= hb.HighestContiguous {
+            delete(sentChunks, seq)
+        }
+    }
+    sentMu.Unlock()
+}
+
+If packet 5 drops, HighestContiguous stays stuck at 4 for the entire transfer. Because you are sending a 1 GB file (big.bin), if an early packet drops, sentChunks will never be cleared and will grow to hold the entire 1 GB file in RAM. Go's Garbage Collector will thrash heavily trying to manage millions of map entries, which causes massive CPU spikes that can easily mimic network delay and cause even more packet drops!
+
+How to fix it:
+Instead of tying memory cleanup exclusively to HighestContiguous, consider using a fixed-size sliding window (e.g., keep only the last 10,000 chunks) or evict chunks once they've been successfully ACK'd via a more robust selective ACK (SACK) system rather than just a contiguous frontier.

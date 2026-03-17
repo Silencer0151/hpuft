@@ -1,24 +1,46 @@
+derrybm@killdozer:~/projects/hpuft$ git pull
+remote: Enumerating objects: 11, done.
+remote: Counting objects: 100% (11/11), done.
+remote: Compressing objects: 100% (1/1), done.
+remote: Total 6 (delta 5), reused 6 (delta 5), pack-reused 0 (from 0)
+Unpacking objects: 100% (6/6), 1.72 KiB | 878.00 KiB/s, done.
+From https://github.com/Silencer0151/hpuft
+   93b6ce6..da0df05  main       -> origin/main
+Updating 93b6ce6..da0df05
+Fast-forward
+ last_log.log              | 23 +++++++++++------------
+ sender/congestion.go      | 20 ++++++++++++++------
+ sender/congestion_test.go | 22 ++++++++++++++--------
+ 3 files changed, 39 insertions(+), 26 deletions(-)
+derrybm@killdozer:~/projects/hpuft$ ./build.sh
 derrybm@killdozer:~/projects/hpuft$ sudo tc qdisc add dev eno1 root netem delay 50ms 10ms loss 0.1%
+[sudo] password for derrybm:
 derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/big.bin -addr 192.168.50.82:9001
 [push] Target: big.bin (1 GB)
 [push] Pushing to 192.168.50.82:9001...
 [push] PUSH_ACCEPT received. Starting transfer...
-2026/03/16 20:53:34 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 20:53:34 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[>                   ] 1 GB   1% |   0.3 MB/s | ETA: 1:11:08 | NACKs: 0^C
-derrybm@killdozer:~/projects/hpuft$ time
-
-real    0m0.000s
-user    0m0.000s
-sys     0m0.000s
-derrybm@killdozer:~/projects/hpuft$ date
-Mon Mar 16 08:54:32 PM EDT 2026
-derrybm@killdozer:~/projects/hpuft$ sudo tc qdisc del dev eno1 root
+2026/03/16 21:10:18 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+2026/03/16 21:10:18 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+[====================] 1 GB 100% |  40.6 MB/s | NACKs: 59908^CCKs: 0
+derrybm@killdozer:~/projects/hpuft$
 
 
 
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft> git push
+Enumerating objects: 11, done.
+Counting objects: 100% (11/11), done.
+Delta compression using up to 20 threads
+Compressing objects: 100% (6/6), done.
+Writing objects: 100% (6/6), 1.74 KiB | 1.74 MiB/s, done.
+Total 6 (delta 5), reused 0 (delta 0), pack-reused 0
+remote: Resolving deltas: 100% (5/5), completed with 5 local objects.
+To https://github.com/Silencer0151/hpuft.git
+   93b6ce6..da0df05  main -> main
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\build.bat
+
+C:\Users\nitro\vscode_projects\go_projects\hpuft>go build -o hpuft.exe ./cmd/hpuft
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\
 [serve] Online. Listening on [::]:9001
 [serve] Manifest loaded: 8 authorized files found in .\received\
-20:53:33.323408 [serve] ACCEPTED 192.168.50.9:40567: PUSH_REQ for "big.bin"
-20:54:25.593115 [serve] PUSH FAILED: "big.bin" from 192.168.50.9:40567 — inactivity timeout: no packets for 5s
+21:10:18.199530 [serve] ACCEPTED 192.168.50.9:39097: PUSH_REQ for "big.bin"
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft>

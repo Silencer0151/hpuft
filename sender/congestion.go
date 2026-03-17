@@ -134,6 +134,13 @@ func (tb *TokenBucket) Rate() float64 {
 	return tb.rate
 }
 
+// RTTEstimate returns the most recent smoothed RTT, or 0 if not yet measured.
+func (tb *TokenBucket) RTTEstimate() time.Duration {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	return time.Duration(tb.rttEstimateNs)
+}
+
 // Pace rate-limits packet sends using a deficit accumulator.
 //
 // Each call accrues byte credits for the time elapsed since the last call,
