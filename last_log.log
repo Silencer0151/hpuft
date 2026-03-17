@@ -1,46 +1,135 @@
-derrybm@killdozer:~/projects/hpuft$ git pull
-remote: Enumerating objects: 11, done.
-remote: Counting objects: 100% (11/11), done.
-remote: Compressing objects: 100% (1/1), done.
-remote: Total 6 (delta 5), reused 6 (delta 5), pack-reused 0 (from 0)
-Unpacking objects: 100% (6/6), 1.72 KiB | 878.00 KiB/s, done.
-From https://github.com/Silencer0151/hpuft
-   93b6ce6..da0df05  main       -> origin/main
-Updating 93b6ce6..da0df05
-Fast-forward
- last_log.log              | 23 +++++++++++------------
- sender/congestion.go      | 20 ++++++++++++++------
- sender/congestion_test.go | 22 ++++++++++++++--------
- 3 files changed, 39 insertions(+), 26 deletions(-)
-derrybm@killdozer:~/projects/hpuft$ ./build.sh
-derrybm@killdozer:~/projects/hpuft$ sudo tc qdisc add dev eno1 root netem delay 50ms 10ms loss 0.1%
-[sudo] password for derrybm:
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/big.bin -addr 192.168.50.82:9001
-[push] Target: big.bin (1 GB)
-[push] Pushing to 192.168.50.82:9001...
-[push] PUSH_ACCEPT received. Starting transfer...
-2026/03/16 21:10:18 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 21:10:18 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[====================] 1 GB 100% |  40.6 MB/s | NACKs: 59908^CCKs: 0
-derrybm@killdozer:~/projects/hpuft$
+ failed:
+
+server got inactivity timeout first
+
+then client shutdown
 
 
+SERVER
 
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> git push
-Enumerating objects: 11, done.
-Counting objects: 100% (11/11), done.
-Delta compression using up to 20 threads
-Compressing objects: 100% (6/6), done.
-Writing objects: 100% (6/6), 1.74 KiB | 1.74 MiB/s, done.
-Total 6 (delta 5), reused 0 (delta 0), pack-reused 0
-remote: Resolving deltas: 100% (5/5), completed with 5 local objects.
-To https://github.com/Silencer0151/hpuft.git
-   93b6ce6..da0df05  main -> main
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\build.bat
-
-C:\Users\nitro\vscode_projects\go_projects\hpuft>go build -o hpuft.exe ./cmd/hpuft
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\
+
 [serve] Online. Listening on [::]:9001
-[serve] Manifest loaded: 8 authorized files found in .\received\
-21:10:18.199530 [serve] ACCEPTED 192.168.50.9:39097: PUSH_REQ for "big.bin"
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft>
+
+[serve] Manifest loaded: 9 authorized files found in .\received\
+
+21:25:49.694073 [serve] ACCEPTED 192.168.50.9:48494: PUSH_REQ for "big.bin"
+
+21:26:09.793288 [serve] PUSH FAILED: "big.bin" from 192.168.50.9:48494 — inactivity timeout: no packets for 5s
+
+
+
+CLIENT
+
+derrybm@killdozer:~/projects/hpuft$ git pull
+
+remote: Enumerating objects: 13, done.
+
+remote: Counting objects: 100% (13/13), done.
+
+remote: Compressing objects: 100% (3/3), done.
+
+Unpacking objects: 100% (7/7), 4.19 KiB | 2.09 MiB/s, done.
+
+remote: Total 7 (delta 4), reused 7 (delta 4), pack-reused 0 (from 0)
+
+From https://github.com/Silencer0151/hpuft
+
+   da0df05..68bdc6d  main       -> origin/main
+
+Updating da0df05..68bdc6d
+
+Fast-forward
+
+ considerations.txt   | 89 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+ last_log.log         | 46 ++++++++++++++++++++++++++++++++++------------
+
+ sender/congestion.go |  7 +++++++
+
+ sender/sender.go     | 41 ++++++++++++++++++++++++++++++++++++++---
+
+ 4 files changed, 168 insertions(+), 15 deletions(-)
+
+derrybm@killdozer:~/projects/hpuft$ ./build.sh
+
+derrybm@killdozer:~/projects/hpuft$ sudo tc qdisc add dev eno1 root netem delay 50ms 10ms loss 0.1%
+
+derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/big.bin -addr 192.168.50.82:9001
+
+[push] Target: big.bin (1 GB)
+
+[push] Pushing to 192.168.50.82:9001...
+
+[push] PUSH_ACCEPT received. Starting transfer...
+
+2026/03/16 21:25:50 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+
+2026/03/16 21:25:50 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+
+[====================] 1 GB 100% | 119.2 MB/s | NACKs: 00 | NACKs: 0
+
+
+[push] FAILED: timeout waiting for TRANSFER_COMPLETE
+
+derrybm@killdozer:~/projects/hpuft$ 
+
+Your sender went completely silent for 5 seconds because your RTT calculation is currently mixing two different system clocks, resulting in a massively inflated NACK cooldown.
+
+Here is exactly why the transfer hung at 100%, and how to fix it.
+The Root Cause: Two Clocks, One RTT
+
+If you look closely at how EchoTimestampNs is implemented across your files, you'll see a fundamental mismatch:
+
+1. The Receiver uses its own clock to generate the timestamp:
+Go
+
+// receiver.go
+case protocol.PacketData:
+    recvNs := time.Now().UnixNano() // <--- RECEIVER'S LOCAL CLOCK
+    hbGen.RecordDataReceiveTime(recvNs)
+
+2. The Sender compares that timestamp against its own clock:
+Go
+
+// congestion.go
+if hb.EchoTimestampNs > 0 {
+    rtt := time.Now().UnixNano() - int64(hb.EchoTimestampNs) // <--- SENDER'S LOCAL CLOCK
+}
+
+Because 192.168.50.9 (Client) and 192.168.50.82 (Server) are two different hardware machines, their system clocks are not perfectly synchronized. Even with NTP, they drift. If your Server's clock happens to be 4 seconds behind your Client's clock, your math evaluates to:
+RTT = SenderTime - (SenderTime - 4 Seconds) = 4 Seconds!
+The Fatal Sequence of Events
+
+With an artificially inflated RTT (e.g., 4 seconds), here is what happened in your 1GB test:
+
+    100% Reached: The sender finishes the main loop and drains pendingNACKs via the pre-teardown retransmitNACKs call. (At least one of these retransmits was dropped by your tc 0.1% loss rule).
+
+    Cooldown Seeded: Your brilliant new logic seeds nackCooldown[seq] = now.
+
+    The Teardown Loop Begins: The receiver didn't get the dropped retransmission, so it keeps sending heartbeats begging for it.
+
+    The Silence: The sender evaluates canRetransmit. Because your broken RTT is 4 seconds, nackCooldownRTT() calculates a 5-second cooldown (RTT + 25%). The sender actively ignores the NACKs and stays completely silent.
+
+    The Timeout: Exactly 5.0 seconds later, the receiver hits its inactivity timeout and crashes. The sender waits another 5 seconds and hits its 10-second SenderProbeTimeout.
+
+(Note: The progress bar printed NACKs: 0 because your pre-teardown retransmitNACKs call doesn't increment the s.nacksSent atomic counter, so the UI didn't register that first blast!)
+The Fix
+
+To see your teardown loop succeed immediately, bypass the broken RTTEstimate() and use a static cooldown.
+
+Immediate Fix (in sender.go):
+Go
+
+nackCooldownRTT := func() time.Duration {
+    // Temporarily bypass the token bucket's broken clock-skewed RTT
+    // Assume a max realistic RTT of ~150ms for this test
+    return 150 * time.Millisecond 
+}
+
+The Proper Spec-Compliant Fix (For Phase 2):
+If you refer back to your own specification (§6B), it actually outlines the correct way to handle this to avoid clock skew:
+
+    "Each DATA and PARITY packet carries a sender timestamp... The receiver records the timestamp... and echoes it back"
+
+Currently, your sender just slaps the raw readBuf[:n] directly behind the 24-byte header, skipping the timestamp insertion entirely. To fix this permanently, your Sender must write its own time.Now().UnixNano() into the first 8 bytes of the payload before sending it over the wire. The receiver must blindly echo those 8 bytes back without ever calling time.Now(). This guarantees the sender compares its clock against its own clock.

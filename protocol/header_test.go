@@ -17,7 +17,7 @@ func TestHeaderRoundTrip(t *testing.T) {
 				SessionID:   0xDEADBEEF,
 				SequenceNum: 42,
 				BlockGroup:  0,
-				PayloadLen:  1376,
+				PayloadLen:  1368,
 				Flags:       0,
 			},
 		},
@@ -50,7 +50,7 @@ func TestHeaderRoundTrip(t *testing.T) {
 				SessionID:   0x00000001,
 				SequenceNum: 1,
 				BlockGroup:  0,
-				PayloadLen:  1376,
+				PayloadLen:  1368,
 				Flags:       FlagCalibrationBurst,
 			},
 		},
@@ -61,7 +61,7 @@ func TestHeaderRoundTrip(t *testing.T) {
 				SessionID:   0xAAAAAAAA,
 				SequenceNum: 100,
 				BlockGroup:  1,
-				PayloadLen:  1376,
+				PayloadLen:  1368,
 				Flags:       0,
 			},
 		},
@@ -118,7 +118,7 @@ func TestHeaderRoundTrip(t *testing.T) {
 }
 
 func TestPacketRoundTrip(t *testing.T) {
-	payload := make([]byte, 1376)
+	payload := make([]byte, 1368)
 	for i := range payload {
 		payload[i] = byte(i % 256)
 	}
@@ -199,9 +199,9 @@ func TestUnmarshalPacketPayloadBoundsCheck(t *testing.T) {
 }
 
 func TestHeaderSize(t *testing.T) {
-	// Sanity check: header must be exactly 24 bytes (3 x 8-byte words)
-	if HeaderSize != 24 {
-		t.Errorf("HeaderSize = %d, want 24", HeaderSize)
+	// Sanity check: header must be exactly 32 bytes (4 x 8-byte words)
+	if HeaderSize != 32 {
+		t.Errorf("HeaderSize = %d, want 32", HeaderSize)
 	}
 	if HeaderSize%8 != 0 {
 		t.Errorf("HeaderSize %d is not 64-bit aligned", HeaderSize)
@@ -212,7 +212,7 @@ func TestMaxPayload(t *testing.T) {
 	if MaxPayload != MTUHardCap-HeaderSize {
 		t.Errorf("MaxPayload = %d, want %d", MaxPayload, MTUHardCap-HeaderSize)
 	}
-	if MaxPayload != 1376 {
-		t.Errorf("MaxPayload = %d, want 1376", MaxPayload)
+	if MaxPayload != 1368 {
+		t.Errorf("MaxPayload = %d, want 1368", MaxPayload)
 	}
 }
