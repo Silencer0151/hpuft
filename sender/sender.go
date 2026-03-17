@@ -258,8 +258,7 @@ func (s *Sender) Send() error {
 	var nackMu sync.Mutex
 	nackPending := make(map[uint64]struct{})
 
-	sentChunks := make(map[uint64][]byte)
-	var sentMu sync.Mutex
+	sw := NewSlidingWindow(windowSize)
 
 	doneCh := make(chan struct{})
 
@@ -350,15 +349,7 @@ func (s *Sender) Send() error {
 					}
 				}
 
-				if hb.HighestContiguous > 0 {
-					sentMu.Lock()
-					for seq := range sentChunks {
-						if seq <= hb.HighestContiguous {
-							delete(sentChunks, seq)
-						}
-					}
-					sentMu.Unlock()
-				}
+				sw.Advance(hb.HighestContiguous)
 
 			case protocol.PacketTransferComplete, protocol.PacketSessionReject:
 				select {
@@ -390,9 +381,7 @@ func (s *Sender) Send() error {
 		nackMu.Unlock()
 
 		for _, nackSeq := range nacksToSend {
-			sentMu.Lock()
-			chunk, ok := sentChunks[nackSeq]
-			sentMu.Unlock()
+			chunk, ok := sw.Load(nackSeq)
 
 			if !ok {
 				continue
@@ -417,6 +406,11 @@ func (s *Sender) Send() error {
 			if bucket != nil {
 				bucket.Pace(hdrSize + len(chunk))
 			}
+		}
+
+		// --- Backpressure: block if window is full ---
+		for sw.IsFull(seqNum) {
+			time.Sleep(time.Millisecond)
 		}
 
 		// --- Send next data packet ---
@@ -450,11 +444,7 @@ func (s *Sender) Send() error {
 		copy(sendBuf[hdrSize:], readBuf[:n])
 		totalSize := hdrSize + n
 
-		chunkCopy := make([]byte, n)
-		copy(chunkCopy, readBuf[:n])
-		sentMu.Lock()
-		sentChunks[seqNum] = chunkCopy
-		sentMu.Unlock()
+		sw.Store(seqNum, readBuf[:n])
 
 		writeFn(sendBuf[:totalSize])
 
@@ -509,7 +499,7 @@ func (s *Sender) Send() error {
 	case msg := <-teardownCh:
 		close(doneCh)
 		hbWg.Wait()
-		return s.handleTeardown(conn, writeFn, recvChan, sessionID, msg.pktType, msg.payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
+		return s.handleTeardown(conn, writeFn, recvChan, sessionID, msg.pktType, msg.payload, dbgLog)
 	default:
 	}
 
@@ -525,7 +515,7 @@ func (s *Sender) Send() error {
 	// The goroutine may have forwarded TRANSFER_COMPLETE just before exiting.
 	select {
 	case msg := <-teardownCh:
-		return s.handleTeardown(conn, writeFn, recvChan, sessionID, msg.pktType, msg.payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
+		return s.handleTeardown(conn, writeFn, recvChan, sessionID, msg.pktType, msg.payload, dbgLog)
 	default:
 	}
 
@@ -537,7 +527,7 @@ func (s *Sender) Send() error {
 	nackPending = make(map[uint64]struct{})
 	nackMu.Unlock()
 
-	retransmitNACKs(writeFn, sessionID, pendingNACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
+	retransmitNACKs(writeFn, sessionID, pendingNACKs, sendBuf, sw, totalChunks, bucket)
 
 	// nackCooldown tracks the last retransmit time per sequence number.
 	// On a 50ms-RTT path the receiver fires one heartbeat per HB interval
@@ -604,7 +594,7 @@ func (s *Sender) Send() error {
 
 		switch pkt.Header.Type {
 		case protocol.PacketTransferComplete, protocol.PacketSessionReject:
-			return s.handleTeardown(conn, writeFn, recvChan, sessionID, pkt.Header.Type, pkt.Payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
+			return s.handleTeardown(conn, writeFn, recvChan, sessionID, pkt.Header.Type, pkt.Payload, dbgLog)
 
 		case protocol.PacketHeartbeat:
 			hb, err := protocol.UnmarshalHeartbeat(pkt.Payload)
@@ -661,7 +651,7 @@ func (s *Sender) Send() error {
 						if end > len(toRetransmit) {
 							end = len(toRetransmit)
 						}
-						retransmitNACKs(writeFn, sessionID, toRetransmit[i:end], sendBuf, sentChunks, &sentMu, totalChunks, bucket)
+						retransmitNACKs(writeFn, sessionID, toRetransmit[i:end], sendBuf, sw, totalChunks, bucket)
 						time.Sleep(2 * time.Millisecond)
 					}
 				}
@@ -684,10 +674,6 @@ func (s *Sender) handleTeardown(
 	sessionID uint32,
 	pktType protocol.PacketType,
 	payload []byte,
-	sendBuf []byte,
-	sentChunks map[uint64][]byte,
-	sentMu *sync.Mutex,
-	totalChunks uint64,
 	dbgLog *log.Logger,
 ) error {
 	switch pktType {
@@ -754,7 +740,6 @@ func (s *Sender) handleTeardown(
 		}
 
 	lingerDone:
-		sentChunks = nil
 		log.Printf("[sender] linger complete, session finished")
 		return nil
 
@@ -775,15 +760,12 @@ func retransmitNACKs(
 	sessionID uint32,
 	nacks []uint64,
 	sendBuf []byte,
-	sentChunks map[uint64][]byte,
-	sentMu *sync.Mutex,
+	sw *SlidingWindow,
 	totalChunks uint64,
 	bucket *TokenBucket,
 ) {
 	for _, nackSeq := range nacks {
-		sentMu.Lock()
-		chunk, ok := sentChunks[nackSeq]
-		sentMu.Unlock()
+		chunk, ok := sw.Load(nackSeq)
 		if !ok {
 			continue
 		}
