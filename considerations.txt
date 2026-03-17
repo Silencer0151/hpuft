@@ -1,60 +1,59 @@
-transfers still aren't behaving correctly, same nack pile up behavior at the end
 
-possible solution:
-The Root Cause: Teardown Micro-Bursting
+ ok looks like we're working
 
-During the main transfer, your sender was cruising at high speeds (up to 133 MB/s). At those speeds, your Token Bucket allows a default 2ms "burst allowance" to prevent over-sleeping.
 
-When the transfer hits 100% and enters the teardown loop, the token bucket still has that massive rate profile in memory. When the receiver sends a heartbeat asking for 166 packets, your teardown loop grabs all 166 and fires them into retransmitNACKs at once.
+looking at a comparable ftp transfer with the same file and network limitations we have
 
-Because 166 packets (232 KB) perfectly fits inside the token bucket's high-speed burst allowance, the token bucket does not sleep. The sender blasts all 166 packets into the socket in a fraction of a millisecond.
 
-This micro-burst acts like a shotgun blast hitting a funnel:
+ftp> put ./received/big.bin uploaded.bin
 
-    It slams into the OS UDP socket buffer.
+local: ./received/big.bin remote: uploaded.bin
 
-    It slams into the tc netem delay queue.
+229 Entering extended passive mode (|||2010|).
 
-    Most importantly, it slams into the ch := make(chan []byte, 256) in your serve.go daemon!
+150 File status okay. About to open data connection.
 
-The buffers overflow instantly. Sometimes 1 packet sneaks through (leaving 165), sometimes half sneak through (leaving 83). But ultimately, the bulk of the retransmits are slaughtered, the receiver's HighestContiguous gets stuck, and after 5 seconds of dropped micro-bursts, the receiver hits its inactivity timeout and dies.
-🛠️ The Fix: Micro-Pacing the Teardown
+  4% |***                                                                             | 50448 KiB    1.23 MiB/s    13:11 ETA
 
-To fix this, you don't need to change the protocol logic—you just need to prevent the sender from shotgunning the teardown retransmits.
 
-In sender.go, inside your Teardown Loop, replace your current retransmitNACKs call with a chunked loop that artificially paces the burst. Slicing it into tiny batches of 10 packets with a 2ms sleep gives the network and the receiver's channel plenty of time to digest the data.
+but our transfer albeit after some nacking
 
-Update the dispatch block in your teardown loop to look like this:
-Go
+derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/big.bin -addr 192.168.50.82:9001
 
-        if len(toSend) > 0 {
-            dbgLog.Printf("[sender] teardown: retransmitting %d NACKed packets", len(toSend))
-            s.nacksSent.Add(int64(len(toSend)))
-            
-            // --- MICRO-BURST PREVENTION ---
-            // Slice the retransmits into tiny batches of 10 to prevent 
-            // overwhelming the OS UDP buffers or the receiver's channel.
-            for i := 0; i < len(toSend); i += 10 {
-                end := i + 10
-                if end > len(toSend) {
-                    end = len(toSend)
-                }
-                
-                retransmitNACKs(writeFn, sessionID, toSend[i:end], sendBuf, sentChunks, &sentMu, totalChunks, bucket)
-                
-                // Yield the thread for 2ms to let socket buffers drain
-                time.Sleep(2 * time.Millisecond) 
-            }
-        }
+[push] Target: big.bin (1 GB)
 
-Why this works:
+[push] Pushing to 192.168.50.82:9001...
 
-166 packets divided by 10 means 17 loops. At 2ms of sleep per loop, the burst is spread gracefully over 34 milliseconds.
+[push] PUSH_ACCEPT received. Starting transfer...
 
-    34ms is completely invisible to the user.
+2026/03/17 00:45:04 [calibration] burst: 10 packets at wire speed (link-capacity probe)
 
-    It easily finishes before the receiver's next 100ms heartbeat arrives.
+2026/03/17 00:45:04 [calibration] burst complete (10 packets sent), switching to adaptive pacing
 
-    It guarantees 100% of your retransmits will sail cleanly through tc netem and your serve daemon's 256-packet channel.
+[====================] 1 GB 100% |  39.7 MB/s | NACKs: 1538922026/03/17 00:47:17 [sender] linger complete, session finished
 
-Drop this pacing loop in, run the 1GB test again, and you will see the transfer exit perfectly!
+[====================] 1 GB 100% |  39.7 MB/s | NACKs: 153892
+
+[push] TRANSFER COMPLETE: big.bin in 2m13.657s (8.0 MB/s)
+
+
+00:45:03.550498 [serve] ACCEPTED 192.168.50.9:42304: PUSH_REQ for "big.bin"
+
+00:47:17.233991 [serve] PUSH COMPLETE: "big.bin" from 192.168.50.9:42304 in 2m13.682s (8.0 MB/s) — added to manifest
+
+
+our transfer happened in 2 minutes!
+
+
+now the 100% and waiting for nacks to pile up was a little confusing to understand but after they climbed up it actually finished! 
+
+
+The Physics of the Win: Why FTP Choked
+
+FTP uses TCP. TCP uses a congestion control algorithm based on AIMD (Additive Increase, Multiplicative Decrease).
+
+    The TCP Panic: When TCP detects your 0.1% tc packet loss, it assumes the network is severely congested. It instantly cuts its transmission speed (Congestion Window) in half.
+
+    The Latency Trap: Because you have a 100ms RTT (50ms delay each way), it takes TCP a very long time to slowly grow its window back up. By the time it starts getting fast again, another 0.1% loss hits, and it cuts the speed in half again. TCP essentially traps itself at 1.23 MB/s.
+
+Keep it simple: The moment the main send loop finishes and you enter the teardown loop, change the progress bar text from 100% | 40 MB/s to 100% | Repairing lost packets... so the user knows the network is just cleaning up the tail.
