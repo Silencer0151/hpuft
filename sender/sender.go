@@ -88,6 +88,7 @@ type SenderProgress struct {
 	NACKsSent  int64   // cumulative retransmitted packets
 	RateBPS    float64 // current token-bucket target rate
 	StartNs    int64   // Unix ns when Send() started
+	InRepair   bool    // true once all packets are sent and teardown is recovering drops
 }
 
 // Sender manages a file transfer session.
@@ -99,6 +100,7 @@ type Sender struct {
 	totalBytes atomic.Int64
 	nacksSent  atomic.Int64
 	startNs    atomic.Int64
+	inRepair   atomic.Int32 // 1 once all packets sent and teardown is recovering drops
 
 	bucket *TokenBucket // non-nil once Send() creates it
 }
@@ -115,6 +117,7 @@ func (s *Sender) Progress() SenderProgress {
 		NACKsSent:  s.nacksSent.Load(),
 		RateBPS:    rate,
 		StartNs:    s.startNs.Load(),
+		InRepair:   s.inRepair.Load() == 1,
 	}
 }
 
@@ -558,6 +561,8 @@ func (s *Sender) Send() error {
 	for _, seq := range pendingNACKs {
 		nackCooldown[seq] = now
 	}
+
+	s.inRepair.Store(1)
 
 	// Teardown read loop — own the socket (or drain the channel).
 	probeDeadline := time.NewTimer(s.cfg.Session.SenderProbeTimeout)

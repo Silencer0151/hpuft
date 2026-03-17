@@ -78,8 +78,14 @@ func printSendBar(p sender.SenderProgress, final bool) {
 	}
 
 	bar := buildBar(pct)
-	line := fmt.Sprintf("\r%s %s %3.0f%% | %5.1f MB/s%s | NACKs: %d",
-		bar, humanBytes(p.TotalBytes), pct*100, rateMBps, eta, p.NACKsSent)
+	var line string
+	if p.InRepair {
+		line = fmt.Sprintf("\r%s %s 100%% | Repairing... | NACKs: %d",
+			bar, humanBytes(p.TotalBytes), p.NACKsSent)
+	} else {
+		line = fmt.Sprintf("\r%s %s %3.0f%% | %5.1f MB/s%s | NACKs: %d",
+			bar, humanBytes(p.TotalBytes), pct*100, rateMBps, eta, p.NACKsSent)
+	}
 
 	if final {
 		fmt.Fprint(os.Stdout, line)
