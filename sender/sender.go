@@ -534,6 +534,29 @@ func (s *Sender) Send() error {
 
 	retransmitNACKs(writeFn, sessionID, pendingNACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
 
+	// nackCooldown tracks the last retransmit time per sequence number.
+	// On a 50ms-RTT path the receiver fires one heartbeat per HB interval
+	// (25–100ms) and will keep NACKing the same sequence until the
+	// retransmission lands. Without a cooldown, every in-flight heartbeat
+	// triggers a redundant retransmit, flooding the link and causing a
+	// self-reinforcing loss spiral (observed: 59,908 NACKs for ~780 losses).
+	// We gate each sequence to at most one retransmit per RTT + 25% margin.
+	nackCooldown := make(map[uint64]time.Time)
+	nackCooldownRTT := func() time.Duration {
+		if bucket != nil {
+			if rtt := bucket.RTTEstimate(); rtt > 0 {
+				return rtt * 5 / 4 // RTT + 25% margin
+			}
+		}
+		return 200 * time.Millisecond // conservative default before RTT is known
+	}
+
+	// Seed the cooldown map so the initial pending-NACK drain is counted.
+	now := time.Now()
+	for _, seq := range pendingNACKs {
+		nackCooldown[seq] = now
+	}
+
 	// Teardown read loop — own the socket (or drain the channel).
 	probeDeadline := time.NewTimer(s.cfg.Session.SenderProbeTimeout)
 	defer probeDeadline.Stop()
@@ -585,9 +608,21 @@ func (s *Sender) Send() error {
 				bucket.OnHeartbeat(&hb)
 			}
 			if len(hb.NACKs) > 0 {
-				dbgLog.Printf("[sender] teardown: retransmitting %d NACKed packets", len(hb.NACKs))
-				s.nacksSent.Add(int64(len(hb.NACKs)))
-				retransmitNACKs(writeFn, sessionID, hb.NACKs, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
+				rtt := nackCooldownRTT()
+				now := time.Now()
+				var toRetransmit []uint64
+				for _, seq := range hb.NACKs {
+					if last, ok := nackCooldown[seq]; !ok || now.Sub(last) >= rtt {
+						nackCooldown[seq] = now
+						toRetransmit = append(toRetransmit, seq)
+					}
+				}
+				if len(toRetransmit) > 0 {
+					dbgLog.Printf("[sender] teardown: retransmitting %d/%d NACKed packets (%d on cooldown)",
+						len(toRetransmit), len(hb.NACKs), len(hb.NACKs)-len(toRetransmit))
+					s.nacksSent.Add(int64(len(toRetransmit)))
+					retransmitNACKs(writeFn, sessionID, toRetransmit, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
+				}
 			}
 			// Reset deadline — still making progress
 			if recvChan != nil {
