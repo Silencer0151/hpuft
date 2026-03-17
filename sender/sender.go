@@ -396,11 +396,12 @@ func (s *Sender) Send() error {
 			}
 
 			hdr := protocol.Header{
-				Type:        protocol.PacketData,
-				SessionID:   sessionID,
-				SequenceNum: nackSeq,
-				BlockGroup:  nackSeq / uint64(protocol.DefaultFECConfig().BlockSize),
-				PayloadLen:  uint16(len(chunk)),
+				Type:              protocol.PacketData,
+				SessionID:         sessionID,
+				SequenceNum:       nackSeq,
+				BlockGroup:        nackSeq / uint64(protocol.DefaultFECConfig().BlockSize),
+				PayloadLen:        uint16(len(chunk)),
+				SenderTimestampNs: uint64(time.Now().UnixNano()),
 			}
 			if nackSeq == totalChunks-1 {
 				hdr.Flags = protocol.FlagEndOfFile
@@ -426,11 +427,12 @@ func (s *Sender) Send() error {
 		}
 
 		hdr := protocol.Header{
-			Type:        protocol.PacketData,
-			SessionID:   sessionID,
-			SequenceNum: seqNum,
-			BlockGroup:  seqNum / uint64(protocol.DefaultFECConfig().BlockSize),
-			PayloadLen:  uint16(n),
+			Type:              protocol.PacketData,
+			SessionID:         sessionID,
+			SequenceNum:       seqNum,
+			BlockGroup:        seqNum / uint64(protocol.DefaultFECConfig().BlockSize),
+			PayloadLen:        uint16(n),
+			SenderTimestampNs: uint64(time.Now().UnixNano()),
 		}
 
 		if seqNum == totalChunks-1 {
@@ -747,11 +749,12 @@ func retransmitNACKs(
 		}
 
 		hdr := protocol.Header{
-			Type:        protocol.PacketData,
-			SessionID:   sessionID,
-			SequenceNum: nackSeq,
-			BlockGroup:  nackSeq / uint64(protocol.DefaultFECConfig().BlockSize),
-			PayloadLen:  uint16(len(chunk)),
+			Type:              protocol.PacketData,
+			SessionID:         sessionID,
+			SequenceNum:       nackSeq,
+			BlockGroup:        nackSeq / uint64(protocol.DefaultFECConfig().BlockSize),
+			PayloadLen:        uint16(len(chunk)),
+			SenderTimestampNs: uint64(time.Now().UnixNano()),
 		}
 		if nackSeq == totalChunks-1 {
 			hdr.Flags = protocol.FlagEndOfFile

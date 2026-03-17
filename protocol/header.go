@@ -12,7 +12,7 @@ var (
 	ErrPacketTooSmall  = errors.New("raw packet smaller than header size")
 )
 
-// MarshalHeader writes a 24-byte header into dst.
+// MarshalHeader writes a 32-byte header into dst.
 // dst must be at least HeaderSize bytes. Returns HeaderSize on success.
 func MarshalHeader(dst []byte, h *Header) (int, error) {
 	if len(dst) < HeaderSize {
@@ -28,23 +28,25 @@ func MarshalHeader(dst []byte, h *Header) (int, error) {
 	binary.BigEndian.PutUint64(dst[13:21], h.BlockGroup)
 	binary.BigEndian.PutUint16(dst[21:23], h.PayloadLen)
 	dst[23] = byte(h.Flags)
+	binary.BigEndian.PutUint64(dst[24:32], h.SenderTimestampNs)
 
 	return HeaderSize, nil
 }
 
-// UnmarshalHeader reads a 24-byte header from src.
+// UnmarshalHeader reads a 32-byte header from src.
 func UnmarshalHeader(src []byte) (Header, error) {
 	if len(src) < HeaderSize {
 		return Header{}, ErrBufferTooSmall
 	}
 
 	h := Header{
-		Type:        PacketType(src[0]),
-		SessionID:   binary.BigEndian.Uint32(src[1:5]),
-		SequenceNum: binary.BigEndian.Uint64(src[5:13]),
-		BlockGroup:  binary.BigEndian.Uint64(src[13:21]),
-		PayloadLen:  binary.BigEndian.Uint16(src[21:23]),
-		Flags:       Flag(src[23]),
+		Type:              PacketType(src[0]),
+		SessionID:         binary.BigEndian.Uint32(src[1:5]),
+		SequenceNum:       binary.BigEndian.Uint64(src[5:13]),
+		BlockGroup:        binary.BigEndian.Uint64(src[13:21]),
+		PayloadLen:        binary.BigEndian.Uint16(src[21:23]),
+		Flags:             Flag(src[23]),
+		SenderTimestampNs: binary.BigEndian.Uint64(src[24:32]),
 	}
 
 	return h, nil

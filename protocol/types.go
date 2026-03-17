@@ -90,14 +90,14 @@ func (r RejectReason) String() string {
 // --- Wire Format Constants ---
 
 const (
-	HeaderSize = 24                      // bytes, 3 x 64-bit aligned
+	HeaderSize = 32                      // bytes, 4 x 64-bit aligned
 	MTUHardCap = 1400                    // bytes, total packet size
-	MaxPayload = MTUHardCap - HeaderSize // 1376 bytes
+	MaxPayload = MTUHardCap - HeaderSize // 1368 bytes
 )
 
 // --- Header ---
 
-// Header is the 24-byte fixed-width binary header for every HP-UDP datagram.
+// Header is the 32-byte fixed-width binary header for every HP-UDP datagram.
 //
 // Wire layout:
 //   Offset  Size  Field
@@ -107,13 +107,21 @@ const (
 //   0x0D    8     BlockGroup
 //   0x15    2     PayloadLen
 //   0x17    1     Flags
+//   0x18    8     SenderTimestampNs
+//
+// SenderTimestampNs carries the sender's time.Now().UnixNano() at the moment
+// a DATA or PARITY packet is built. The receiver echoes this value back in
+// EchoTimestampNs so the sender can compute RTT = now - SenderTimestampNs
+// using only its own clock, avoiding cross-machine clock-skew errors.
+// Non-data packets leave this field zero.
 type Header struct {
-	Type        PacketType
-	SessionID   uint32
-	SequenceNum uint64
-	BlockGroup  uint64
-	PayloadLen  uint16
-	Flags       Flag
+	Type               PacketType
+	SessionID          uint32
+	SequenceNum        uint64
+	BlockGroup         uint64
+	PayloadLen         uint16
+	Flags              Flag
+	SenderTimestampNs  uint64
 }
 
 // Packet is a fully parsed datagram: header + payload bytes.

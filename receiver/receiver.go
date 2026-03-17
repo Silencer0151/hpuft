@@ -317,7 +317,7 @@ func (r *Receiver) Run() error {
 
 		switch pkt.Header.Type {
 		case protocol.PacketData:
-			recvNs := time.Now().UnixNano()
+			recvNs := time.Now().UnixNano() // receiver's local time, used only for calibration dispersion
 
 			isNew, err := recvBuf.Insert(pkt.Header.SequenceNum, pkt.Payload)
 			if err != nil {
@@ -331,10 +331,15 @@ func (r *Receiver) Run() error {
 				r.bytesReceived.Add(int64(len(pkt.Payload)))
 			}
 
-			// Always update the echo timestamp (RTT measurement) and
-			// calibration dispersion (even for duplicate packets, since
-			// timing is what matters for both measurements).
-			hbGen.RecordDataReceiveTime(recvNs)
+			// Echo the sender's own timestamp back so the sender can compute
+			// RTT = now_sender - SenderTimestampNs using only its own clock.
+			// This avoids cross-machine clock-skew corruption of the RTT estimate.
+			// Calibration dispersion still uses the receiver's local arrival time
+			// (recvNs) because dispersion measures inter-packet spacing at the
+			// receiver, which is correctly measured by the receiver's own clock.
+			if pkt.Header.SenderTimestampNs != 0 {
+				hbGen.RecordDataReceiveTime(int64(pkt.Header.SenderTimestampNs))
+			}
 			if pkt.Header.Flags&protocol.FlagCalibrationBurst != 0 {
 				hbGen.RecordCalibrationPacket(recvNs)
 			}
