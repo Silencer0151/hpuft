@@ -1,177 +1,25 @@
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file test50.bin -addr 192.168.50.82:9001 -out received/
-[get] Punching NAT hole via PULL_REQ for "test50.bin" -> 192.168.50.82:9001
-[get] Received SESSION_REQ. Allocating 50 MB ring buffer...
-[====================] 50 MB 100% |  10.4 MB/s | Rebuilt: 0| Rebuilt: 0
-[get] TRANSFER COMPLETE: test50.bin in 5.08s (10.3 MB/s) | FEC rebuilt: 0 pkts
-derrybm@killdozer:~/projects/hpuft$
-
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\
-[serve] Online. Listening on [::]:9001
-[serve] Manifest loaded: 8 authorized files found in .\received\
-18:43:40.520778 [serve] ACCEPTED 192.168.50.9:33179: PULL_REQ for "test50.bin"
-18:43:40.545836 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-18:43:40.546355 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-18:43:45.605439 [sender] linger complete, session finished
-18:43:45.605521 [serve] TRANSFER COMPLETE: "test50.bin" to 192.168.50.9:33179 in 5.084s (10.3 MB/s)
-
-
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/test50_linux.bin -addr 192.168.50.82:9001
-[push] Target: test50_linux.bin (50 MB)
-[push] Pushing to 192.168.50.82:9001...
-[push] PUSH_ACCEPT received. Starting transfer...
-2026/03/16 18:45:25 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 18:45:25 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[====================] 50 MB 100% |  23.3 MB/s | NACKs: 02026/03/16 18:45:35 [sender] linger complete, session finished
-[====================] 50 MB 100% |  23.3 MB/s | NACKs: 0
-[push] TRANSFER COMPLETE: test50_linux.bin in 10.313s (5.1 MB/s)
-derrybm@killdozer:~/projects/hpuft$
-
-
-18:45:24.716926 [serve] ACCEPTED 192.168.50.9:44448: PUSH_REQ for "test50_linux.bin"
-18:45:35.007261 [serve] PUSH COMPLETE: "test50_linux.bin" from 192.168.50.9:44448 in 10.288s (5.1 MB/s) — added to manifest
-
-
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/test50_linux.bin -addr 192.168.50.82:9001
-[push] Target: test50_linux.bin (50 MB)
-[push] Pushing to 192.168.50.82:9001...
-[push] PUSH_ACCEPT received. Starting transfer...
-2026/03/16 18:47:59 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 18:47:59 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[====================] 50 MB 100% |  23.3 MB/s | NACKs: 02026/03/16 18:48:10 [sender] linger complete, session finished
-[====================] 50 MB 100% |  23.3 MB/s | NACKs: 0
-[push] TRANSFER COMPLETE: test50_linux.bin in 10.342s (5.1 MB/s)
-derrybm@killdozer:~/projects/hpuft$
-
-client2 somehow pushed the file while the other one was still pushing:
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> ./hpuft push -file .\testdata\terminal_6.txt -addr 192.168.50.82:9001
-[push] Target: terminal_6.txt (8 KB)
-[push] Pushing to 192.168.50.82:9001...
-
-18:47:59.284023 [serve] ACCEPTED 192.168.50.9:35812: PUSH_REQ for "test50_linux.bin"
-18:48:09.603705 [serve] PUSH COMPLETE: "test50_linux.bin" from 192.168.50.9:35812 in 10.319s (5.1 MB/s) — added to manifest
-
-
-derrybm@killdozer:~/projects/hpuft$ dd if=/dev/urandom of=received/test100.bin bs=1M count=100
-100+0 records in
-100+0 records out
-104857600 bytes (105 MB, 100 MiB) copied, 0.358922 s, 292 MB/s
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/test100.bin -addr 192.168.50.82:9001
-[push] Target: test100.bin (100 MB)
-[push] Pushing to 192.168.50.82:9001...
-[push] PUSH_ACCEPT received. Starting transfer...
-2026/03/16 18:51:55 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 18:51:55 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[====================] 100 MB 100% |  45.5 MB/s | NACKs: 02026/03/16 18:52:07 [sender] linger complete, session finished
-[====================] 100 MB 100% |  45.5 MB/s | NACKs: 0
-[push] TRANSFER COMPLETE: test100.bin in 12.223s (8.6 MB/s)
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file test100.bin -addr 192.168.50.82:9001 -out received/
-[get] Punching NAT hole via PULL_REQ for "test100.bin" -> 192.168.50.82:9001
-[get] Received SESSION_REQ. Allocating 100 MB ring buffer...
-[====================] 100 MB 100% |  19.3 MB/s | Rebuilt: 0| Rebuilt: 0
-[get] TRANSFER COMPLETE: test100.bin in 5.464s (19.2 MB/s) | FEC rebuilt: 0 pkts
-derrybm@killdozer:~/projects/hpuft$
-
-18:50:50.364699 [serve] ACCEPTED 192.168.50.9:40925: PULL_REQ for "test50.bin"
-18:50:50.382648 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-18:50:50.383269 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-18:50:55.208644 [sender] linger complete, session finished
-18:50:55.208644 [serve] TRANSFER COMPLETE: "test50.bin" to 192.168.50.9:40925 in 4.843s (10.8 MB/s)
-18:51:55.133973 [serve] ACCEPTED 192.168.50.9:56009: PUSH_REQ for "test100.bin"
-18:52:07.333211 [serve] PUSH COMPLETE: "test100.bin" from 192.168.50.9:56009 in 12.199s (8.6 MB/s) — added to manifest
-18:52:23.820355 [serve] ACCEPTED 192.168.50.9:56084: PULL_REQ for "test100.bin"
-18:52:23.852310 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-18:52:23.853311 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-18:52:29.296258 [sender] linger complete, session finished
-18:52:29.296258 [serve] TRANSFER COMPLETE: "test100.bin" to 192.168.50.9:56084 in 5.475s (19.2 MB/s)
-
-
-
+derrybm@killdozer:~/projects/hpuft$ sudo tc qdisc add dev eno1 root netem delay 50ms 10ms loss 0.1%
 derrybm@killdozer:~/projects/hpuft$ dd if=/dev/urandom of=received/big.bin bs=1M count=1024
 1024+0 records in
 1024+0 records out
-1073741824 bytes (1.1 GB, 1.0 GiB) copied, 2.83209 s, 379 MB/s
+1073741824 bytes (1.1 GB, 1.0 GiB) copied, 2.72561 s, 394 MB/s
 derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/big.bin -addr 192.168.50.82:9001
 [push] Target: big.bin (1 GB)
 [push] Pushing to 192.168.50.82:9001...
 [push] PUSH_ACCEPT received. Starting transfer...
-2026/03/16 18:54:09 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 18:54:09 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[====================] 1 GB 100% | 176.4 MB/s | NACKs: 02026/03/16 18:54:31 [sender] linger complete, session finished
-[====================] 1 GB 100% | 176.4 MB/s | NACKs: 0
-[push] TRANSFER COMPLETE: big.bin in 22.859s (47.0 MB/s)
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -out received/
-[get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
-[get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-[====================] 1 GB 100% |  69.9 MB/s | Rebuilt: 0| Rebuilt: 0
-[get] TRANSFER COMPLETE: big.bin in 15.589s (68.9 MB/s) | FEC rebuilt: 0 pkts
+2026/03/16 20:25:37 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+2026/03/16 20:25:37 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+[====================] 1 GB 100% | 216.8 MB/s | NACKs: 00 | NACKs: 0
+
+[push] FAILED: timeout waiting for TRANSFER_COMPLETE
+derrybm@killdozer:~/projects/hpuft$ sudo tc qdisc del dev eno1 root
 derrybm@killdozer:~/projects/hpuft$
 
-18:54:08.163764 [serve] ACCEPTED 192.168.50.9:60852: PUSH_REQ for "big.bin"
-18:54:31.001093 [serve] PUSH COMPLETE: "big.bin" from 192.168.50.9:60852 in 22.837s (47.0 MB/s) — added to manifest
-18:54:52.905050 [serve] ACCEPTED 192.168.50.9:56134: PULL_REQ for "big.bin"
-18:54:53.171119 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-18:54:53.171119 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-18:55:08.740447 [sender] linger complete, session finished
-18:55:08.740447 [serve] TRANSFER COMPLETE: "big.bin" to 192.168.50.9:56134 in 15.835s (67.8 MB/s)
 
 
-
-derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/nihilus_cosplay.jpg -addr 192.168.50.82:9001 -debug
-[push] Target: nihilus_cosplay.jpg (28 MB)
-[push] Pushing to 192.168.50.82:9001...
-[push] PUSH_ACCEPT received. Starting transfer...
-18:59:23.623614 [sender] hashing file: received/nihilus_cosplay.jpg (29445262 bytes)
-18:59:23.630839 [sender] file hash: 0x9FDB4EBB36D98F35
-18:59:23.630854 [sender] sending SESSION_REQ: sessionID=0x68181570 -> 192.168.50.82:9001
-18:59:23.630895 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-18:59:23.630900 [sender] congestion control ENABLED, starting rate=2.00 MB/s
-18:59:23.630910 [sender] FEC enabled: block_size=100, initial_parity=5%
-18:59:23.631076 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-18:59:24.232797 [cc_debug] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=1.22)
-18:59:24.833146 [cc_debug] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=2.22)
-18:59:25.432824 [cc_debug] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=1.91)
-18:59:26.032495 [cc_debug] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=3.38)
-18:59:26.633081 [cc_debug] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.58)
-18:59:27.232819 [cc_debug] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=3.51)
-18:59:27.832953 [cc_debug] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=6.21)
-18:59:28.432655 [cc_debug] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=3.09)
-18:59:29.133299 [cc_debug] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=10.36)
-18:59:29.496943 [sender] all 21400 packets sent in 5.866s (5.02 MB/s) | CC: +9 =0 -0
-18:59:29.497011 [sender] waiting for TRANSFER_COMPLETE...
-18:59:29.522684 [sender] received TRANSFER_COMPLETE
-18:59:29.522784 [sender] sent ACK_CLOSE, entering linger state
-18:59:32.527969 [sender] linger complete, session finished
-[push] TRANSFER COMPLETE
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file nihilus_cosplay.jpg -addr 192.168.50.82:9001 -out received/ -debug
-[get] Punching NAT hole via PULL_REQ for "nihilus_cosplay.jpg" -> 192.168.50.82:9001
-[get] Received SESSION_REQ. Allocating 28 MB ring buffer...
-18:59:47.995124 [receiver] session handed off from get: sessionID=0x29317006 file="nihilus_cosplay.jpg" size=29445262
-18:59:48.002829 [receiver] allocated buffer: 21400 chunks of 1376 bytes, writing to received/nihilus_cosplay.jpg
-18:59:48.002856 [receiver] heartbeat generator started
-18:59:48.002860 [receiver] FEC decoder enabled: block_size=100
-18:59:49.559176 [receiver] all 21400 chunks received, finalizing...
-18:59:49.630615 [receiver] transfer stats: received=21400 duplicates=0 | FEC: blocks_recovered=0 shards_recovered=0
-18:59:49.630648 [receiver] hash verified: 0x9FDB4EBB36D98F35
-18:59:49.630711 [receiver] retransmitting TRANSFER_COMPLETE (attempt 1/3)
-18:59:49.630741 [receiver] retransmitting TRANSFER_COMPLETE (attempt 2/3)
-18:59:49.630912 [receiver] ACK_CLOSE received, entering linger state
-18:59:52.632201 [receiver] transfer complete: received/nihilus_cosplay.jpg (29445262 bytes)
-[get] TRANSFER COMPLETE
-derrybm@killdozer:~/projects/hpuft$
-
+SERVER:
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\
 [serve] Online. Listening on [::]:9001
 [serve] Manifest loaded: 8 authorized files found in .\received\
-18:58:18.433415 [serve] ACCEPTED 192.168.50.9:35254: PULL_REQ for "nihilus_cosplay.jpg"
-18:58:18.454100 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-18:58:18.454625 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-18:58:23.095066 [sender] linger complete, session finished
-18:58:23.095066 [serve] TRANSFER COMPLETE: "nihilus_cosplay.jpg" to 192.168.50.9:35254 in 4.661s (6.3 MB/s)
-18:59:02.373814 [serve] REJECTED 192.168.50.9:36200: PUSH_REQ for "nihilus_cosplay.jpg" (file already exists)
-18:59:22.963075 [serve] ACCEPTED 192.168.50.9:34528: PUSH_REQ for "nihilus_cosplay.jpg"
-18:59:31.862895 [serve] PUSH COMPLETE: "nihilus_cosplay.jpg" from 192.168.50.9:34528 in 8.9s (3.3 MB/s) — added to manifest
-18:59:47.322105 [serve] ACCEPTED 192.168.50.9:53942: PULL_REQ for "nihilus_cosplay.jpg"
-18:59:47.334246 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-18:59:47.334764 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-18:59:51.970959 [sender] linger complete, session finished
-18:59:51.971024 [serve] TRANSFER COMPLETE: "nihilus_cosplay.jpg" to 192.168.50.9:53942 in 4.649s (6.3 MB/s)
+20:25:36.820271 [serve] ACCEPTED 192.168.50.9:37031: PUSH_REQ for "big.bin"
+20:26:02.054842 [serve] PUSH FAILED: "big.bin" from 192.168.50.9:37031 — inactivity timeout: no packets for 5s

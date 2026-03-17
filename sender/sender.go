@@ -266,7 +266,10 @@ func (s *Sender) Send() error {
 	}
 	teardownCh := make(chan teardownMsg, 1)
 
+	var hbWg sync.WaitGroup
+	hbWg.Add(1)
 	go func() {
+		defer hbWg.Done()
 		hbBuf := make([]byte, protocol.MTUHardCap)
 		for {
 			var n int
@@ -500,11 +503,26 @@ func (s *Sender) Send() error {
 	select {
 	case msg := <-teardownCh:
 		close(doneCh)
+		hbWg.Wait()
 		return s.handleTeardown(conn, writeFn, recvChan, sessionID, msg.pktType, msg.payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
 	default:
 	}
 
 	close(doneCh)
+	// Wait for the heartbeat goroutine to exit before we take exclusive
+	// ownership of the socket (or recvChan). Without this wait, both this
+	// goroutine and the heartbeat goroutine race on conn.Read — heartbeats
+	// with NACKs get stolen and queued into nackPending (which is never
+	// drained again), and TRANSFER_COMPLETE can be stolen into teardownCh
+	// while the teardown loop below is blocked in conn.Read.
+	hbWg.Wait()
+
+	// The goroutine may have forwarded TRANSFER_COMPLETE just before exiting.
+	select {
+	case msg := <-teardownCh:
+		return s.handleTeardown(conn, writeFn, recvChan, sessionID, msg.pktType, msg.payload, sendBuf, sentChunks, &sentMu, totalChunks, dbgLog)
+	default:
+	}
 
 	nackMu.Lock()
 	pendingNACKs := make([]uint64, 0, len(nackPending))
