@@ -645,7 +645,20 @@ func (s *Sender) Send() error {
 					dbgLog.Printf("[sender] teardown: retransmitting %d/%d NACKed packets (%d on cooldown)",
 						len(toRetransmit), len(nacksToProcess), len(nacksToProcess)-len(toRetransmit))
 					s.nacksSent.Add(int64(len(toRetransmit)))
-					retransmitNACKs(writeFn, sessionID, toRetransmit, sendBuf, sentChunks, &sentMu, totalChunks, bucket)
+					// Micro-burst prevention: send in batches of 10 with a 2ms
+					// sleep between batches. At high transfer speeds the token
+					// bucket's burst allowance is large enough to fire all 166
+					// retransmits simultaneously, flooding the OS socket buffer
+					// and the serve daemon's 256-slot receive channel.
+					const teardownBatch = 10
+					for i := 0; i < len(toRetransmit); i += teardownBatch {
+						end := i + teardownBatch
+						if end > len(toRetransmit) {
+							end = len(toRetransmit)
+						}
+						retransmitNACKs(writeFn, sessionID, toRetransmit[i:end], sendBuf, sentChunks, &sentMu, totalChunks, bucket)
+						time.Sleep(2 * time.Millisecond)
+					}
 				}
 			}
 			// Reset deadline — still making progress
