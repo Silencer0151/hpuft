@@ -193,23 +193,29 @@ func TestDecreaseUsesDeliveryRate(t *testing.T) {
 func TestFlowControlCeiling(t *testing.T) {
 	tb := NewTokenBucket(1_000_000, defaultCC())
 
-	// Zero loss but storage is slow — delivery rate caps us via decrease
+	// Zero loss — rate probes up; StorageFlushRate is intentionally ignored.
 	hb := &protocol.HeartbeatPayload{
 		NetworkDeliveryRate: 50_000_000,
-		StorageFlushRate:    500_000, // disk bottleneck at 0.5 MB/s
+		StorageFlushRate:    500_000, // slow disk: irrelevant to CC
 		LossRate:            0,
 	}
 
-	tb.OnHeartbeat(hb) // increase to 1.25M (zero loss)
+	tb.OnHeartbeat(hb) // increase: 1.25 MB/s, smoothedRate seeded at 50 MB/s
 
-	// Force a decrease with high loss and low storage
+	// Two consecutive high-loss heartbeats trigger a decrease to smoothedRate × 0.85.
 	hb.LossRate = 800
-	tb.OnHeartbeat(hb) // streak=1
-	tb.OnHeartbeat(hb) // streak=2, decrease to smoothed(min(50M, 500K)) × 0.85
+	tb.OnHeartbeat(hb) // streak=1, hold
+	tb.OnHeartbeat(hb) // streak=2, decrease → smoothed(50 MB/s) × 0.85 ≈ 42.5 MB/s
 
 	rate := tb.Rate()
-	if rate > 1_000_000 {
-		t.Fatalf("storage ceiling should limit rate: got %.2f MB/s", rate/1e6)
+	// Rate should have dropped to ~85% of the measured delivery ceiling, not
+	// remain at the probed-up value. It will be far above the old storage
+	// ceiling (0.5 MB/s) because disk rate no longer drives CC decisions.
+	const wantBelow = 45_000_000.0
+	const wantAbove = 30_000_000.0
+	if rate > wantBelow || rate < wantAbove {
+		t.Fatalf("rate after decrease: got %.2f MB/s, want %.1f–%.1f MB/s",
+			rate/1e6, wantAbove/1e6, wantBelow/1e6)
 	}
 }
 

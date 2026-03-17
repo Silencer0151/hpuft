@@ -1,25 +1,24 @@
 derrybm@killdozer:~/projects/hpuft$ sudo tc qdisc add dev eno1 root netem delay 50ms 10ms loss 0.1%
-derrybm@killdozer:~/projects/hpuft$ dd if=/dev/urandom of=received/big.bin bs=1M count=1024
-1024+0 records in
-1024+0 records out
-1073741824 bytes (1.1 GB, 1.0 GiB) copied, 2.72561 s, 394 MB/s
 derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/big.bin -addr 192.168.50.82:9001
 [push] Target: big.bin (1 GB)
 [push] Pushing to 192.168.50.82:9001...
 [push] PUSH_ACCEPT received. Starting transfer...
-2026/03/16 20:25:37 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-2026/03/16 20:25:37 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-[====================] 1 GB 100% | 216.8 MB/s | NACKs: 00 | NACKs: 0
+2026/03/16 20:53:34 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+2026/03/16 20:53:34 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+[>                   ] 1 GB   1% |   0.3 MB/s | ETA: 1:11:08 | NACKs: 0^C
+derrybm@killdozer:~/projects/hpuft$ time
 
-[push] FAILED: timeout waiting for TRANSFER_COMPLETE
+real    0m0.000s
+user    0m0.000s
+sys     0m0.000s
+derrybm@killdozer:~/projects/hpuft$ date
+Mon Mar 16 08:54:32 PM EDT 2026
 derrybm@killdozer:~/projects/hpuft$ sudo tc qdisc del dev eno1 root
-derrybm@killdozer:~/projects/hpuft$
 
 
 
-SERVER:
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\
 [serve] Online. Listening on [::]:9001
 [serve] Manifest loaded: 8 authorized files found in .\received\
-20:25:36.820271 [serve] ACCEPTED 192.168.50.9:37031: PUSH_REQ for "big.bin"
-20:26:02.054842 [serve] PUSH FAILED: "big.bin" from 192.168.50.9:37031 — inactivity timeout: no packets for 5s
+20:53:33.323408 [serve] ACCEPTED 192.168.50.9:40567: PUSH_REQ for "big.bin"
+20:54:25.593115 [serve] PUSH FAILED: "big.bin" from 192.168.50.9:40567 — inactivity timeout: no packets for 5s
