@@ -408,9 +408,14 @@ func (s *Sender) Send() error {
 			}
 		}
 
-		// --- Backpressure: block if window is full ---
-		for sw.IsFull(seqNum) {
+		// --- Backpressure: if window is full, yield and loop back to NACK
+		// processing rather than spinning here. This is critical: if a lost
+		// packet stalls HighestContiguous at 0, the window fills and HC never
+		// advances unless we keep retransmitting the NACKed sequences. A bare
+		// sleep here would starve nackPending and cause receiver inactivity.
+		if sw.IsFull(seqNum) {
 			time.Sleep(time.Millisecond)
+			continue
 		}
 
 		// --- Send next data packet ---
