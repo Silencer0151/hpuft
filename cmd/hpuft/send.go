@@ -83,9 +83,21 @@ func runSend(args []string) {
 			os.Exit(1)
 		}
 		elapsed := time.Since(start)
-		mbps := float64(fileInfo.Size()) / elapsed.Seconds() / 1e6
-		fmt.Fprintf(os.Stdout, "[send] TRANSFER COMPLETE: %s in %s (%.1f MB/s)\n",
-			filepath.Base(cfg.FilePath), elapsed.Round(time.Millisecond), mbps)
+		p := s.Progress()
+		dataElapsed := elapsed
+		repairDur := time.Duration(0)
+		if p.RepairStartNs > 0 && p.StartNs > 0 {
+			dataElapsed = time.Duration(p.RepairStartNs - p.StartNs)
+			repairDur = elapsed - dataElapsed
+		}
+		mbps := float64(fileInfo.Size()) / dataElapsed.Seconds() / 1e6
+		if repairDur > 0 {
+			fmt.Fprintf(os.Stdout, "[send] TRANSFER COMPLETE: %s in %s (%.1f MB/s data, +%s repair)\n",
+				filepath.Base(cfg.FilePath), elapsed.Round(time.Millisecond), mbps, repairDur.Round(time.Millisecond))
+		} else {
+			fmt.Fprintf(os.Stdout, "[send] TRANSFER COMPLETE: %s in %s (%.1f MB/s)\n",
+				filepath.Base(cfg.FilePath), elapsed.Round(time.Millisecond), mbps)
+		}
 	} else {
 		if err := s.Send(); err != nil {
 			fmt.Fprintf(os.Stderr, "[send] FAILED: %v\n", err)
