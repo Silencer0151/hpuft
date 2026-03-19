@@ -138,7 +138,7 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 	// Create the forwarding channel before the goroutine starts.
 	// The main loop won't forward packets until busy==1, which was set above
 	// in this same goroutine (the main read loop), so no race.
-	ch := make(chan []byte, 256)
+	ch := make(chan []byte, 4096)
 	activeMu.Lock()
 	*activeChan = ch
 	activeMu.Unlock()
@@ -272,7 +272,7 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		return
 	}
 
-	ch := make(chan []byte, 256)
+	ch := make(chan []byte, 4096)
 	activeMu.Lock()
 	*activeChan = ch
 	activeMu.Unlock()
