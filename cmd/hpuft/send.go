@@ -28,10 +28,11 @@ func runSend(args []string) {
 	fs.BoolVar(&noDelay, "nodelay", false, "send as fast as possible (disables CC)")
 	fs.BoolVar(&noCC, "nocc", false, "disable congestion control (use fixed rate)")
 	fs.BoolVar(&debug, "debug", false, "stream raw protocol and CC telemetry to stderr")
+	fs.BoolVar(&cfg.Encrypt, "encrypt", false, "enable AES-128-GCM per-packet encryption")
 	fs.Parse(args)
 
 	if cfg.FilePath == "" {
-		fmt.Fprintln(os.Stderr, "usage: hpuft send -file <path> [-addr host:port] [-rate MB/s] [-nodelay] [-nocc] [-debug]")
+		fmt.Fprintln(os.Stderr, "usage: hpuft send -file <path> [-addr host:port] [-rate MB/s] [-nodelay] [-nocc] [-debug] [-encrypt]")
 		os.Exit(1)
 	}
 

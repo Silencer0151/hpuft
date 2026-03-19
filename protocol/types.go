@@ -17,7 +17,7 @@ const (
 	PacketPullReq          PacketType = 0x07
 	PacketPushReq          PacketType = 0x08
 	PacketPushAccept       PacketType = 0x09
-	PacketPullAccept       PacketType = 0x0A
+	PacketSessionAccept    PacketType = 0x0A
 )
 
 func (p PacketType) String() string {
@@ -42,8 +42,8 @@ func (p PacketType) String() string {
 		return "PUSH_REQ"
 	case PacketPushAccept:
 		return "PUSH_ACCEPT"
-	case PacketPullAccept:
-		return "PULL_ACCEPT"
+	case PacketSessionAccept:
+		return "SESSION_ACCEPT"
 	default:
 		return "UNKNOWN"
 	}
@@ -56,6 +56,7 @@ type Flag uint8
 const (
 	FlagEndOfFile        Flag = 0x01
 	FlagCalibrationBurst Flag = 0x02
+	FlagEncrypted        Flag = 0x04
 )
 
 // --- Session Reject Reason Codes ---
@@ -67,7 +68,8 @@ const (
 	RejectHashMismatch       RejectReason = 0x02
 	RejectServerBusy         RejectReason = 0x03
 	RejectFileNotFound       RejectReason = 0x04
-	RejectFileExists         RejectReason = 0x05
+	RejectFileExists                RejectReason = 0x05
+	RejectEncryptionUnsupported     RejectReason = 0x06
 )
 
 func (r RejectReason) String() string {
@@ -82,6 +84,8 @@ func (r RejectReason) String() string {
 		return "FILE_NOT_FOUND"
 	case RejectFileExists:
 		return "FILE_EXISTS"
+	case RejectEncryptionUnsupported:
+		return "ENCRYPTION_UNSUPPORTED"
 	default:
 		return "UNKNOWN"
 	}
@@ -134,10 +138,12 @@ type Packet struct {
 
 // SessionReqPayload is the structured payload carried inside a SESSION_REQ packet.
 type SessionReqPayload struct {
-	FileSize    uint64 // total file size in bytes
-	Checksum    uint64 // xxHash64 of the complete file
-	InitialRate uint32 // bytes/sec, 0 = use calibration mode
-	FileName    string // null-terminated on the wire
+	FileSize    uint64   // total file size in bytes
+	Checksum    uint64   // xxHash64 of the complete file
+	InitialRate uint32   // bytes/sec, 0 = use calibration mode
+	PubKey      [32]byte // X25519 ephemeral public key; only included on the wire when Encrypted=true
+	Encrypted   bool     // if true, PubKey is written/expected in the wire format
+	FileName    string   // null-terminated on the wire
 }
 
 // --- Heartbeat Payload ---
