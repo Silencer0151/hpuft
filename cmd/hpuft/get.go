@@ -150,15 +150,13 @@ func runGet(args []string) {
 	}
 
 	if !*debug {
-		done := make(chan struct{})
-		go RunRecvProgress(r, done)
 		start := time.Now()
-		err = r.Run()
-		close(done)
-		time.Sleep(20 * time.Millisecond)
+		errCh := make(chan error, 1)
+		go func() { errCh <- r.Run() }()
+		err = RunRecvTUI(r, *fileName, *serveAddr, errCh)
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\n[get] FAILED: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[get] FAILED: %v\n", err)
 			os.Exit(1)
 		}
 		elapsed := time.Since(start)

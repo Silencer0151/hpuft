@@ -72,15 +72,13 @@ func runSend(args []string) {
 	s := sender.New(cfg)
 
 	if !debug {
-		done := make(chan struct{})
-		go RunSendProgress(s, done)
 		start := time.Now()
-		err = s.Send()
-		close(done)
-		time.Sleep(20 * time.Millisecond) // let progress bar goroutine flush final line
+		errCh := make(chan error, 1)
+		go func() { errCh <- s.Send() }()
+		err = RunSendTUI(s, filepath.Base(cfg.FilePath), cfg.RemoteAddr, errCh)
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\n[send] FAILED: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[send] FAILED: %v\n", err)
 			os.Exit(1)
 		}
 		elapsed := time.Since(start)
