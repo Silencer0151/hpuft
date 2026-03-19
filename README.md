@@ -204,7 +204,7 @@ hpuft sends data over UDP with a custom reliability layer rather than TCP.
 | GbE LAN (clean, unencrypted) — 7 GB | ~87 MB/s (CC reaches ceiling after longer ramp) |
 | GbE LAN (AES-128-GCM encrypted) — 579 MB | ~49 MB/s |
 | GbE LAN (AES-128-GCM encrypted) — 1 GB push | ~69 MB/s |
-| WAN simulation (50 ms RTT, 0.1% loss, `tc netem`) | transfer completes reliably; FEC absorbs drops, CC holds near ceiling |
+| WAN simulation (50 ms RTT, 0.1% loss, `tc netem`) | ~ 40M B/s transfer completes reliably; FEC absorbs drops, CC holds near ceiling |
 | FTP/TCP (50 ms RTT, 0.1% loss) | ~1.2 MB/s (AIMD halves window on every drop) |
 
 The 1 GB LAN figure is lower than the 7 GB figure because the congestion controller spends a larger fraction of the transfer in the initial probe phase. Longer transfers give the CC more time to find and hold the link ceiling.
