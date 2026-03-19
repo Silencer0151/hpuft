@@ -498,6 +498,22 @@ func (s *Sender) Send() error {
 	var seqNum uint64
 	startTime := time.Now()
 
+	// Diagnostic: track time spent stalled on full sliding window.
+	var windowStallNs atomic.Int64
+	var windowStallCount atomic.Int64
+	var pktsSentSinceLog atomic.Int64
+	diagTicker := time.NewTicker(time.Second)
+	defer diagTicker.Stop()
+	go func() {
+		for range diagTicker.C {
+			stallNs := windowStallNs.Swap(0)
+			stallCnt := windowStallCount.Swap(0)
+			pkts := pktsSentSinceLog.Swap(0)
+			dbgLog.Printf("[diag] window_stall: %dms in %d sleeps | new_pkts_sent: %d | seqNum=%d",
+				stallNs/1e6, stallCnt, pkts, seqNum)
+		}
+	}()
+
 	for seqNum < totalChunks {
 		const maxNACKsPerIteration = 3
 		nackMu.Lock()
@@ -554,6 +570,8 @@ func (s *Sender) Send() error {
 		// advances unless we keep retransmitting the NACKed sequences. A bare
 		// sleep here would starve nackPending and cause receiver inactivity.
 		if sw.IsFull(seqNum) {
+			windowStallNs.Add(int64(time.Millisecond))
+			windowStallCount.Add(1)
 			time.Sleep(time.Millisecond)
 			continue
 		}
@@ -612,6 +630,7 @@ func (s *Sender) Send() error {
 		}
 
 		seqNum++
+		pktsSentSinceLog.Add(1)
 
 		if calibration != nil && calibration.Pace() {
 			// calibration handled the pacing
