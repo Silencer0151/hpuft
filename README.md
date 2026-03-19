@@ -2,7 +2,7 @@
 
 High-Performance UDP File Transfer — a loss-driven, FEC-protected UDP protocol designed for maximum throughput on both LAN and long-fat networks.
 
-> **Protocol spec:** [UDP_FILE_TRANSFER_SPEC.html](UDP_FILE_TRANSFER_SPEC.html) (v4.0)
+> **Protocol spec:** [UDP_FILE_TRANSFER_SPEC.html](UDP_FILE_TRANSFER_SPEC.html) (v5.0)
 
 ## Installation
 
@@ -32,7 +32,7 @@ go build -o hpuft ./cmd/hpuft
 
 ### `send` — push a file to a waiting receiver
 ```bash
-hpuft send -file <path> [-addr host:port] [-rate MB/s] [-delay us] [-nodelay] [-nocc] [-debug]
+hpuft send -file <path> [-addr host:port] [-rate MB/s] [-delay us] [-nodelay] [-nocc] [-encrypt] [-debug]
 
   -file     path to the file to send (required)
   -addr     receiver address (default: 127.0.0.1:9000)
@@ -40,15 +40,17 @@ hpuft send -file <path> [-addr host:port] [-rate MB/s] [-delay us] [-nodelay] [-
   -delay    fixed inter-packet delay in microseconds (disables CC)
   -nodelay  send as fast as possible, no pacing (disables CC)
   -nocc     disable congestion control, use fixed rate
+  -encrypt  enable AES-128-GCM per-packet encryption
   -debug    stream raw protocol and CC telemetry to stderr
 ```
 
 ### `recv` — listen for an incoming push transfer
 ```bash
-hpuft recv [-listen :9000] [-out ./output] [-debug]
+hpuft recv [-listen :9000] [-out ./output] [-encrypt] [-debug]
 
   -listen   UDP address to listen on (default: :9000)
   -out      directory to write received files (default: .)
+  -encrypt  enable AES-128-GCM per-packet encryption
   -debug    stream raw protocol telemetry to stderr
 ```
 
@@ -71,12 +73,13 @@ traffic flows through this single port. The NAT hole punched by the initial
 
 ### `get` — pull a file from a serve daemon (NAT-friendly)
 ```bash
-hpuft get -file <name> [-addr host:9001] [-out .] [-debug]
+hpuft get -file <name> [-addr host:9001] [-out .] [-encrypt] [-debug]
 
-  -file    name of the file to request (required)
-  -addr    address of the serve daemon (default: 127.0.0.1:9001)
-  -out     directory to write the received file (default: .)
-  -debug   stream raw protocol telemetry to stderr
+  -file     name of the file to request (required)
+  -addr     address of the serve daemon (default: 127.0.0.1:9001)
+  -out      directory to write the received file (default: .)
+  -encrypt  enable AES-128-GCM per-packet encryption
+  -debug    stream raw protocol telemetry to stderr
 ```
 
 The `get` command punches a NAT hole by sending a `PULL_REQ` to the serve
@@ -85,11 +88,12 @@ the open hole — no port forwarding required on the client side.
 
 ### `push` — push a file to a serve daemon
 ```bash
-hpuft push -file <path> [-addr host:9001] [-debug]
+hpuft push -file <path> [-addr host:9001] [-encrypt] [-debug]
 
-  -file   path to the file to push (required)
-  -addr   address of the serve daemon (default: 127.0.0.1:9001)
-  -debug  stream raw protocol telemetry to stderr
+  -file     path to the file to push (required)
+  -addr     address of the serve daemon (default: 127.0.0.1:9001)
+  -encrypt  enable AES-128-GCM per-packet encryption
+  -debug    stream raw protocol telemetry to stderr
 ```
 
 The `push` command deposits a file into the serve daemon's directory.
@@ -152,6 +156,15 @@ hpuft push -file ./upload.bin -addr server-ip:9001
 hpuft get -file upload.bin -addr server-ip:9001 -out ./downloads
 ```
 
+### Encrypted push/pull
+```bash
+# Both sides must pass -encrypt — unencrypted clients are rejected mid-transfer
+hpuft serve -listen :9001 -dir ~/shared
+
+hpuft push -file ./secret.bin -addr server-ip:9001 -encrypt
+hpuft get -file secret.bin -addr server-ip:9001 -encrypt -out ./downloads
+```
+
 ### Simulated 5% loss test
 ```bash
 hpuft proxy -loss 5 &
@@ -179,14 +192,18 @@ hpuft sends data over UDP with a custom reliability layer rather than TCP.
 
 **Teardown** handles the hard case: if the last packets of the file drop, the receiver's NACK window is empty (it never saw those sequences). The sender detects `HighestContiguous < totalChunks-1` with zero NACKs and proactively injects the missing tail sequences. Retransmits are batched at 10 packets per 2 ms to avoid micro-bursting through OS socket buffers and the serve daemon's channel.
 
+**Encryption** — all four transfer commands accept `-encrypt` to enable AES-128-GCM per-packet encryption (spec §4.5). Both sides generate a fresh X25519 ephemeral keypair per session; the shared secret is derived via HKDF-SHA256 into a 16-byte AES-128 key. For `push`/`get` the key exchange piggybacks on the existing `PUSH_REQ`/`PUSH_ACCEPT` and `PULL_REQ`/`SESSION_REQ` round trips — zero added latency. For direct `send`/`recv` a 1-RTT `SESSION_ACCEPT` message carries the receiver's public key. The 32-byte header is authenticated as AAD but transmitted in cleartext (the receiver needs it for routing); only the payload is encrypted. Private keys are ephemeral and exist only in memory for the duration of the session — perfect forward secrecy with no key management.
+
 **TUI dashboard** — `push` and `get` render a live terminal dashboard (Charmbracelet Bubble Tea) instead of a scrolling log. The dashboard shows throughput, RTT, loss rate, CC phase, cumulative NACKs, and a progress bar. When the main send loop finishes and tail repair begins, the bar switches to `Repairing...` so the user knows the transfer is still making progress rather than stalled.
 
 ### Observed performance
 
 | Scenario | Transfer speed |
 |---|---|
-| GbE LAN (clean) — 1 GB | ~66 MB/s |
-| GbE LAN (clean) — 7 GB | ~87 MB/s (CC reaches ceiling after longer ramp) |
+| GbE LAN (clean, unencrypted) — 1 GB | ~66 MB/s |
+| GbE LAN (clean, unencrypted) — 7 GB | ~87 MB/s (CC reaches ceiling after longer ramp) |
+| GbE LAN (AES-128-GCM encrypted) — 579 MB | ~49 MB/s |
+| GbE LAN (AES-128-GCM encrypted) — 1 GB push | ~69 MB/s |
 | WAN simulation (50 ms RTT, 0.1% loss, `tc netem`) | transfer completes reliably; FEC absorbs drops, CC holds near ceiling |
 | FTP/TCP (50 ms RTT, 0.1% loss) | ~1.2 MB/s (AIMD halves window on every drop) |
 
