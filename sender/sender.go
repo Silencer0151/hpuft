@@ -89,6 +89,11 @@ type SenderProgress struct {
 	RateBPS    float64 // current token-bucket target rate
 	StartNs    int64   // Unix ns when Send() started
 	InRepair   bool    // true once all packets are sent and teardown is recovering drops
+
+	// CC diagnostics — zero-valued if congestion control is disabled.
+	RTT      time.Duration // most recent round-trip time estimate
+	CCPhase  int           // 1 = Multiplicative Probe, 2 = Additive Avoidance
+	LossRate float64       // most recent loss rate as a percentage (e.g. 0.10 = 0.10%)
 }
 
 // Sender manages a file transfer session.
@@ -108,8 +113,14 @@ type Sender struct {
 // Progress returns a live snapshot for the progress bar goroutine.
 func (s *Sender) Progress() SenderProgress {
 	var rate float64
+	var rtt time.Duration
+	var phase int
+	var lossRate float64
 	if s.bucket != nil {
 		rate = s.bucket.Rate()
+		rtt = s.bucket.RTTEstimate()
+		phase = s.bucket.Phase()
+		lossRate = s.bucket.LossRatePercent()
 	}
 	return SenderProgress{
 		BytesSent:  s.bytesSent.Load(),
@@ -118,6 +129,9 @@ func (s *Sender) Progress() SenderProgress {
 		RateBPS:    rate,
 		StartNs:    s.startNs.Load(),
 		InRepair:   s.inRepair.Load() == 1,
+		RTT:        rtt,
+		CCPhase:    phase,
+		LossRate:   lossRate,
 	}
 }
 

@@ -82,6 +82,9 @@ type TokenBucket struct {
 	// Derived from EchoTimestampNs in heartbeats. 0 = unknown.
 	rttEstimateNs int64
 
+	// lastLossRate is the most recent loss percentage (0–100) from heartbeats.
+	lastLossRate float64
+
 	// lastEchoNs is the highest EchoTimestampNs we have used to compute RTT.
 	// We only update rttEstimateNs when a strictly newer echo arrives, so that
 	// a frozen timestamp (echoed repeatedly while the sender is idle honoring
@@ -145,6 +148,24 @@ func (tb *TokenBucket) RTTEstimate() time.Duration {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 	return time.Duration(tb.rttEstimateNs)
+}
+
+// Phase returns 1 (Multiplicative Probe) or 2 (Additive Avoidance).
+func (tb *TokenBucket) Phase() int {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	if tb.inPhase2 {
+		return 2
+	}
+	return 1
+}
+
+// LossRatePercent returns the most recently observed loss rate as a percentage
+// (e.g. 0.10 means 0.10% loss). Returns 0 if no heartbeat has been received.
+func (tb *TokenBucket) LossRatePercent() float64 {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	return tb.lastLossRate
 }
 
 // Pace rate-limits packet sends using a deficit accumulator.
@@ -251,6 +272,7 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 
 	oldRate := tb.rate
 	lossBP := hb.LossRate // basis points: 100 = 1.00%
+	tb.lastLossRate = float64(lossBP) / 100.0
 
 	// Delivery-collapse guard: when the OS socket buffer is overwhelmed, the
 	// receiver drops packets before the application layer sees them. The

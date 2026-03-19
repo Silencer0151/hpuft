@@ -41,15 +41,13 @@ func runRecv(args []string) {
 	}
 
 	if !debug {
-		done := make(chan struct{})
-		go RunRecvProgress(r, done)
 		start := time.Now()
-		err = r.Run()
-		close(done)
-		time.Sleep(20 * time.Millisecond) // let progress bar goroutine flush final line
+		errCh := make(chan error, 1)
+		go func() { errCh <- r.Run() }()
+		err = RunRecvTUI(r, "receiving", cfg.ListenAddr, errCh)
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\n[recv] FAILED: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[recv] FAILED: %v\n", err)
 			os.Exit(1)
 		}
 		p := r.Progress()
