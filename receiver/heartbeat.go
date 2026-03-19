@@ -218,6 +218,16 @@ func (hg *HeartbeatGenerator) sendHeartbeat() {
 			}
 			nacks = hg.buf.MissingInRange(scanStart, scanEnd)
 
+			// Report missing sequences as packet loss so the sender's
+			// congestion controller gets honest loss feedback. After the
+			// reorder protection window, remaining gaps are real losses
+			// (or FEC-uncovered losses), not jitter artifacts. This drives
+			// the CC's loss-based backoff when the sender overshoots the
+			// physical link capacity (e.g., probing above GbE ceiling).
+			if len(nacks) > 0 {
+				hg.RecordLoss(len(nacks))
+			}
+
 			// Cap NACK array to fit in a single packet
 			// Max NACK payload: (MaxPayload - HeartbeatFixedSize) / 8
 			maxNACKs := (protocol.MaxPayload - protocol.HeartbeatFixedSize) / 8
