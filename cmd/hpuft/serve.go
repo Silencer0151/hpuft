@@ -52,6 +52,7 @@ func runServe(args []string) {
 	// Protected by activeMu for safe set/clear across goroutines.
 	var activeMu sync.Mutex
 	var activeChan chan []byte
+	var activeChanDrops atomic.Int64
 
 	rawBuf := make([]byte, protocol.MTUHardCap)
 
@@ -84,6 +85,7 @@ func runServe(args []string) {
 				select {
 				case ch <- raw:
 				default:
+					activeChanDrops.Add(1)
 				}
 			}
 			continue
@@ -98,7 +100,7 @@ func runServe(args []string) {
 		case protocol.PacketPullReq:
 			handlePullReq(conn, clientAddr, &pkt, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan)
 		case protocol.PacketPushReq:
-			handlePushReq(conn, clientAddr, &pkt, *dir, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan)
+			handlePushReq(conn, clientAddr, &pkt, *dir, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan, &activeChanDrops)
 		}
 	}
 }
@@ -192,7 +194,8 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
 	dir string, manifest map[string]string, manifestMu *sync.RWMutex,
 	busy *int32, busyClient *string,
-	activeMu *sync.Mutex, activeChan *chan []byte) {
+	activeMu *sync.Mutex, activeChan *chan []byte,
+	activeChanDrops *atomic.Int64) {
 
 	req, err := protocol.UnmarshalPushReq(pkt.Payload, pkt.Header.Flags&protocol.FlagEncrypted != 0)
 	if err != nil || req.FileName == "" {
@@ -279,11 +282,30 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 	log.Printf("[serve] ACCEPTED %s: PUSH_REQ for %q", clientAddr, safeName)
 
 	go func(safeName, finalPath string, sessionID uint32, clientAddr *net.UDPAddr, encKey *[16]byte, isEncrypted bool) {
+		// Log activeChan drop count every second for diagnostics.
+		dropDone := make(chan struct{})
 		defer func() {
+			close(dropDone)
 			atomic.StoreInt32(busy, 0)
 			activeMu.Lock()
 			*activeChan = nil
 			activeMu.Unlock()
+		}()
+
+		go func() {
+			t := time.NewTicker(time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-dropDone:
+					return
+				case <-t.C:
+					d := activeChanDrops.Swap(0)
+					if d > 0 {
+						log.Printf("[serve/diag] activeChan drops: %d/s (cap=%d)", d, cap(ch))
+					}
+				}
+			}
 		}()
 
 		tmpPath := finalPath + ".tmp"
