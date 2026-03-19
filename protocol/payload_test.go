@@ -50,7 +50,7 @@ func TestSessionReqRoundTrip(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			data := MarshalSessionReq(&tc.payload)
-			got, err := UnmarshalSessionReq(data)
+			got, err := UnmarshalSessionReq(data, tc.payload.Encrypted)
 			if err != nil {
 				t.Fatalf("UnmarshalSessionReq: %v", err)
 			}
@@ -62,7 +62,7 @@ func TestSessionReqRoundTrip(t *testing.T) {
 }
 
 func TestSessionReqTooShort(t *testing.T) {
-	_, err := UnmarshalSessionReq(make([]byte, 10))
+	_, err := UnmarshalSessionReq(make([]byte, 10), false)
 	if err == nil {
 		t.Error("expected error for short payload")
 	}

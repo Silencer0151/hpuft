@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HP-UDP Design Specification v4.0</title>
+    <title>HP-UDP Design Specification v5.0</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -126,7 +126,36 @@
 </head>
 <body>
 
-    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v4.1</span></h1>
+    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v5.0</span></h1>
+
+    <div class="changelog">
+        <strong>Changelog from v4.2 → v5.0 (End-to-End Encryption):</strong>
+        <ul>
+            <li><strong>§4.5 End-to-End Encryption (new section):</strong> Optional AES-128-GCM per-packet encryption with ephemeral X25519 key exchange. Pure ephemeral keys — no persistent key material, perfect forward secrecy. Encryption is negotiated via the <code>Encrypted</code> flag (<code>0x04</code>) in the packet header.</li>
+            <li><strong>§3 PacketType:</strong> Added <code>0x0A SESSION_ACCEPT</code> — carries receiver's ephemeral public key during encrypted handshake.</li>
+            <li><strong>§3 Flags:</strong> Added <code>0x04 = Encrypted</code> flag bit.</li>
+            <li><strong>§4C Handshake:</strong> 0-RTT (unencrypted) / 1-RTT (encrypted). New Step 1.5: <code>SESSION_ACCEPT</code> key exchange. Calibration burst is encrypted in encrypted mode.</li>
+            <li><strong>§4.5A-G:</strong> Full encryption specification — key exchange flow for all modes (send/recv, push, pull), HKDF session key derivation, nonce construction (SessionID + PacketType + UniqueID, not transmitted), encrypt-after-FEC data path, extended payload formats, security properties, performance budget.</li>
+            <li><strong>§11A Reason Codes:</strong> Added <code>0x06 ENCRYPTION_UNSUPPORTED</code>.</li>
+            <li><strong>Appendix A:</strong> Encrypted MaxPayload (1352 bytes), cipher/nonce/key-exchange constants.</li>
+            <li><strong>Backward compatible:</strong> Unencrypted transfers are unchanged. The <code>Encrypted</code> flag defaults to 0.</li>
+        </ul>
+    </div>
+
+    <div class="changelog">
+        <strong>Changelog from v4.1 → v4.2 (C Implementation Readiness):</strong>
+        <ul>
+            <li><strong>§3 Wire Format / Byte Order:</strong> Explicit statement that <em>all</em> multi-byte fields — header, heartbeat payload, SESSION_REQ payload, PUSH_REQ payload — use big-endian (network byte order). Previously only the header stated this; payload byte order was implicit from Go's <code>binary.BigEndian</code>.</li>
+            <li><strong>§3 Header / SenderTimestampNs:</strong> Language-neutral wording. References to <code>time.Now().UnixNano()</code> replaced with "monotonic nanosecond timestamp" and platform guidance for C (<code>clock_gettime(CLOCK_MONOTONIC)</code>) and Go (<code>time.Now().UnixNano()</code>).</li>
+            <li><strong>§5A / Receiver Disk I/O:</strong> C implementation note added: <code>io_uring</code> submission queue replaces the Go async flush goroutine. Single-threaded <code>epoll</code> event loop architecture eliminates the socket ownership race described in Lesson F.</li>
+            <li><strong>§6B / Heartbeat payload byte order:</strong> Explicit network-byte-order requirement added to the Heartbeat payload table preamble. C implementations must <code>htonl</code>/<code>ntohl</code> every field.</li>
+            <li><strong>§6D / Deficit Accumulator:</strong> Expanded C-specific pacing guidance: <code>clock_gettime(CLOCK_MONOTONIC)</code> for elapsed time, <code>clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)</code> for sleeps, optional <code>SCHED_FIFO</code> for sub-100µs precision.</li>
+            <li><strong>§8A / Teardown socket ownership:</strong> Architecture-neutral rewrite. Go: stop heartbeat goroutine. C (single-threaded epoll): no action needed — one reader by construction.</li>
+            <li><strong>§10.H.3 / Sliding Window slot count:</strong> Recommended power-of-2 slot count (65,536) for C implementations. Bitmask index wrapping (<code>idx &amp; 0xFFFF</code>) replaces modulo, eliminating a division per packet on the hot path.</li>
+            <li><strong>§11C / Filename sanitization:</strong> Language-neutral: manual scan for <code>/</code> and <code>\</code> to extract base name, replacing Go-specific <code>filepath.Base()</code>.</li>
+            <li><strong>§11D / Manifest locking:</strong> Language-neutral: read-write lock (C: <code>pthread_rwlock_t</code>, Go: <code>sync.RWMutex</code>). Ephemeral socket bind: C uses <code>bind()</code> with port 0.</li>
+        </ul>
+    </div>
 
     <div class="changelog">
         <strong>Changelog from v4.0 → v4.1 (Sender Sliding Window):</strong>
@@ -197,12 +226,12 @@
     </ul>
 
     <blockquote>
-        <strong>Note on Security Scope:</strong> HP-UDP v4.0 intentionally omits authentication, encryption, and anti-spoofing mechanisms. The design priority is to prove a bulletproof reliable file transfer mechanism over UDP. Security layers (session tokens, HMAC headers, DTLS integration) are deferred to a future revision once the core transfer engine is validated.
+        <strong>Note on Security Scope:</strong> HP-UDP v5.0 adds optional end-to-end encryption via ephemeral X25519 key exchange and AES-128-GCM per-packet encryption (§4.5), providing confidentiality, integrity, and perfect forward secrecy. Encryption is backward-compatible: unencrypted transfers still work when the <code>Encrypted</code> flag is unset. HP-UDP intentionally omits <em>authentication</em> — it does not verify the identity of the remote endpoint. In the target deployment environment (managed networks with known infrastructure behind SDNs), endpoint identity is established at the network layer. Optional certificate or pre-shared-key authentication may be added in a future revision as a separate concern.
     </blockquote>
 
     <h2>3. Packet Wire Format (Custom Header)</h2>
     <p>The protocol utilizes a tightly packed, fixed-width <strong>32-byte</strong> binary header for every datagram. The header is naturally aligned for 64-bit systems (four 8-byte words). The hard MTU cap is <strong>1400 bytes total</strong> (header + payload), yielding a maximum payload of <strong>1368 bytes</strong> (<code>MTUHardCap(1400) − HeaderSize(32)</code>). This ensures safe passage within standard 1500-byte ethernet MTUs without IP-level fragmentation.</p>
-    <p><strong>Byte order:</strong> All multi-byte fields are in <strong>big-endian (network byte order)</strong>. C implementations must use <code>htonl</code>/<code>ntohl</code> (32-bit), <code>htonll</code>/<code>ntohll</code> (64-bit), or equivalent for all header and payload fields.</p>
+    <p><strong>Byte order:</strong> <strong>All multi-byte fields in the entire protocol</strong> — header fields, heartbeat payload fields (§6B), SESSION_REQ payload fields (§4C), PUSH_REQ/PUSH_ACCEPT payload fields (§11C), and NACK arrays — are in <strong>big-endian (network byte order)</strong>. C implementations must use <code>htonl</code>/<code>ntohl</code> (32-bit) and <code>htonll</code>/<code>ntohll</code> (64-bit) or equivalent for every multi-byte field on the wire. Go implementations use <code>binary.BigEndian</code> methods. This applies uniformly; there are no little-endian fields anywhere in the protocol.</p>
 
     <table>
         <thead>
@@ -228,7 +257,8 @@
                     <code>0x06</code> ACK_CLOSE,
                     <code>0x07</code> PULL_REQ,
                     <code>0x08</code> PUSH_REQ,
-                    <code>0x09</code> PUSH_ACCEPT.
+                    <code>0x09</code> PUSH_ACCEPT,
+                    <code>0x0A</code> SESSION_ACCEPT.
                 </td>
             </tr>
             <tr>
@@ -259,13 +289,13 @@
                 <td><code>0x17</code></td>
                 <td>1 Byte</td>
                 <td><code>Flags</code></td>
-                <td>Bitmask: <code>0x01</code> = End of File, <code>0x02</code> = Calibration Burst.</td>
+                <td>Bitmask: <code>0x01</code> = End of File, <code>0x02</code> = Calibration Burst, <code>0x04</code> = Encrypted (payload is AES-128-GCM ciphertext; see §4.5).</td>
             </tr>
             <tr>
                 <td><code>0x18</code></td>
                 <td>8 Bytes</td>
                 <td><code>SenderTimestampNs</code></td>
-                <td>The sender's <code>time.Now().UnixNano()</code> at the moment each DATA or PARITY packet is built. Non-data control packets leave this field zero. The receiver echoes this value verbatim as <code>EchoTimestampNs</code> in the Heartbeat payload; the sender computes <code>RTT = time.Now().UnixNano() − EchoTimestampNs</code> using only its own clock (§6B).</td>
+                <td>The sender's monotonic clock timestamp in nanoseconds at the moment each DATA or PARITY packet is built (C: <code>clock_gettime(CLOCK_MONOTONIC)</code> converted to nanoseconds; Go: <code>time.Now().UnixNano()</code>). Non-data control packets leave this field zero. The receiver echoes this value verbatim as <code>EchoTimestampNs</code> in the Heartbeat payload; the sender computes <code>RTT = now_ns − EchoTimestampNs</code> using only its own clock (§6B).</td>
             </tr>
             <tr>
                 <td><code>0x20</code></td>
@@ -281,7 +311,7 @@
     <p>To eliminate latency before data transmission begins, the protocol uses a Zero Round-Trip Time (0-RTT) handshake with a wire-speed calibration burst to probe link capacity.</p>
 
     <h3>A. SessionID Generation</h3>
-    <p>The <strong>client</strong> generates the SessionID as a cryptographically random 32-bit integer (e.g., via <code>/dev/urandom</code> or <code>crypto/rand</code>). This keeps the handshake 0-RTT since no server round-trip is required for ID assignment.</p>
+    <p>The <strong>client</strong> generates the SessionID as a cryptographically random 32-bit integer (C: <code>getrandom()</code> or <code>/dev/urandom</code>; Go: <code>crypto/rand</code>). This keeps the handshake 0-RTT since no server round-trip is required for ID assignment.</p>
     <ul>
         <li><strong>Collision Handling:</strong> The server maintains a set of active SessionIDs. If an incoming <code>SESSION_REQ</code> carries a SessionID that is already in use, the server responds with a <code>SESSION_REJECT</code> (Type <code>0x04</code>) containing a reason code. The client generates a new random SessionID and retransmits the <code>SESSION_REQ</code>. At typical concurrency levels (hundreds of concurrent transfers), 32-bit random IDs yield negligible collision probability (~1 in 10 million at 200 concurrent sessions).</li>
         <li><strong>Stale Session Protection:</strong> SessionIDs are held in a reserved pool for 10 seconds after session purge to prevent late-arriving packets from a completed transfer from being misattributed to a new session reusing the same ID.</li>
@@ -296,10 +326,12 @@
     <p>If validation fails, the receiver sends a <code>SESSION_REJECT</code> and logs a diagnostic warning.</p>
 
     <h3>C. Handshake Sequence</h3>
+    <p>The handshake is <strong>0-RTT when unencrypted</strong> and <strong>1-RTT when encrypted</strong> (§4.5). Both flows are described below.</p>
     <ul>
-        <li><strong>Step 1 (The Request):</strong> The client transmits <code>Packet 0</code> (<code>SESSION_REQ</code>). The payload contains: <code>FileSize</code> (8 bytes), <code>xxHash64</code> checksum (8 bytes), <code>InitialRate</code> (4 bytes, 0 = use calibration mode), and <code>FileName</code> (variable, null-terminated). The null terminator is appended after the filename bytes and is <strong>not</strong> counted in <code>PayloadLen</code>. Filenames must not contain embedded null bytes. The receiver strips all path separators (<code>/</code> and <code>\</code>) from the filename before writing — C implementations must scan for both characters to be platform-neutral.</li>
-        <li><strong>Step 2 (The Calibration Packet Train):</strong> Without waiting for acknowledgment, the client immediately begins transmitting <code>DATA</code> packets with the <code>Calibration</code> flag (<code>0x02</code>) set. The burst consists of <strong>10 packets</strong> sent back-to-back at wire speed. This small packet train probes the link without flooding router buffers, even on constrained links like satellite. The token bucket is initialized at a default starting rate of 2 MB/s.</li>
-        <li><strong>Step 3 (Dispersion Measurement):</strong> The receiver timestamps the arrival of the first and last calibration-flagged packet. Although 10 packets are sent back-to-back at wire speed, they arrive <em>spread out</em> by the bottleneck link — if 10 packets arrive over 10ms, the bottleneck bandwidth is <code>(10 − 1) × 1368 / 0.010 = 1.23 MB/s</code>. The receiver reports this as the <code>DispersionNs</code> field in the first heartbeat, giving the sender a direct measurement of the path's bottleneck capacity before the first rate adjustment. The sender can use this to seed the CC's peak rate estimate.</li>
+        <li><strong>Step 1 (The Request):</strong> The client transmits <code>Packet 0</code> (<code>SESSION_REQ</code>). The payload contains: <code>FileSize</code> (8 bytes), <code>xxHash64</code> checksum (8 bytes), <code>InitialRate</code> (4 bytes, 0 = use calibration mode), and <code>FileName</code> (variable, null-terminated). <strong>If the Encrypted flag (0x04) is set in the header Flags field,</strong> a 32-byte <code>SenderPublicKey</code> (X25519 ephemeral) is appended after <code>InitialRate</code> and before <code>FileName</code>. The null terminator is appended after the filename bytes and is <strong>not</strong> counted in <code>PayloadLen</code>. Filenames must not contain embedded null bytes. The receiver strips all path separators (<code>/</code> and <code>\</code>) from the filename before writing — C implementations must scan for both characters to be platform-neutral.</li>
+        <li><strong>Step 1.5 (Key Exchange — encrypted mode only):</strong> If the <code>Encrypted</code> flag is set, the receiver responds with a <code>SESSION_ACCEPT</code> (Type <code>0x0A</code>) carrying its own 32-byte ephemeral <code>ReceiverPublicKey</code> as the payload. Both sides compute the shared secret via X25519 and derive the session key via HKDF (§4.5). The sender blocks until <code>SESSION_ACCEPT</code> arrives or the sender inactivity timeout fires. <strong>In unencrypted mode, this step is skipped entirely</strong> — the sender proceeds directly to Step 2.</li>
+        <li><strong>Step 2 (The Calibration Packet Train):</strong> The client begins transmitting <code>DATA</code> packets with the <code>Calibration</code> flag (<code>0x02</code>) set. In unencrypted mode, this starts immediately after Step 1 (0-RTT). In encrypted mode, this starts after receiving <code>SESSION_ACCEPT</code> (1-RTT). The burst consists of <strong>10 packets</strong> sent back-to-back at wire speed. This small packet train probes the link without flooding router buffers, even on constrained links like satellite. The token bucket is initialized at a default starting rate of 2 MB/s. <strong>In encrypted mode, calibration DATA packets are encrypted</strong> — there are no plaintext data packets on the wire once the key exchange completes.</li>
+        <li><strong>Step 3 (Dispersion Measurement):</strong> The receiver timestamps the arrival of the first and last calibration-flagged packet. Although 10 packets are sent back-to-back at wire speed, they arrive <em>spread out</em> by the bottleneck link — if 10 packets arrive over 10ms, the bottleneck bandwidth is <code>(10 − 1) × 1368 / 0.010 = 1.23 MB/s</code> (or <code>(10 − 1) × 1352 / 0.010</code> in encrypted mode). The receiver reports this as the <code>DispersionNs</code> field in the first heartbeat, giving the sender a direct measurement of the path's bottleneck capacity before the first rate adjustment. The sender can use this to seed the CC's peak rate estimate.</li>
         <li><strong>Step 4 (The Alignment):</strong> The server parses the request, validates the payload (§4B), allocates the memory ring buffer, and begins accepting incoming data. If the server cannot allocate resources in time, initial calibration packets are dropped — these will be detected and recovered via the standard Heartbeat/NACK mechanism (§6).</li>
         <li><strong>Step 5 (Steady State):</strong> Upon receiving the first Heartbeat response (§6), the sender transitions out of calibration mode. It clears the <code>Calibration</code> flag. If the heartbeat includes a valid <code>DispersionNs</code>, the sender uses the derived bandwidth as the initial <code>peakRate</code> estimate. The loss-driven congestion controller (§6) governs the sending rate from this point forward.</li>
     </ul>
@@ -311,6 +343,186 @@
         <strong>Design History:</strong> v2.0 used 50 packets at 1ms spacing (~1.38 MB/s probe). v3.0 changed to 100 packets at wire speed. Both had problems: the 1ms spacing made LAN ramp-up take too long, while 100 wire-speed packets (140 KB) instantly filled router buffers on Starlink and poisoned the initial peakRate measurement. The v3.1 packet train (10 packets) is small enough to avoid buffer overflow on any reasonable link, while the dispersion measurement extracts the same capacity information that 100 packets would provide.
     </div>
 
+    <h2>4.5. End-to-End Encryption</h2>
+
+    <p>HP-UDP optionally encrypts all DATA and PARITY payloads using <strong>AES-128-GCM</strong> with ephemeral X25519 key exchange. Encryption is negotiated during the handshake (§4C Step 1.5) and is all-or-nothing for a session — once the <code>Encrypted</code> flag is set, every DATA and PARITY packet in the session is encrypted. Control packets (HEARTBEAT, TRANSFER_COMPLETE, ACK_CLOSE) are <strong>not</strong> encrypted; their payloads contain only protocol metadata, not file content.</p>
+
+    <h3>A. Ephemeral Key Exchange</h3>
+
+    <p>Both sides generate a fresh <strong>X25519 keypair</strong> (32-byte public key, 32-byte private key) at the start of each session. Private keys exist only in memory for the duration of the transfer and are securely zeroed on session teardown. This provides <strong>perfect forward secrecy</strong>: there is no persistent key material that could decrypt recorded traffic after the session ends.</p>
+
+    <p>Key exchange is embedded in the existing handshake flow with no additional round trips beyond the 1-RTT <code>SESSION_ACCEPT</code>:</p>
+
+    <table>
+        <thead>
+            <tr><th>Flow</th><th>Sender Key In</th><th>Receiver Key In</th><th>Added RTTs</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Direct <code>send</code>/<code>recv</code></td>
+                <td><code>SESSION_REQ</code> payload</td>
+                <td><code>SESSION_ACCEPT</code> (0x0A) payload</td>
+                <td>+1 (0-RTT → 1-RTT)</td>
+            </tr>
+            <tr>
+                <td>Serve daemon <code>push</code></td>
+                <td><code>PUSH_REQ</code> payload</td>
+                <td><code>PUSH_ACCEPT</code> payload (extended)</td>
+                <td>+0 (already 1-RTT)</td>
+            </tr>
+            <tr>
+                <td>Serve daemon <code>pull</code></td>
+                <td><code>PULL_REQ</code> payload</td>
+                <td><code>SESSION_REQ</code> payload (server is sender)</td>
+                <td>+0 (already 1-RTT)</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p>For <code>push</code> and <code>pull</code> via the serve daemon, the existing round trip already accommodates the key exchange — no additional latency is introduced. Only the basic <code>send</code>/<code>recv</code> flow gains one round trip.</p>
+
+    <h3>B. Session Key Derivation</h3>
+
+    <p>Both sides independently derive the same symmetric key:</p>
+
+    <pre>shared_secret = X25519(my_private_key, their_public_key)     // 32 bytes
+session_key   = HKDF-SHA256(
+                    ikm  = shared_secret,
+                    salt = SessionID (4 bytes, big-endian),
+                    info = "hp-udp-aes128-v5",
+                    len  = 16                                  // AES-128 key
+                )</pre>
+
+    <p>The <code>SessionID</code> salt ensures that even if the same ephemeral keypair were accidentally reused (implementation bug), different sessions would derive different keys. The <code>info</code> string binds the key to the protocol version and cipher suite, preventing cross-protocol key reuse.</p>
+
+    <p>C implementations: OpenSSL <code>EVP_KDF</code> with <code>OSSL_KDF_NAME_HKDF</code>, or libsodium <code>crypto_kdf_hkdf_sha256_expand</code>. Go: <code>golang.org/x/crypto/hkdf</code>.</p>
+
+    <h3>C. Per-Packet Encryption</h3>
+
+    <p>Each DATA and PARITY packet is encrypted independently using AES-128-GCM. The packet header (32 bytes) is <strong>not encrypted</strong> — it is passed as Additional Authenticated Data (AAD) so that the receiver can route, reorder, and identify packets before decryption. The header is authenticated by the GCM tag, preventing tampering.</p>
+
+    <h4>Wire Layout (Encrypted Packet)</h4>
+    <pre>┌──────────────────┬──────────────────────────┬──────────────┐
+│ Header (32 B)    │ Ciphertext (PayloadLen B) │ GCM Tag (16B)│
+│ cleartext, AAD   │ AES-128-GCM output        │ auth tag     │
+└──────────────────┴──────────────────────────┴──────────────┘
+ Total ≤ 1400 bytes.  PayloadLen ≤ 1352 (= 1368 − 16 tag).</pre>
+
+    <p><code>PayloadLen</code> in the header reflects the <strong>plaintext length</strong> (which equals the ciphertext length in GCM). The receiver reads <code>PayloadLen + 16</code> bytes from the payload area to get ciphertext + tag. <strong>Encrypted MaxPayload = 1352 bytes.</strong> Unencrypted transfers retain MaxPayload = 1368.</p>
+
+    <h4>Nonce Construction (12 Bytes)</h4>
+
+    <p>AES-GCM requires a unique nonce for every packet encrypted under the same key. Nonce reuse completely breaks GCM's confidentiality and authenticity guarantees. The nonce is constructed deterministically from fields already present in the packet header:</p>
+
+    <table>
+        <thead>
+            <tr><th>Bytes</th><th>Field</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>0–3</td>
+                <td><code>SessionID</code> (4 bytes)</td>
+                <td>Scopes nonce space to this transfer. Redundant with HKDF salt but provides defense-in-depth against implementation errors.</td>
+            </tr>
+            <tr>
+                <td>4</td>
+                <td><code>PacketType</code> (1 byte)</td>
+                <td>Domain separator: <code>0x01</code> (DATA) vs <code>0x02</code> (PARITY). Prevents nonce collision between DATA and PARITY packets that may share the same <code>SequenceNum</code> value within a block.</td>
+            </tr>
+            <tr>
+                <td>5–11</td>
+                <td>Packet Unique ID (7 bytes, big-endian)</td>
+                <td><strong>DATA:</strong> lower 56 bits of <code>SequenceNum</code> (globally unique, strictly incrementing). <strong>PARITY:</strong> lower 56 bits of <code>(BlockGroup &lt;&lt; 8) | ParityIndex</code>, where <code>ParityIndex</code> is the zero-based <code>SequenceNum</code> field of the PARITY packet (0..m−1).</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="lesson">
+        <strong>Nonce uniqueness proof:</strong> DATA nonces are unique because SequenceNum is strictly incrementing across the entire transfer and never reused. PARITY nonces are unique because BlockGroup is strictly incrementing and ParityIndex is unique within a block; the compound <code>(BlockGroup &lt;&lt; 8) | ParityIndex</code> is therefore unique across the transfer (up to 256 parity packets per block, which exceeds the maximum of 20). The PacketType byte at offset 4 prevents any DATA nonce from colliding with any PARITY nonce. 56 bits of unique ID supports 2<sup>56</sup> packets per session (~98 exabytes at 1368 bytes/packet), well beyond the 1 TB maximum file size.
+    </div>
+
+    <p>The nonce is <strong>not transmitted on the wire</strong>. Both sides compute it deterministically from the packet header fields. This saves 12 bytes per packet compared to an explicit nonce.</p>
+
+    <h3>D. Encryption Placement in the Data Path</h3>
+
+    <p>Encryption is applied <strong>after FEC encoding</strong>. The FEC encoder operates on plaintext data shards and produces plaintext parity shards. Each shard (DATA or PARITY) is then encrypted independently before transmission. On the receiver side, each packet is decrypted individually, then the plaintext shards are passed to the FEC decoder for reconstruction if needed.</p>
+
+    <pre>Sender:  file → chunk → FEC encode (plaintext) → encrypt each shard → transmit
+Receiver: receive → decrypt each shard → FEC decode (plaintext) → reassemble → disk</pre>
+
+    <p>This ordering means FEC reconstruction operates on plaintext, which is correct — the Reed-Solomon math must see the original data bytes, not ciphertext (encrypting before FEC would require decrypting all <code>k</code> shards before reconstruction, which is the same work, but reconstructed ciphertext shards would then need the original plaintext to verify, creating a circular dependency).</p>
+
+    <h3>E. Payload Format Changes for Key Exchange</h3>
+
+    <p>When the <code>Encrypted</code> flag (<code>0x04</code>) is set, the following payloads are extended with a 32-byte ephemeral public key:</p>
+
+    <table>
+        <thead>
+            <tr><th>Packet Type</th><th>Standard Payload</th><th>Encrypted Payload</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>SESSION_REQ</code></td>
+                <td>FileSize(8B) + Hash(8B) + InitialRate(4B) + FileName(null-term)</td>
+                <td>FileSize(8B) + Hash(8B) + InitialRate(4B) + <strong>PubKey(32B)</strong> + FileName(null-term)</td>
+            </tr>
+            <tr>
+                <td><code>SESSION_ACCEPT</code></td>
+                <td><em>(does not exist in unencrypted mode)</em></td>
+                <td><strong>PubKey(32B)</strong></td>
+            </tr>
+            <tr>
+                <td><code>PUSH_REQ</code></td>
+                <td>FileSize(8B) + FileName(null-term)</td>
+                <td>FileSize(8B) + <strong>PubKey(32B)</strong> + FileName(null-term)</td>
+            </tr>
+            <tr>
+                <td><code>PUSH_ACCEPT</code></td>
+                <td>Port(2B)</td>
+                <td>Port(2B) + <strong>PubKey(32B)</strong></td>
+            </tr>
+            <tr>
+                <td><code>PULL_REQ</code></td>
+                <td>FileName(null-term)</td>
+                <td><strong>PubKey(32B)</strong> + FileName(null-term)</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p>The receiver determines whether to parse the public key by checking the <code>Encrypted</code> flag in the packet header. If a receiver does not support encryption and receives a request with the flag set, it responds with <code>SESSION_REJECT</code> (reason code <code>0x06 = ENCRYPTION_UNSUPPORTED</code>).</p>
+
+    <h3>F. Security Properties and Non-Goals</h3>
+
+    <ul>
+        <li><strong>Confidentiality:</strong> File content is encrypted in transit. An eavesdropper sees only ciphertext and packet headers (which contain sequence numbers and timing, but no file content).</li>
+        <li><strong>Integrity:</strong> GCM's authentication tag detects any modification to the ciphertext or header. A tampered packet fails decryption and is treated as a lost packet (NACKed for retransmission).</li>
+        <li><strong>Forward secrecy:</strong> Ephemeral keys are destroyed after each session. Recorded traffic cannot be decrypted retroactively.</li>
+        <li><strong>Replay protection:</strong> The strictly-incrementing nonce (derived from SequenceNum) combined with the per-session key means replayed packets from a previous session will fail decryption (wrong key), and replayed packets within a session are detected by the existing duplicate-sequence-number check in the receiver's ring buffer.</li>
+        <li><strong>Non-goal — Authentication:</strong> HP-UDP does not authenticate the identity of the remote endpoint. Any party that can reach the port can initiate a key exchange. This is intentional: in the target deployment environment (managed networks with known infrastructure), endpoint identity is established at the network layer, not the application layer. A future revision may add optional pre-shared-key or certificate-based authentication as a separate concern.</li>
+        <li><strong>Non-goal — Metadata privacy:</strong> Packet headers (including file size, sequence numbers, and timing) are visible to observers. Traffic analysis can reveal transfer size and duration. Metadata encryption is out of scope.</li>
+    </ul>
+
+    <h3>G. Performance Budget</h3>
+
+    <table>
+        <thead>
+            <tr><th>Operation</th><th>Throughput (AES-NI)</th><th>Impact at 100 MB/s wire speed</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>AES-128-GCM encrypt</td><td>4–6 GB/s single-thread</td><td>&lt;3% CPU</td></tr>
+            <tr><td>AES-128-GCM decrypt</td><td>4–6 GB/s single-thread</td><td>&lt;3% CPU</td></tr>
+            <tr><td>X25519 scalar multiply</td><td>~50 µs per session</td><td>Negligible</td></tr>
+            <tr><td>HKDF-SHA256 derivation</td><td>~1 µs per session</td><td>Negligible</td></tr>
+            <tr><td>Payload reduction (1368→1352)</td><td>1.2% fewer data bytes per packet</td><td>~1.2% more packets for same file</td></tr>
+        </tbody>
+    </table>
+
+    <p><strong>Net throughput impact: &lt;5%.</strong> AES-NI hardware acceleration is present on every x86 CPU manufactured since ~2010 (Intel Westmere / AMD Bulldozer). C implementations should use OpenSSL's <code>EVP_aes_128_gcm</code> (which auto-detects AES-NI) or a SIMD-accelerated library. Go's <code>crypto/aes</code> + <code>crypto/cipher</code> uses AES-NI on amd64 automatically.</p>
+
+    <div class="lesson">
+        <strong>Implementation Note:</strong> Do not allocate and free GCM cipher contexts per packet. Pre-allocate one context at session start and reuse it across packets, updating only the nonce via <code>EVP_EncryptInit_ex(ctx, NULL, NULL, NULL, nonce)</code> (OpenSSL) or by resetting the <code>cipher.AEAD</code> seal call with a new nonce (Go). Context reuse eliminates ~25,000 allocations/sec at 35 MB/s throughput.
+    </div>
+
     <h2>5. Core Reliability Mechanisms</h2>
 
     <h3>A. Sequence Buffering (Zero-Blocking Receiver)</h3>
@@ -318,7 +530,7 @@
     <ul>
         <li><strong>Memory Architecture:</strong> The receiver allocates a contiguous ring buffer based on the initial <code>FileSize</code>.</li>
         <li><strong>Placement:</strong> As datagrams arrive, their <code>SequenceNum</code> dictates their exact memory offset. Out-of-order packets are slotted into their correct positions seamlessly.</li>
-        <li><strong>Disk I/O:</strong> An asynchronous worker thread reads contiguous blocks from the buffer and writes them to disk using zero-copy optimizations.</li>
+        <li><strong>Disk I/O:</strong> Contiguous blocks are flushed from the buffer to disk asynchronously. Go: a dedicated goroutine reads and writes sequentially. C (Linux): <code>io_uring</code> submission queue — the main <code>epoll</code> event loop submits write SQEs for contiguous regions and reaps completions without blocking the network read path. This eliminates the flush thread entirely.</li>
     </ul>
 
     <h3>B. Adaptive Forward Error Correction (FEC)</h3>
@@ -402,7 +614,7 @@ FinalPayloadSize = FileSize % MaxPayload                 // bytes in last DATA p
     </div>
 
     <h3>B. Heartbeat Payload</h3>
-    <p>The Heartbeat payload contains dual metrics, RTT echo, and a NACK array:</p>
+    <p>The Heartbeat payload contains dual metrics, RTT echo, and a NACK array. All multi-byte fields below are <strong>big-endian (network byte order)</strong> — C implementations must serialize/deserialize with <code>htonl</code>/<code>ntohl</code> and <code>htonll</code>/<code>ntohll</code>:</p>
     <table>
         <thead>
             <tr>
@@ -430,7 +642,7 @@ FinalPayloadSize = FileSize % MaxPayload                 // bytes in last DATA p
             <tr>
                 <td><code>EchoTimestampNs</code></td>
                 <td>8 Bytes</td>
-                <td>The verbatim value of <code>SenderTimestampNs</code> from the most recently received DATA or PARITY packet header. The sender computes <code>RTT = time.Now().UnixNano() − EchoTimestampNs</code> using only its own clock, eliminating cross-machine clock-skew error entirely. If no DATA/PARITY packets were received in the interval, the receiver echoes the previous value unchanged (the sender's frozen-timestamp guard ignores stale repeats — see §6B).</td>
+                <td>The verbatim value of <code>SenderTimestampNs</code> from the most recently received DATA or PARITY packet header. The sender computes <code>RTT = now_ns − EchoTimestampNs</code> using only its own monotonic clock, eliminating cross-machine clock-skew error entirely. If no DATA/PARITY packets were received in the interval, the receiver echoes the previous value unchanged (the sender's frozen-timestamp guard ignores stale repeats — see §6B).</td>
             </tr>
             <tr>
                 <td><code>DispersionNs</code></td>
@@ -458,7 +670,7 @@ FinalPayloadSize = FileSize % MaxPayload                 // bytes in last DATA p
     <h4>RTT Measurement — Same-Clock Design</h4>
     <p>Each DATA and PARITY packet carries a <strong>sender timestamp</strong> in the fixed <code>SenderTimestampNs</code> header field (offset <code>0x18</code>, 8 bytes, unix nanoseconds set at packet-build time). Non-data control packets leave this field zero.</p>
     <p><strong>Problem with prior versions:</strong> v3.x had the receiver set <code>EchoTimestampNs = receiver's time.Now()</code>. The sender then computed <code>RTT = sender_now − receiver_now</code>, a cross-machine clock comparison. A 4-second clock skew between machines produced a 5-second RTT estimate, permanently locking the NACK cooldown above the receiver's 5-second inactivity timeout and killing the transfer.</p>
-    <p><strong>Fix:</strong> The receiver now echoes the sender's own timestamp verbatim: <code>EchoTimestampNs = pkt.Header.SenderTimestampNs</code>. The sender computes <code>RTT = time.Now().UnixNano() − EchoTimestampNs</code> using only its own clock. Cross-clock error is eliminated entirely.</p>
+    <p><strong>Fix:</strong> The receiver now echoes the sender's own timestamp verbatim: <code>EchoTimestampNs = pkt.Header.SenderTimestampNs</code>. The sender computes <code>RTT = now_ns − EchoTimestampNs</code> using only its own monotonic clock. Cross-clock error is eliminated entirely.</p>
 
     <h4>Frozen-Timestamp RTT Guard</h4>
     <p><strong>Problem:</strong> When the sender is idle (honouring a NACK cooldown), the receiver keeps echoing the same stale <code>SenderTimestampNs</code> from the last packet it received. Each heartbeat makes <code>RTT = now − staleTs</code> grow by one heartbeat interval. After enough heartbeats the RTT inflates past 5 seconds, the NACK cooldown exceeds the receiver's inactivity timeout, and the transfer dies.</p>
@@ -539,18 +751,22 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     </div>
 
     <h3>D. Deficit-Accumulator Pacing</h3>
-    <p>The sender must convert the target rate (bytes/sec) into inter-packet timing. The naive approach — computing a per-packet interval and sleeping for that duration — fails in practice because OS timer granularity (~1ms on Windows, ~100µs on Linux) and runtime preemption (Go's asynchronous goroutine preemption at safe points) make sub-millisecond sleeps unreliable.</p>
+    <p>The sender must convert the target rate (bytes/sec) into inter-packet timing. The naive approach — computing a per-packet interval and sleeping for that duration — fails in practice because OS timer granularity (~1ms on Windows, ~100µs on Linux) and language-runtime preemption (e.g., Go's asynchronous goroutine preemption, or signal-based preemption in C with certain threading models) make sub-millisecond sleeps unreliable.</p>
 
     <p>Instead, the sender uses a <strong>deficit accumulator</strong>:</p>
     <ul>
-        <li>A <code>tokens</code> balance (in bytes) accrues credit at the target rate over elapsed wall-clock time.</li>
+        <li>A <code>tokens</code> balance (in bytes) accrues credit at the target rate over elapsed wall-clock time. Elapsed time must use a monotonic clock source (C: <code>clock_gettime(CLOCK_MONOTONIC)</code>; Go: <code>time.Now()</code> which uses the monotonic component internally).</li>
         <li>Each packet send debits <code>tokens</code> by the packet size.</li>
         <li>Tokens are capped at a <strong>2ms burst budget</strong>: <code>max_tokens = rate_bytes_per_sec × 0.002</code>. This prevents idle periods from banking enough credit to burst a large backlog of packets instantly.</li>
-        <li>When the deficit grows large enough that the corresponding sleep would be &ge; 1ms (the minimum reliable OS sleep granularity), the sender calls <code>time.Sleep()</code> and resets the deficit to zero.</li>
+        <li>When the deficit grows large enough that the corresponding sleep would be &ge; 1ms, the sender sleeps and resets the deficit to zero. Go: <code>time.Sleep()</code>. C: <code>clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &amp;target_ts, NULL)</code> — the <code>TIMER_ABSTIME</code> flag prevents drift from accumulating across consecutive sleeps.</li>
         <li>Deficits smaller than 1ms are carried forward — they accumulate across multiple packets and eventually trigger a single coarser sleep.</li>
     </ul>
 
     <p>This produces the correct long-term average rate without relying on sub-millisecond timer precision.</p>
+
+    <div class="lesson">
+        <strong>C Implementation Note:</strong> Linux <code>clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)</code> provides ~50–100µs precision on default kernels, significantly better than Go's ~1ms floor. For sub-100µs precision (useful at 10 GbE+ rates), run the sender thread under <code>SCHED_FIFO</code> real-time scheduling via <code>sched_setscheduler()</code>. The deficit accumulator is still the correct architecture — even with precise timers, per-packet nanosleep at 67,000 pps would burn CPU on syscall overhead. The accumulator batches the timing debt and issues one sleep per deficit threshold crossing, regardless of timer precision.
+    </div>
 
     <div class="lesson">
         <strong>Design Rationale:</strong> The v2.0 spec described a "dynamic Token Bucket" with "microsecond interval between packet dispatches." The Go prototype initially used <code>runtime.Gosched()</code>-based busy-wait spin loops for sub-ms pacing. Go 1.14+ introduces asynchronous goroutine preemption that signals goroutines at safe points — even inside tight loops — causing the spin to overshoot to ~1ms per packet. At 1400 bytes/1ms = 1.4 MB/s, this created an artificial throughput ceiling regardless of the target rate. The deficit accumulator was developed to solve this without platform-specific timer hacks.
@@ -595,7 +811,7 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
 
     <h3>A. Normal Teardown Sequence</h3>
     <ul>
-        <li><strong>The EOF Signal:</strong> The sender sets the <code>EndOfFile</code> flag (<code>0x01</code>) on the final data packet and the final parity packet of the tail block. It stops reading new data but keeps the socket open, listening for Heartbeats. The sender's heartbeat listener goroutine is stopped before entering teardown to prevent socket read contention.</li>
+        <li><strong>The EOF Signal:</strong> The sender sets the <code>EndOfFile</code> flag (<code>0x01</code>) on the final data packet and the final parity packet of the tail block. It stops reading new data but keeps the socket open, listening for Heartbeats. <strong>Socket ownership must be exclusive before entering teardown:</strong> Go implementations must stop the heartbeat listener goroutine to prevent it from consuming packets the teardown loop needs (see Lesson F). C implementations using a single-threaded <code>epoll</code> event loop have exclusive socket access by construction — no action is needed.</li>
         <li><strong>The Verification (Pipelined Hashing):</strong> The receiver continuously updates a streaming <code>xxHash64</code> as contiguous blocks are flushed from the ring buffer to disk. Upon receiving the EOF-flagged packets and verifying the completed hash against the <code>SESSION_REQ</code> metadata, it sends a <code>TRANSFER_COMPLETE</code> (Type <code>0x05</code>) packet.</li>
         <li><strong>The Sender Linger (Zombie State):</strong> The sender receives <code>TRANSFER_COMPLETE</code>, responds with <code>ACK_CLOSE</code> (Type <code>0x06</code>), frees heavy memory allocations (including the sliding window ring buffer), and enters a <strong>3-second Linger state</strong>. Duplicate <code>TRANSFER_COMPLETE</code> packets arriving in this window are answered with a repeat <code>ACK_CLOSE</code>.</li>
         <li><strong>The Receiver Linger:</strong> After sending <code>TRANSFER_COMPLETE</code>, the receiver enters its own <strong>3-second Linger state</strong>. If <code>ACK_CLOSE</code> is not received within this window, the receiver retransmits <code>TRANSFER_COMPLETE</code> up to <strong>3 times</strong> at 1-second intervals. If no <code>ACK_CLOSE</code> is received after all retries, the receiver considers the transfer successful (the file hash was verified) and performs a unilateral teardown.</li>
@@ -682,7 +898,7 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
             <strong>FEC Shard Buffer Allocations.</strong> Each data packet that enters the FEC encoder requires a <code>MaxPayload</code>-sized buffer padded to equal length before RS encoding. At the default block size of 100 and a 35 MB/s transfer rate, this produces ~25,000 allocations per second, generating ~470 MB of heap churn per 237 MB transfer and placing the garbage collector on the critical path. The fix is a <code>sync.Pool</code> of pre-allocated <code>MaxPayload</code>-sized buffers checked out at encode time and returned immediately after the parity computation completes. The Phase 2 C port should maintain a fixed pool of shard-sized stack or heap buffers reused across blocks.
         </li>
         <li>
-            <strong>Unbounded Retransmit Cache Growth.</strong> The original sender cached every transmitted chunk in a <code>map[uint64][]byte</code> to service NACK retransmissions. Without eviction, this map retained all ~172,000 chunks for a 237 MB transfer, consuming ~470 MB of heap memory for the entire session duration. <strong>Fixed in Phase 1:</strong> replaced with a bounded <code>SlidingWindow</code> ring buffer (50,000 slots, ~68 MB peak). Entries are evicted when <code>HighestContiguous</code> advances (received from each heartbeat), since the receiver has already confirmed contiguous receipt up to that point and will never NACK those sequences. When the window is full (all 50,000 un-acknowledged slots occupied), the sender pauses sending new packets until the receiver's <code>HighestContiguous</code> advances and frees slots — providing memory-bounded backpressure. The Phase 2 C port should use the same ring-buffer pattern.
+            <strong>Unbounded Retransmit Cache Growth.</strong> The original sender cached every transmitted chunk in a <code>map[uint64][]byte</code> to service NACK retransmissions. Without eviction, this map retained all ~172,000 chunks for a 237 MB transfer, consuming ~470 MB of heap memory for the entire session duration. <strong>Fixed in Phase 1:</strong> replaced with a bounded <code>SlidingWindow</code> ring buffer (50,000 slots, ~68 MB peak). Entries are evicted when <code>HighestContiguous</code> advances (received from each heartbeat), since the receiver has already confirmed contiguous receipt up to that point and will never NACK those sequences. When the window is full (all 50,000 un-acknowledged slots occupied), the sender pauses sending new packets until the receiver's <code>HighestContiguous</code> advances and frees slots — providing memory-bounded backpressure. The Phase 2 C port should use the same ring-buffer pattern with a <strong>power-of-2 slot count</strong> (65,536 recommended, ~89 MB peak) so that index wrapping uses a bitmask (<code>idx &amp; 0xFFFF</code>) instead of a modulo operation — eliminating a division on the hot path for every packet sent and every <code>HighestContiguous</code> advance.
         </li>
     </ol>
 
@@ -728,6 +944,7 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
             <tr><td><code>0x03</code></td><td><code>SERVER_BUSY</code></td><td>A transfer is already in progress; try again later.</td></tr>
             <tr><td><code>0x04</code></td><td><code>FILE_NOT_FOUND</code></td><td>The requested filename is not in the serve manifest.</td></tr>
             <tr><td><code>0x05</code></td><td><code>FILE_EXISTS</code></td><td>A push was rejected because the filename already exists on the server (no-overwrite policy).</td></tr>
+            <tr><td><code>0x06</code></td><td><code>ENCRYPTION_UNSUPPORTED</code></td><td>The receiver does not support encryption and received a request with the Encrypted flag (0x04) set.</td></tr>
         </tbody>
     </table>
 
@@ -736,16 +953,16 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <p><strong>Wire format:</strong> Packet type <code>0x07</code>. Payload is a null-terminated UTF-8 filename with no fixed-size prefix.</p>
     <p><strong>Flow:</strong></p>
     <ol>
-        <li><strong>Client</strong> generates a random <code>SessionID</code> (same crypto/rand path as §4A), binds a local UDP socket on an OS-assigned ephemeral port, and sends <code>PULL_REQ</code> to the server's control port. This outbound packet punches the NAT hole: the NAT mapping records <em>client-ip:ephemeral-port → server-ip:control-port</em>.</li>
+        <li><strong>Client</strong> generates a random <code>SessionID</code> (same CSPRNG path as §4A), binds a local UDP socket on an OS-assigned ephemeral port, and sends <code>PULL_REQ</code> to the server's control port. This outbound packet punches the NAT hole: the NAT mapping records <em>client-ip:ephemeral-port → server-ip:control-port</em>.</li>
         <li><strong>Server</strong> receives <code>PULL_REQ</code>. If busy or filename not in manifest, sends <code>SESSION_REJECT</code> back to the client's address. Otherwise, it fires a normal <code>SESSION_REQ</code> to the client's address from a new outbound connection. Because the server's IP was the destination of the punching packet, port-restricted-cone NAT routers (the most common home router class) allow this inbound from the same IP on any source port.</li>
         <li><strong>Client</strong> receives the <code>SESSION_REQ</code> on its bound socket, records the sender's address (server ephemeral port), and enters the normal receiver flow using its existing socket — no rebind required. The same socket that sent <code>PULL_REQ</code> carries the entire transfer.</li>
-        <li>The server's sender goroutine uses the <code>SessionID</code> supplied in the <code>PULL_REQ</code> header, eliminating an extra round-trip for ID assignment.</li>
+        <li>The server's sender thread uses the <code>SessionID</code> supplied in the <code>PULL_REQ</code> header, eliminating an extra round-trip for ID assignment.</li>
     </ol>
 
     <h3>C. PUSH_REQ / PUSH_ACCEPT — Client-Initiated Push</h3>
     <p>The push flow allows a client to deposit a file into the serve daemon's directory. Three security invariants are always enforced:</p>
     <ol>
-        <li><strong>Base-name-only rule:</strong> The filename from the <code>PUSH_REQ</code> payload is sanitized with <code>filepath.Base()</code>. Path traversal sequences such as <code>../../etc/passwd</code> or <code>/absolute/path</code> are reduced to just the final filename component before any further processing.</li>
+        <li><strong>Base-name-only rule:</strong> The filename from the <code>PUSH_REQ</code> payload is sanitized to its base name — the substring after the last <code>/</code> or <code>\</code> separator (Go: <code>filepath.Base()</code>; C: manual reverse scan for both separators). Path traversal sequences such as <code>../../etc/passwd</code> or <code>/absolute/path</code> are reduced to just the final filename component before any further processing.</li>
         <li><strong>No-overwrite rule:</strong> If a file with the sanitized name already exists in the serve directory, the request is rejected with reason code <code>FILE_EXISTS (0x05)</code>.</li>
         <li><strong>Post-hash manifest promotion:</strong> The incoming file is written to <code>filename.tmp</code> during the transfer. Only after a successful <code>TRANSFER_COMPLETE</code> (xxHash64 verified) is the <code>.tmp</code> renamed to its final path and added to the live manifest. A failed or interrupted transfer leaves no partial file in the manifest.</li>
     </ol>
@@ -754,13 +971,13 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <p><strong>Flow:</strong></p>
     <ol>
         <li><strong>Client</strong> generates a <code>SessionID</code>, sends <code>PUSH_REQ</code> to the control port containing the filename and declared file size.</li>
-        <li><strong>Server</strong> validates (not busy, base-name safe, no existing file), binds an ephemeral <code>net.ListenUDP(:0)</code> data socket, and replies with <code>PUSH_ACCEPT</code> containing the assigned data port.</li>
+        <li><strong>Server</strong> validates (not busy, base-name safe, no existing file), binds an ephemeral UDP data socket on port 0 (Go: <code>net.ListenUDP(":0")</code>; C: <code>bind()</code> with <code>sin_port = 0</code>, then <code>getsockname()</code> to retrieve the assigned port), and replies with <code>PUSH_ACCEPT</code> containing the assigned data port.</li>
         <li><strong>Client</strong> extracts the data port, constructs <code>server-host:data-port</code>, and starts a normal HP-UDP sender using the same <code>SessionID</code> from step 1.</li>
-        <li><strong>Server</strong> runs a normal HP-UDP receiver on the data socket writing to <code>filename.tmp</code>. On success: <code>os.Rename(tmp → final)</code> + manifest promotion under a write-lock. On failure: <code>tmp</code> is deleted and the slot is cleared.</li>
+        <li><strong>Server</strong> runs a normal HP-UDP receiver on the data socket writing to <code>filename.tmp</code>. On success: atomic rename (<code>rename()</code>) from tmp to final path + manifest promotion under a write-lock. On failure: tmp is deleted and the slot is cleared.</li>
     </ol>
 
     <h3>D. Manifest Lifecycle</h3>
-    <p>The manifest is a filename-to-absolute-path map built at daemon startup by a non-recursive directory scan. Symlinks and directories are excluded. Files added to the directory after startup are invisible until the daemon is restarted — this is an intentional security boundary. Successful push transfers atomically add their promoted file to the in-memory manifest under a <code>sync.RWMutex</code> write-lock. PULL_REQ handlers acquire a read-lock when consulting the manifest.</p>
+    <p>The manifest is a filename-to-absolute-path map built at daemon startup by a non-recursive directory scan. Symlinks and directories are excluded. Files added to the directory after startup are invisible until the daemon is restarted — this is an intentional security boundary. Successful push transfers atomically add their promoted file to the in-memory manifest under a write-lock (Go: <code>sync.RWMutex</code>; C: <code>pthread_rwlock_t</code>). PULL_REQ handlers acquire a read-lock when consulting the manifest.</p>
 
     <h2>Appendix A: Protocol Constants (Defaults)</h2>
     <table>
@@ -774,7 +991,7 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
         <tbody>
             <tr><td>MTU Hard Cap</td><td>1400 bytes (total)</td><td>No</td></tr>
             <tr><td>Header Size</td><td>32 bytes (4 × 64-bit aligned, includes <code>SenderTimestampNs</code>)</td><td>No</td></tr>
-            <tr><td>Max Payload</td><td>1368 bytes (<code>MTUHardCap(1400) − HeaderSize(32)</code>)</td><td>No</td></tr>
+            <tr><td>Max Payload</td><td>1368 bytes unencrypted (<code>MTUHardCap(1400) − HeaderSize(32)</code>); <strong>1352 bytes encrypted</strong> (<code>1368 − GCM_TagSize(16)</code>)</td><td>No</td></tr>
             <tr><td>FEC Block Size</td><td>100 data packets</td><td>Yes</td></tr>
             <tr><td>FEC Initial Parity</td><td>5%</td><td>Yes</td></tr>
             <tr><td>FEC Tail Min Parity</td><td>2 packets</td><td>Yes</td></tr>
@@ -807,6 +1024,12 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
             <tr><td>Delivery-Collapse Threshold</td><td>25% of current send rate (was 50%)</td><td>Yes</td></tr>
             <tr><td>NACK Cooldown Margin</td><td>RTT × 1.25 (RTT + 25%)</td><td>Yes</td></tr>
             <tr><td>Tail-Drop Injection Limit</td><td>167 sequences per heartbeat</td><td>Yes</td></tr>
+            <tr><td>Sliding Window Slots</td><td>65,536 (2<sup>16</sup>, ~89 MB peak). Go prototype uses 50,000; C implementations should use power-of-2 for bitmask index wrapping.</td><td>Yes</td></tr>
+            <tr><td>Encryption Cipher</td><td>AES-128-GCM (128-bit key, 128-bit auth tag, 96-bit nonce)</td><td>No</td></tr>
+            <tr><td>GCM Tag Size</td><td>16 bytes</td><td>No</td></tr>
+            <tr><td>GCM Nonce Size</td><td>12 bytes (constructed from SessionID + PacketType + UniqueID; not transmitted)</td><td>No</td></tr>
+            <tr><td>Key Exchange</td><td>X25519 ephemeral (32-byte public key per side)</td><td>No</td></tr>
+            <tr><td>Key Derivation</td><td>HKDF-SHA256, salt = SessionID, info = "hp-udp-aes128-v5"</td><td>No</td></tr>
         </tbody>
     </table>
 
@@ -814,6 +1037,9 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <h2>Appendix B: Revision Log</h2>
     <div class="changelog">
         <ul>
+            <li><strong>v5.0</strong> — End-to-end encryption: ephemeral X25519 key exchange + AES-128-GCM per-packet encryption (§4.5); <code>SESSION_ACCEPT</code> (0x0A) packet type; <code>Encrypted</code> flag (0x04); 1-RTT handshake when encrypted (0-RTT preserved for unencrypted); deterministic nonce from header fields; encrypt-after-FEC data path; extended payloads for SESSION_REQ, PUSH_REQ, PUSH_ACCEPT, PULL_REQ; <code>ENCRYPTION_UNSUPPORTED</code> reject code; encrypted MaxPayload 1352 bytes; backward compatible with v4.x unencrypted transfers.</li>
+            <li><strong>v4.2</strong> — C implementation readiness: universal big-endian byte order declaration covering all payload fields (not just header); language-neutral wording throughout (monotonic clock, <code>clock_nanosleep</code>, <code>pthread_rwlock_t</code>, manual basename scan, ephemeral <code>bind()</code>+<code>getsockname()</code>); expanded deficit-accumulator C guidance (<code>TIMER_ABSTIME</code>, <code>SCHED_FIFO</code>); architecture-neutral teardown socket ownership (epoll single-thread vs goroutine); power-of-2 sliding window slot count (65,536) for bitmask index wrapping; <code>io_uring</code> receiver disk I/O note.</li>
+            <li><strong>v4.1</strong> — Sender sliding window: bounded ring buffer (50,000 slots) replaces unbounded <code>map</code>; backpressure NACK starvation deadlock fix (<code>if IsFull { continue }</code> replaces bare spin).</li>
             <li><strong>v4.0</strong> — WAN reliability overhaul: same-clock RTT measurement via <code>SenderTimestampNs</code> header field (HeaderSize 24→32, MaxPayload 1376→1368); frozen-timestamp RTT guard (<code>lastEchoNs</code>); RTT-aware NACK cooldown map; tail-drop deadlock prevention via proactive tail injection; teardown micro-burst prevention (batch-10 / 2ms); <code>StorageFlushRate</code> removed from CC effective-rate; delivery-collapse threshold 50%→25%; progress bar repair state.</li>
             <li><strong>v3.1</strong> — Calibration burst reduced to 10 packets (packet train); dispersion-based bottleneck measurement (<code>DispersionNs</code>); sender timestamps for RTT measurement; two-phase congestion controller (Phase 1 multiplicative 1.25×/RTT, Phase 2 additive); decrease formula changed from <code>E × 1.05</code> to <code>E × 0.85</code>; rate-increase gating to once per RTT; Phase 2 throughput analysis; <code>sendmmsg()</code>/<code>recvmmsg()</code>/<code>io_uring</code> roadmap.</li>
             <li><strong>v3.0</strong> — Delivery-rate-ratio CC replaced with loss-driven algorithm; delivery-collapse guard; paced teardown retransmits; NACK deduplication (set instead of queue); two-tier auto-ceiling (Phase 1: 4×, Phase 2: 1.5×); consecutive decrease requirement; EWMA smoothing for delivery rate.</li>

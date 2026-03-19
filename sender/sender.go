@@ -1,6 +1,8 @@
 package sender
 
 import (
+	"crypto/cipher"
+	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -67,6 +69,23 @@ type Config struct {
 	// the socket. The serve daemon's control loop forwards packets here so the
 	// sender goroutine never needs its own socket read path.
 	RecvChan <-chan []byte
+
+	// Encrypt enables AES-128-GCM per-packet encryption (spec §4.5).
+	// When true and EncKey is nil and PeerPubKey is nil, the sender performs a
+	// 1-RTT SESSION_REQ/SESSION_ACCEPT key exchange (direct send/recv mode).
+	Encrypt bool
+
+	// EncKey, if non-nil, is a pre-derived 16-byte AES-128 session key. The
+	// serve daemon sets this for push transfers after PUSH_REQ/PUSH_ACCEPT exchange.
+	// Takes priority over PeerPubKey when both are set.
+	EncKey *[16]byte
+
+	// PeerPubKey is the peer's X25519 public key (32 bytes). The serve daemon
+	// sets this for pull transfers after receiving PULL_REQ with the client's key.
+	// When Encrypt=true, EncKey=nil, and PeerPubKey is non-nil, the sender
+	// generates its own ephemeral key, includes it in SESSION_REQ, derives the
+	// session key, and starts sending — no SESSION_ACCEPT required.
+	PeerPubKey []byte
 }
 
 // DefaultConfig returns sender config with spec defaults.
@@ -203,17 +222,52 @@ func (s *Sender) Send() error {
 		sessionID = generateSessionID()
 	}
 
+	// --- Encryption setup ---
+	// Three cases:
+	//   1. Not encrypted: aead = nil, proceed as before.
+	//   2. Encrypted + EncKey set (push flow): use pre-derived key, no key exchange.
+	//   3. Encrypted + PeerPubKey set (serve pull flow): generate ephemeral key,
+	//      embed in SESSION_REQ, derive key immediately, no SESSION_ACCEPT needed.
+	//   4. Encrypted + neither set (direct send/recv): generate ephemeral key,
+	//      embed in SESSION_REQ, wait for SESSION_ACCEPT.
+	var aead cipher.AEAD
+	if s.cfg.Encrypt {
+		if s.cfg.EncKey != nil {
+			// Case 2: pre-derived key (push flow).
+			c, err := protocol.NewSessionCipher(*s.cfg.EncKey)
+			if err != nil {
+				return fmt.Errorf("init session cipher: %w", err)
+			}
+			aead = c
+		}
+		// Cases 3 and 4 are handled after SESSION_REQ is sent.
+	}
+
 	reqPayload := protocol.SessionReqPayload{
 		FileSize:    fileSize,
 		Checksum:    checksum,
 		InitialRate: s.cfg.InitialRate,
 		FileName:    filepath.Base(s.cfg.FilePath),
 	}
+	reqHdrFlags := protocol.Flag(0)
+
+	var ephemPriv *ecdh.PrivateKey
+	if s.cfg.Encrypt && s.cfg.EncKey == nil {
+		// Cases 3 and 4: embed sender's public key in SESSION_REQ.
+		ephemPriv, err = protocol.GenerateEphemeralKey()
+		if err != nil {
+			return fmt.Errorf("generate ephemeral key: %w", err)
+		}
+		reqPayload.Encrypted = true
+		copy(reqPayload.PubKey[:], ephemPriv.PublicKey().Bytes())
+		reqHdrFlags |= protocol.FlagEncrypted
+	}
 
 	reqPkt := protocol.Packet{
 		Header: protocol.Header{
 			Type:      protocol.PacketSessionReq,
 			SessionID: sessionID,
+			Flags:     reqHdrFlags,
 		},
 		Payload: protocol.MarshalSessionReq(&reqPayload),
 	}
@@ -223,8 +277,65 @@ func (s *Sender) Send() error {
 		return fmt.Errorf("marshal SESSION_REQ: %w", err)
 	}
 
-	dbgLog.Printf("[sender] sending SESSION_REQ: sessionID=0x%08X -> %s", sessionID, s.cfg.RemoteAddr)
+	dbgLog.Printf("[sender] sending SESSION_REQ: sessionID=0x%08X -> %s encrypted=%v",
+		sessionID, s.cfg.RemoteAddr, s.cfg.Encrypt)
 	writeFn(reqRaw)
+
+	// Case 3: serve pull — derive key immediately from PeerPubKey.
+	if s.cfg.Encrypt && s.cfg.EncKey == nil && len(s.cfg.PeerPubKey) > 0 {
+		key, err := protocol.DeriveSessionKey(ephemPriv, s.cfg.PeerPubKey, sessionID)
+		if err != nil {
+			return fmt.Errorf("derive session key (pull): %w", err)
+		}
+		c, err := protocol.NewSessionCipher(key)
+		if err != nil {
+			return fmt.Errorf("init cipher (pull): %w", err)
+		}
+		aead = c
+		dbgLog.Printf("[sender] session key derived (pull flow, no SESSION_ACCEPT)")
+	}
+
+	// Case 4: direct send/recv — wait for SESSION_ACCEPT.
+	if s.cfg.Encrypt && s.cfg.EncKey == nil && len(s.cfg.PeerPubKey) == 0 {
+		dbgLog.Printf("[sender] waiting for SESSION_ACCEPT...")
+		buf := make([]byte, protocol.MTUHardCap)
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		acceptLoop:
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				conn.SetReadDeadline(time.Time{})
+				return fmt.Errorf("SESSION_ACCEPT read: %w", err)
+			}
+			if n < protocol.HeaderSize {
+				continue
+			}
+			hdr, err := protocol.UnmarshalHeader(buf[:n])
+			if err != nil || hdr.Type != protocol.PacketSessionAccept || hdr.SessionID != sessionID {
+				continue
+			}
+			payloadEnd := protocol.HeaderSize + int(hdr.PayloadLen)
+			if payloadEnd > n {
+				continue
+			}
+			accept, err := protocol.UnmarshalSessionAccept(buf[protocol.HeaderSize:payloadEnd])
+			if err != nil {
+				continue
+			}
+			conn.SetReadDeadline(time.Time{})
+			key, err := protocol.DeriveSessionKey(ephemPriv, accept.PubKey[:], sessionID)
+			if err != nil {
+				return fmt.Errorf("derive session key: %w", err)
+			}
+			c, err := protocol.NewSessionCipher(key)
+			if err != nil {
+				return fmt.Errorf("init cipher: %w", err)
+			}
+			aead = c
+			dbgLog.Printf("[sender] session key derived (direct, SESSION_ACCEPT received)")
+			break acceptLoop
+		}
+	}
 
 	// --- Step 4: Open file and prepare send state ---
 	file, err := os.Open(s.cfg.FilePath)
@@ -234,6 +345,9 @@ func (s *Sender) Send() error {
 	defer file.Close()
 
 	chunkSize := protocol.MaxPayload
+	if aead != nil {
+		chunkSize = protocol.MaxEncryptedPayload
+	}
 	totalChunks := fileSize / uint64(chunkSize)
 	if fileSize%uint64(chunkSize) != 0 {
 		totalChunks++
@@ -415,7 +529,16 @@ func (s *Sender) Send() error {
 
 			hdrSize, _ := protocol.MarshalHeader(sendBuf, &hdr)
 			copy(sendBuf[hdrSize:], chunk)
-			writeFn(sendBuf[:hdrSize+len(chunk)])
+			totalPktSize := hdrSize + len(chunk)
+
+			if aead != nil {
+				hdr.Flags |= protocol.FlagEncrypted
+				protocol.MarshalHeader(sendBuf, &hdr)
+				nonce := protocol.BuildNonce(sessionID, protocol.PacketData, nackSeq, hdr.BlockGroup)
+				writeFn(protocol.EncryptPacket(aead, sendBuf[:totalPktSize], nonce))
+			} else {
+				writeFn(sendBuf[:totalPktSize])
+			}
 
 			if bucket != nil {
 				bucket.Pace(hdrSize + len(chunk))
@@ -465,7 +588,14 @@ func (s *Sender) Send() error {
 
 		sw.Store(seqNum, readBuf[:n])
 
-		writeFn(sendBuf[:totalSize])
+		if aead != nil {
+			hdr.Flags |= protocol.FlagEncrypted
+			protocol.MarshalHeader(sendBuf, &hdr)
+			nonce := protocol.BuildNonce(sessionID, protocol.PacketData, seqNum, hdr.BlockGroup)
+			writeFn(protocol.EncryptPacket(aead, sendBuf[:totalSize], nonce))
+		} else {
+			writeFn(sendBuf[:totalSize])
+		}
 
 		s.bytesSent.Store(int64(seqNum) * int64(chunkSize))
 
@@ -475,7 +605,7 @@ func (s *Sender) Send() error {
 
 		parityResult := blockEncoder.AddShard(hdr.BlockGroup, readBuf[:n])
 		if parityResult != nil {
-			sendParityPackets(writeFn, sessionID, parityResult, sendBuf, bucket, s.cfg.SendDelay)
+			sendParityPackets(writeFn, sessionID, parityResult, sendBuf, bucket, s.cfg.SendDelay, aead)
 		}
 
 		seqNum++
@@ -493,7 +623,7 @@ func (s *Sender) Send() error {
 	// --- FEC: flush tail block parity ---
 	tailResult := blockEncoder.FlushTail()
 	if tailResult != nil {
-		sendParityPackets(writeFn, sessionID, tailResult, sendBuf, bucket, s.cfg.SendDelay)
+		sendParityPackets(writeFn, sessionID, tailResult, sendBuf, bucket, s.cfg.SendDelay, aead)
 		dbgLog.Printf("[sender] sent %d tail block parity packets for block %d (%d data shards)",
 			tailResult.ParityCount, tailResult.BlockGroup, tailResult.DataCount)
 	}
@@ -546,7 +676,7 @@ func (s *Sender) Send() error {
 	nackPending = make(map[uint64]struct{})
 	nackMu.Unlock()
 
-	retransmitNACKs(writeFn, sessionID, pendingNACKs, sendBuf, sw, totalChunks, bucket)
+	retransmitNACKs(writeFn, sessionID, pendingNACKs, sendBuf, sw, totalChunks, bucket, aead)
 
 	// nackCooldown tracks the last retransmit time per sequence number.
 	// On a 50ms-RTT path the receiver fires one heartbeat per HB interval
@@ -670,7 +800,7 @@ func (s *Sender) Send() error {
 						if end > len(toRetransmit) {
 							end = len(toRetransmit)
 						}
-						retransmitNACKs(writeFn, sessionID, toRetransmit[i:end], sendBuf, sw, totalChunks, bucket)
+						retransmitNACKs(writeFn, sessionID, toRetransmit[i:end], sendBuf, sw, totalChunks, bucket, aead)
 						time.Sleep(2 * time.Millisecond)
 					}
 				}
@@ -782,6 +912,7 @@ func retransmitNACKs(
 	sw *SlidingWindow,
 	totalChunks uint64,
 	bucket *TokenBucket,
+	aead cipher.AEAD,
 ) {
 	for _, nackSeq := range nacks {
 		chunk, ok := sw.Load(nackSeq)
@@ -807,7 +938,16 @@ func retransmitNACKs(
 		}
 		hs, _ := protocol.MarshalHeader(sendBuf, &hdr)
 		copy(sendBuf[hs:], chunk)
-		writeFn(sendBuf[:hs+len(chunk)])
+		totalSize := hs + len(chunk)
+
+		if aead != nil {
+			hdr.Flags |= protocol.FlagEncrypted
+			protocol.MarshalHeader(sendBuf, &hdr)
+			nonce := protocol.BuildNonce(sessionID, protocol.PacketData, nackSeq, hdr.BlockGroup)
+			writeFn(protocol.EncryptPacket(aead, sendBuf[:totalSize], nonce))
+		} else {
+			writeFn(sendBuf[:totalSize])
+		}
 	}
 }
 
@@ -819,6 +959,7 @@ func sendParityPackets(
 	sendBuf []byte,
 	bucket *TokenBucket,
 	fixedDelay time.Duration,
+	aead cipher.AEAD,
 ) {
 	for i, payload := range result.Payloads {
 		hdr := protocol.Header{
@@ -833,7 +974,14 @@ func sendParityPackets(
 		copy(sendBuf[hdrSize:], payload)
 		totalSize := hdrSize + len(payload)
 
-		writeFn(sendBuf[:totalSize])
+		if aead != nil {
+			hdr.Flags |= protocol.FlagEncrypted
+			protocol.MarshalHeader(sendBuf, &hdr)
+			nonce := protocol.BuildNonce(sessionID, protocol.PacketParity, uint64(i), result.BlockGroup)
+			writeFn(protocol.EncryptPacket(aead, sendBuf[:totalSize], nonce))
+		} else {
+			writeFn(sendBuf[:totalSize])
+		}
 
 		if bucket != nil {
 			bucket.Pace(totalSize)
