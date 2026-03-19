@@ -7,7 +7,7 @@ High-Performance UDP File Transfer — a loss-driven, FEC-protected UDP protocol
 ## Installation
 
 ### Requirements
-- [Go](https://go.dev/) 1.21+
+- [Go](https://go.dev/) 1.25+
 
 ### Build
 
@@ -32,7 +32,7 @@ go build -o hpuft ./cmd/hpuft
 
 ### `send` — push a file to a waiting receiver
 ```bash
-hpuft send -file <path> [-addr host:port] [-rate MB/s] [-nodelay] [-nocc]
+hpuft send -file <path> [-addr host:port] [-rate MB/s] [-delay us] [-nodelay] [-nocc] [-debug]
 
   -file     path to the file to send (required)
   -addr     receiver address (default: 127.0.0.1:9000)
@@ -40,14 +40,16 @@ hpuft send -file <path> [-addr host:port] [-rate MB/s] [-nodelay] [-nocc]
   -delay    fixed inter-packet delay in microseconds (disables CC)
   -nodelay  send as fast as possible, no pacing (disables CC)
   -nocc     disable congestion control, use fixed rate
+  -debug    stream raw protocol and CC telemetry to stderr
 ```
 
 ### `recv` — listen for an incoming push transfer
 ```bash
-hpuft recv [-listen :9000] [-out ./output]
+hpuft recv [-listen :9000] [-out ./output] [-debug]
 
   -listen   UDP address to listen on (default: :9000)
   -out      directory to write received files (default: .)
+  -debug    stream raw protocol telemetry to stderr
 ```
 
 ### `serve` — persistent bidirectional daemon (single-lane)
@@ -69,11 +71,12 @@ traffic flows through this single port. The NAT hole punched by the initial
 
 ### `get` — pull a file from a serve daemon (NAT-friendly)
 ```bash
-hpuft get -file <name> [-addr host:9001] [-out .]
+hpuft get -file <name> [-addr host:9001] [-out .] [-debug]
 
-  -file   name of the file to request (required)
-  -addr   address of the serve daemon (default: 127.0.0.1:9001)
-  -out    directory to write the received file (default: .)
+  -file    name of the file to request (required)
+  -addr    address of the serve daemon (default: 127.0.0.1:9001)
+  -out     directory to write the received file (default: .)
+  -debug   stream raw protocol telemetry to stderr
 ```
 
 The `get` command punches a NAT hole by sending a `PULL_REQ` to the serve
@@ -168,17 +171,23 @@ hpuft sends data over UDP with a custom reliability layer rather than TCP.
 
 **Sender** blasts packets paced by a token-bucket congestion controller that probes upward multiplicatively (Phase 1) and then additively (Phase 2) once loss is detected. Loss is reported by the receiver via NACK lists inside periodic heartbeats.
 
+**Sliding window** caps in-flight data at 50,000 packets (~68 MB of RAM), replacing the unbounded `map` used in earlier versions. When `HighestContiguous` advances in a heartbeat, the tail of the ring buffer is released back to the pool. If the sender gets ahead of the receiver (window full), it yields and continues draining NACK retransmits until the window opens — preventing both memory exhaustion and the deadlock that would occur if NACK processing were blocked during backpressure.
+
 **FEC** (Reed-Solomon) is applied per block of 100 data packets. The parity ratio scales automatically with observed loss: 2% at <0.5% loss up to 20% at >10% loss. Most drops are recovered without a retransmit.
 
-**Heartbeats** carry `NetworkDeliveryRate`, `LossRate`, `HighestContiguous`, `NACKs`, and an echoed `SenderTimestampNs` for same-clock RTT measurement. RTT drives the NACK retransmit cooldown — each dropped sequence is retransmitted at most once per RTT + 25% margin, preventing retransmit storms.
+**Heartbeats** carry `NetworkDeliveryRate`, `LossRate`, `HighestContiguous`, `NACKs`, and an echoed `SenderTimestampNs` for same-clock RTT measurement. RTT drives the NACK retransmit cooldown — each dropped sequence is retransmitted at most once per RTT + 25% margin, preventing retransmit storms. The RTT estimate is guarded against stale echo timestamps: if the sender is idle (honoring cooldown), the receiver echoes the same frozen timestamp; the sender only updates its RTT estimate when a strictly newer timestamp arrives.
 
 **Teardown** handles the hard case: if the last packets of the file drop, the receiver's NACK window is empty (it never saw those sequences). The sender detects `HighestContiguous < totalChunks-1` with zero NACKs and proactively injects the missing tail sequences. Retransmits are batched at 10 packets per 2 ms to avoid micro-bursting through OS socket buffers and the serve daemon's channel.
 
-**Progress bar** switches from `100% | 40 MB/s` to `100% | Repairing...` once the main send loop finishes and the tail-repair loop begins, so the user knows the transfer is still making progress.
+**TUI dashboard** — `push` and `get` render a live terminal dashboard (Charmbracelet Bubble Tea) instead of a scrolling log. The dashboard shows throughput, RTT, loss rate, CC phase, cumulative NACKs, and a progress bar. When the main send loop finishes and tail repair begins, the bar switches to `Repairing...` so the user knows the transfer is still making progress rather than stalled.
 
-### WAN performance vs TCP (50 ms RTT, 0.1% loss)
+### Observed performance
 
-| Protocol | 1 GB transfer |
-|----------|--------------|
-| FTP/TCP  | ~1.2 MB/s (AIMD halves window on every drop) |
-| hpuft    | ~40 MB/s (FEC absorbs drops, CC stays near ceiling) |
+| Scenario | Transfer speed |
+|---|---|
+| GbE LAN (clean) — 1 GB | ~66 MB/s |
+| GbE LAN (clean) — 7 GB | ~87 MB/s (CC reaches ceiling after longer ramp) |
+| WAN simulation (50 ms RTT, 0.1% loss, `tc netem`) | transfer completes reliably; FEC absorbs drops, CC holds near ceiling |
+| FTP/TCP (50 ms RTT, 0.1% loss) | ~1.2 MB/s (AIMD halves window on every drop) |
+
+The 1 GB LAN figure is lower than the 7 GB figure because the congestion controller spends a larger fraction of the transfer in the initial probe phase. Longer transfers give the CC more time to find and hold the link ceiling.
