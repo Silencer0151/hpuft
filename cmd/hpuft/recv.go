@@ -18,6 +18,7 @@ func runRecv(args []string) {
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "UDP address to listen on")
 	fs.StringVar(&cfg.OutputDir, "out", cfg.OutputDir, "directory to write received files")
 	fs.BoolVar(&debug, "debug", false, "stream raw protocol telemetry to stderr")
+	fs.BoolVar(&cfg.Encrypt, "encrypt", false, "enable AES-128-GCM per-packet encryption")
 	fs.Parse(args)
 
 	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {

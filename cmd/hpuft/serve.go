@@ -108,7 +108,7 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 	busy *int32, busyClient *string,
 	activeMu *sync.Mutex, activeChan *chan []byte) {
 
-	req, err := protocol.UnmarshalPullReq(pkt.Payload)
+	req, err := protocol.UnmarshalPullReq(pkt.Payload, pkt.Header.Flags&protocol.FlagEncrypted != 0)
 	if err != nil || req.FileName == "" {
 		log.Printf("[serve] malformed PULL_REQ from %s", clientAddr)
 		return
@@ -143,7 +143,7 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 
 	log.Printf("[serve] ACCEPTED %s: PULL_REQ for %q", clientAddr, req.FileName)
 
-	go func(filePath, fileName string, sessionID uint32, clientAddr *net.UDPAddr) {
+	go func(filePath, fileName string, sessionID uint32, clientAddr *net.UDPAddr, peerPubKey []byte, isEncrypted bool) {
 		defer func() {
 			atomic.StoreInt32(busy, 0)
 			activeMu.Lock()
@@ -159,6 +159,10 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		cfg.MuxAddr = clientAddr
 		cfg.RecvChan = ch
 		cfg.Quiet = true
+		cfg.Encrypt = isEncrypted
+		if isEncrypted && len(peerPubKey) > 0 {
+			cfg.PeerPubKey = peerPubKey
+		}
 
 		start := time.Now()
 		s := sender.New(cfg)
@@ -171,7 +175,7 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		mbps := float64(p.TotalBytes) / elapsed.Seconds() / 1e6
 		log.Printf("[serve] TRANSFER COMPLETE: %q to %s in %s (%.1f MB/s)",
 			fileName, clientAddr, elapsed.Round(time.Millisecond), mbps)
-	}(filePath, req.FileName, pkt.Header.SessionID, clientAddr)
+	}(filePath, req.FileName, pkt.Header.SessionID, clientAddr, req.PubKey[:], req.Encrypted)
 }
 
 func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
@@ -179,7 +183,7 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 	busy *int32, busyClient *string,
 	activeMu *sync.Mutex, activeChan *chan []byte) {
 
-	req, err := protocol.UnmarshalPushReq(pkt.Payload)
+	req, err := protocol.UnmarshalPushReq(pkt.Payload, pkt.Header.Flags&protocol.FlagEncrypted != 0)
 	if err != nil || req.FileName == "" {
 		log.Printf("[serve] malformed PUSH_REQ from %s", clientAddr)
 		return
@@ -214,12 +218,39 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 	// Data flows over the control socket, so the "port" is just the control
 	// port the client already knows. The push client uses its existing socket.
 	controlPort := uint16(conn.LocalAddr().(*net.UDPAddr).Port)
+
+	// If the push client wants encryption, generate our ephemeral key and
+	// derive the session key; include our public key in PUSH_ACCEPT.
+	var pushEncKey *[16]byte
+	acceptPayload := &protocol.PushAcceptPayload{Port: controlPort}
+	acceptHdrFlags := protocol.Flag(0)
+
+	if req.Encrypted {
+		ephemPriv, err := protocol.GenerateEphemeralKey()
+		if err != nil {
+			log.Printf("[serve] generate key for PUSH: %v", err)
+			atomic.StoreInt32(busy, 0)
+			return
+		}
+		key, err := protocol.DeriveSessionKey(ephemPriv, req.PubKey[:], pkt.Header.SessionID)
+		if err != nil {
+			log.Printf("[serve] derive key for PUSH: %v", err)
+			atomic.StoreInt32(busy, 0)
+			return
+		}
+		pushEncKey = &key
+		copy(acceptPayload.PubKey[:], ephemPriv.PublicKey().Bytes())
+		acceptPayload.Encrypted = true
+		acceptHdrFlags |= protocol.FlagEncrypted
+	}
+
 	acceptPkt := protocol.Packet{
 		Header: protocol.Header{
 			Type:      protocol.PacketPushAccept,
 			SessionID: pkt.Header.SessionID,
+			Flags:     acceptHdrFlags,
 		},
-		Payload: protocol.MarshalPushAccept(&protocol.PushAcceptPayload{Port: controlPort}),
+		Payload: protocol.MarshalPushAccept(acceptPayload),
 	}
 	raw, err := protocol.MarshalPacket(&acceptPkt)
 	if err != nil {
@@ -236,7 +267,7 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 
 	log.Printf("[serve] ACCEPTED %s: PUSH_REQ for %q", clientAddr, safeName)
 
-	go func(safeName, finalPath string, sessionID uint32, clientAddr *net.UDPAddr) {
+	go func(safeName, finalPath string, sessionID uint32, clientAddr *net.UDPAddr, encKey *[16]byte, isEncrypted bool) {
 		defer func() {
 			atomic.StoreInt32(busy, 0)
 			activeMu.Lock()
@@ -251,6 +282,8 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		cfg.SenderAddr = clientAddr
 		cfg.RecvChan = ch
 		cfg.OutputPath = tmpPath
+		cfg.Encrypt = isEncrypted
+		cfg.EncKey = encKey
 
 		r, err := receiver.New(cfg)
 		if err != nil {
@@ -283,7 +316,7 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		mbps := float64(p.TotalBytes) / elapsed.Seconds() / 1e6
 		log.Printf("[serve] PUSH COMPLETE: %q from %s in %s (%.1f MB/s) — added to manifest",
 			safeName, clientAddr, elapsed.Round(time.Millisecond), mbps)
-	}(safeName, finalPath, pkt.Header.SessionID, clientAddr)
+	}(safeName, finalPath, pkt.Header.SessionID, clientAddr, pushEncKey, req.Encrypted)
 }
 
 // buildManifest scans dir (non-recursively) and returns an allowlist map of

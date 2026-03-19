@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/binary"
 	"flag"
@@ -19,10 +20,11 @@ func runPush(args []string) {
 	serveAddr := fs.String("addr", "127.0.0.1:9001", "serve daemon address (host:port)")
 	filePath := fs.String("file", "", "path to file to push (required)")
 	debug := fs.Bool("debug", false, "stream raw protocol telemetry to stderr")
+	encrypt := fs.Bool("encrypt", false, "enable AES-128-GCM per-packet encryption")
 	fs.Parse(args)
 
 	if *filePath == "" {
-		fmt.Fprintln(os.Stderr, "usage: hpuft push -file <path> [-addr host:port] [-debug]")
+		fmt.Fprintln(os.Stderr, "usage: hpuft push -file <path> [-addr host:port] [-debug] [-encrypt]")
 		os.Exit(1)
 	}
 
@@ -58,16 +60,39 @@ func runPush(args []string) {
 
 	sessionID := newPushSessionID()
 
+	// Generate ephemeral key if encrypting.
+	var ephemPriv *ecdh.PrivateKey
+	if *encrypt {
+		ephemPriv, err = protocol.GenerateEphemeralKey()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[push] generate key: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Build PUSH_REQ payload.
+	pushReqPayload := &protocol.PushReqPayload{
+		FileSize:  uint64(fileInfo.Size()),
+		FileName:  fileName,
+		Encrypted: *encrypt,
+	}
+	if *encrypt && ephemPriv != nil {
+		copy(pushReqPayload.PubKey[:], ephemPriv.PublicKey().Bytes())
+	}
+
+	pushHdrFlags := protocol.Flag(0)
+	if *encrypt {
+		pushHdrFlags |= protocol.FlagEncrypted
+	}
+
 	// Send PUSH_REQ.
 	pushPkt := protocol.Packet{
 		Header: protocol.Header{
 			Type:      protocol.PacketPushReq,
 			SessionID: sessionID,
+			Flags:     pushHdrFlags,
 		},
-		Payload: protocol.MarshalPushReq(&protocol.PushReqPayload{
-			FileSize: uint64(fileInfo.Size()),
-			FileName: fileName,
-		}),
+		Payload: protocol.MarshalPushReq(pushReqPayload),
 	}
 	raw, err := protocol.MarshalPacket(&pushPkt)
 	if err != nil {
@@ -83,6 +108,7 @@ func runPush(args []string) {
 	rawBuf := make([]byte, protocol.MTUHardCap)
 	localConn.SetReadDeadline(time.Now().Add(15 * time.Second))
 
+	var pushEncKey *[16]byte
 	accepted := false
 	for {
 		n, _, err := localConn.ReadFromUDP(rawBuf)
@@ -113,6 +139,19 @@ func runPush(args []string) {
 			os.Exit(1)
 
 		case protocol.PacketPushAccept:
+			accept, err := protocol.UnmarshalPushAccept(pkt.Payload, *encrypt)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[push] malformed PUSH_ACCEPT: %v\n", err)
+				os.Exit(1)
+			}
+			if *encrypt && ephemPriv != nil {
+				key, err := protocol.DeriveSessionKey(ephemPriv, accept.PubKey[:], sessionID)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[push] derive session key: %v\n", err)
+					os.Exit(1)
+				}
+				pushEncKey = &key
+			}
 			accepted = true
 		}
 
@@ -132,6 +171,10 @@ func runPush(args []string) {
 	cfg.MuxConn = localConn
 	cfg.MuxAddr = rAddr
 	cfg.Debug = *debug
+	if *encrypt {
+		cfg.Encrypt = true
+		cfg.EncKey = pushEncKey
+	}
 
 	s := sender.New(cfg)
 
