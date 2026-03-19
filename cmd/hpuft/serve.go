@@ -172,9 +172,20 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		}
 		elapsed := time.Since(start)
 		p := s.Progress()
-		mbps := float64(p.TotalBytes) / elapsed.Seconds() / 1e6
-		log.Printf("[serve] TRANSFER COMPLETE: %q to %s in %s (%.1f MB/s)",
-			fileName, clientAddr, elapsed.Round(time.Millisecond), mbps)
+		dataElapsed := elapsed
+		repairDur := time.Duration(0)
+		if p.RepairStartNs > 0 && p.StartNs > 0 {
+			dataElapsed = time.Duration(p.RepairStartNs - p.StartNs)
+			repairDur = elapsed - dataElapsed
+		}
+		mbps := float64(p.TotalBytes) / dataElapsed.Seconds() / 1e6
+		if repairDur > 0 {
+			log.Printf("[serve] TRANSFER COMPLETE: %q to %s in %s (%.1f MB/s data, +%s repair)",
+				fileName, clientAddr, elapsed.Round(time.Millisecond), mbps, repairDur.Round(time.Millisecond))
+		} else {
+			log.Printf("[serve] TRANSFER COMPLETE: %q to %s in %s (%.1f MB/s)",
+				fileName, clientAddr, elapsed.Round(time.Millisecond), mbps)
+		}
 	}(filePath, req.FileName, pkt.Header.SessionID, clientAddr, req.PubKey[:], req.Encrypted)
 }
 

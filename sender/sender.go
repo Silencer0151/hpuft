@@ -102,12 +102,13 @@ func DefaultConfig() Config {
 
 // SenderProgress is a snapshot of live transfer metrics for the progress bar.
 type SenderProgress struct {
-	BytesSent  int64
-	TotalBytes int64
-	NACKsSent  int64   // cumulative retransmitted packets
-	RateBPS    float64 // current token-bucket target rate
-	StartNs    int64   // Unix ns when Send() started
-	InRepair   bool    // true once all packets are sent and teardown is recovering drops
+	BytesSent     int64
+	TotalBytes    int64
+	NACKsSent     int64   // cumulative retransmitted packets
+	RateBPS       float64 // current token-bucket target rate
+	StartNs       int64   // Unix ns when Send() started
+	RepairStartNs int64   // Unix ns when tail repair began (0 until repair starts)
+	InRepair      bool    // true once all packets are sent and teardown is recovering drops
 
 	// CC diagnostics — zero-valued if congestion control is disabled.
 	RTT      time.Duration // most recent round-trip time estimate
@@ -122,9 +123,10 @@ type Sender struct {
 	// Progress atomics — written by Send(), read lock-free by progress bar.
 	bytesSent  atomic.Int64
 	totalBytes atomic.Int64
-	nacksSent  atomic.Int64
-	startNs    atomic.Int64
-	inRepair   atomic.Int32 // 1 once all packets sent and teardown is recovering drops
+	nacksSent     atomic.Int64
+	startNs       atomic.Int64
+	repairStartNs atomic.Int64 // Unix ns when tail repair began (0 until repair starts)
+	inRepair      atomic.Int32 // 1 once all packets sent and teardown is recovering drops
 
 	bucket *TokenBucket // non-nil once Send() creates it
 }
@@ -142,15 +144,16 @@ func (s *Sender) Progress() SenderProgress {
 		lossRate = s.bucket.LossRatePercent()
 	}
 	return SenderProgress{
-		BytesSent:  s.bytesSent.Load(),
-		TotalBytes: s.totalBytes.Load(),
-		NACKsSent:  s.nacksSent.Load(),
-		RateBPS:    rate,
-		StartNs:    s.startNs.Load(),
-		InRepair:   s.inRepair.Load() == 1,
-		RTT:        rtt,
-		CCPhase:    phase,
-		LossRate:   lossRate,
+		BytesSent:     s.bytesSent.Load(),
+		TotalBytes:    s.totalBytes.Load(),
+		NACKsSent:     s.nacksSent.Load(),
+		RateBPS:       rate,
+		StartNs:       s.startNs.Load(),
+		RepairStartNs: s.repairStartNs.Load(),
+		InRepair:      s.inRepair.Load() == 1,
+		RTT:           rtt,
+		CCPhase:       phase,
+		LossRate:      lossRate,
 	}
 }
 
@@ -701,6 +704,7 @@ func (s *Sender) Send() error {
 		nackCooldown[seq] = now
 	}
 
+	s.repairStartNs.Store(time.Now().UnixNano())
 	s.inRepair.Store(1)
 
 	// Teardown read loop — own the socket (or drain the channel).
