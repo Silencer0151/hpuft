@@ -91,6 +91,11 @@ type sendTUIModel struct {
 	last  sender.SenderProgress
 	err   error
 	done  bool
+
+	// Recent throughput tracking: EWMA of per-tick (bytesSent delta / tick dt).
+	prevBytes  int64
+	prevTime   time.Time
+	recentMBps float64
 }
 
 func newSendTUI(s *sender.Sender, fileName, addr string, errCh <-chan error) sendTUIModel {
@@ -112,7 +117,22 @@ func (m sendTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 	case tuiTickMsg:
-		m.last = m.s.Progress()
+		now := time.Now()
+		cur := m.s.Progress()
+		if !m.prevTime.IsZero() {
+			dt := now.Sub(m.prevTime).Seconds()
+			if dt > 0 && cur.BytesSent > m.prevBytes {
+				instant := float64(cur.BytesSent-m.prevBytes) / dt / 1e6
+				if m.recentMBps == 0 {
+					m.recentMBps = instant
+				} else {
+					m.recentMBps = 0.25*instant + 0.75*m.recentMBps
+				}
+			}
+		}
+		m.prevBytes = cur.BytesSent
+		m.prevTime = now
+		m.last = cur
 		return m, tuiTickCmd()
 	case tuiDoneMsg:
 		m.last = m.s.Progress()
@@ -145,9 +165,7 @@ func (m sendTUIModel) View() string {
 		boxW = 14
 	}
 
-	rateMBps := p.RateBPS / 1e6
-	rateStr := fmt.Sprintf("%.1f MB/s", rateMBps)
-	rateBox := metricBox("Throughput", rateStr, boxW)
+	rateBox := metricBox("Throughput", fmt.Sprintf("%.1f MB/s", m.recentMBps), boxW)
 
 	rttStr := "--- ms"
 	if p.RTT > 0 {
@@ -162,13 +180,14 @@ func (m sendTUIModel) View() string {
 
 	// ── Phase / state indicator ───────────────────────────────────────────────
 	var phaseStr string
+	ccRate := fmt.Sprintf("  CC: %.0f MB/s", p.RateBPS/1e6)
 	switch {
 	case p.InRepair:
-		phaseStr = styleYellow.Render("⟳  Repairing tail drops...")
+		phaseStr = styleYellow.Render("⟳  Repairing tail drops...") + styleDim.Render(ccRate)
 	case p.CCPhase == 2:
-		phaseStr = styleCyan.Render("Phase 2: Additive Avoidance")
+		phaseStr = styleCyan.Render("Phase 2: Additive Avoidance") + styleDim.Render(ccRate)
 	default:
-		phaseStr = styleGreen.Render("Phase 1: Multiplicative Probe")
+		phaseStr = styleGreen.Render("Phase 1: Multiplicative Probe") + styleDim.Render(ccRate)
 	}
 
 	// ── Progress bar ─────────────────────────────────────────────────────────
@@ -191,8 +210,8 @@ func (m sendTUIModel) View() string {
 		)
 	} else {
 		etaStr := ""
-		if p.RateBPS > 0 && pct < 1 {
-			remaining := float64(p.TotalBytes-p.BytesSent) / p.RateBPS
+		if m.recentMBps > 0 && pct < 1 {
+			remaining := float64(p.TotalBytes-p.BytesSent) / (m.recentMBps * 1e6)
 			etaStr = "  ETA: " + fmtDuration(remaining)
 		}
 		progressLine = fmt.Sprintf("%s / %s  (%s)%s",
