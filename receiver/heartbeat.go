@@ -188,17 +188,42 @@ func (hg *HeartbeatGenerator) sendHeartbeat() {
 	if highestContig >= 0 && highestReceived > uint64(highestContig) {
 		scanStart := uint64(highestContig) + 1
 		scanEnd := highestReceived + 1
-		// Cap scan window to avoid huge NACK lists
-		if scanEnd-scanStart > 1000 {
-			scanEnd = scanStart + 1000
-		}
-		nacks = hg.buf.MissingInRange(scanStart, scanEnd)
 
-		// Cap NACK array to fit in a single packet
-		// Max NACK payload: (MaxPayload - HeartbeatFixedSize) / 8
-		maxNACKs := (protocol.MaxPayload - protocol.HeartbeatFixedSize) / 8
-		if len(nacks) > maxNACKs {
-			nacks = nacks[:maxNACKs]
+		// Reorder protection window: jitter can delay a packet by many
+		// sequence positions without it being lost. NACKing such a gap
+		// causes the sender to retransmit — the retransmit arrives as a
+		// duplicate (the original arrives soon after), wastes bandwidth,
+		// and consumes token-bucket credit that would otherwise carry new
+		// data. Only NACK sequences at least reorderWindow positions
+		// behind HighestReceived; those gaps have persisted long enough
+		// to be real losses rather than jitter artifacts.
+		//
+		// Window sizing: at 48 MB/s (~1400-byte packets), ±10ms jitter
+		// displaces up to ~340 sequence positions. 500 covers ±14.6ms
+		// of jitter at GbE-class rates with a comfortable safety margin.
+		// The extra detection latency for true losses is at most
+		// 500 × 1400B / linkRate (≈15ms at 48 MB/s), small relative to
+		// a 50ms RTT.
+		const reorderWindow = uint64(500)
+		if scanEnd > reorderWindow {
+			scanEnd -= reorderWindow
+		} else {
+			scanEnd = scanStart // range too small — no NACKs this beat
+		}
+
+		if scanEnd > scanStart {
+			// Cap scan window to avoid huge NACK lists
+			if scanEnd-scanStart > 1000 {
+				scanEnd = scanStart + 1000
+			}
+			nacks = hg.buf.MissingInRange(scanStart, scanEnd)
+
+			// Cap NACK array to fit in a single packet
+			// Max NACK payload: (MaxPayload - HeartbeatFixedSize) / 8
+			maxNACKs := (protocol.MaxPayload - protocol.HeartbeatFixedSize) / 8
+			if len(nacks) > maxNACKs {
+				nacks = nacks[:maxNACKs]
+			}
 		}
 	}
 
