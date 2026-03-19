@@ -78,6 +78,11 @@ type TokenBucket struct {
 	inPhase2      bool // permanent after first 1-5% hold zone entry
 	lastIncreaseHB int  // heartbeatCount at which the last increase was applied
 
+	// collapseHoldStreak counts consecutive delivery-collapse HOLDs.
+	// When this exceeds collapseDecreaseThreshold the CC forces a decrease
+	// rather than holding indefinitely at an unachievable rate.
+	collapseHoldStreak int
+
 	// rttEstimateNs holds the most recent RTT estimate in nanoseconds.
 	// Derived from EchoTimestampNs in heartbeats. 0 = unknown.
 	rttEstimateNs int64
@@ -290,14 +295,29 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 	if hb.NACKCount > 0 && tb.rate > 0 && rawEffective < tb.rate*0.25 {
 		if !tb.inPhase2 {
 			tb.inPhase2 = true
-			tb.logf("[cc_debug] → Phase 2 (additive): delivery collapse %.2f MB/s < 50%% of rate %.2f MB/s (NACKs=%d)",
+			tb.logf("[cc_debug] → Phase 2 (additive): delivery collapse %.2f MB/s < 25%% of rate %.2f MB/s (NACKs=%d)",
 				rawEffective/1e6, tb.rate/1e6, hb.NACKCount)
 		}
+		tb.collapseHoldStreak++
+		// After 5 consecutive collapse HOLDs the rate is clearly unachievable —
+		// force a decrease so the window-full stall can break. Reset the streak
+		// so we can decrease again if needed after recovery.
+		const collapseDecreaseThreshold = 5
+		if tb.collapseHoldStreak >= collapseDecreaseThreshold {
+			newRate := tb.smoothedRate * tb.cc.DecreaseFrac
+			tb.logf("[cc_debug] COLLAPSE-DECREASE (streak=%d): %.2f -> %.2f MB/s (delivery=%.2f NACKs=%d)",
+				tb.collapseHoldStreak, tb.rate/1e6, newRate/1e6, rawEffective/1e6, hb.NACKCount)
+			tb.rate = newRate
+			tb.collapseHoldStreak = 0
+			tb.decreases.Add(1)
+		} else {
+			tb.holds.Add(1)
+		}
 		tb.decreaseStreak = 0
-		tb.holds.Add(1)
 		// Skip the switch — fall through to ceiling/floor checks below.
 		goto applyCeiling
 	}
+	tb.collapseHoldStreak = 0 // clear streak when not in collapse
 
 	switch {
 	case lossBP < 100:
