@@ -1,7 +1,7 @@
 *.exe
 testdata/
 received/
-./hpuft-receiver
-./hpuft-sender
-hpuft
-hpuft-sender-darwin-amd64
+/hpuft-receiver
+/hpuft-sender
+/hpuft
+/hpuft-sender-darwin-amd64
