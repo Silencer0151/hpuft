@@ -1,6 +1,7 @@
 package receiver
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"hpuft/protocol"
 	"io"
@@ -56,6 +57,16 @@ type Config struct {
 	// When false noisy internal logs are suppressed and the caller shows a
 	// progress bar instead.
 	Debug bool
+
+	// Encrypt enables AES-128-GCM decryption (spec §4.5). When true and EncKey
+	// is nil, the receiver generates an ephemeral keypair, sends SESSION_ACCEPT
+	// carrying its public key, and derives the session key from the sender's
+	// public key in SESSION_REQ. When EncKey is non-nil, the pre-derived key is
+	// used directly (push or get flows where key exchange happened in the CLI).
+	Encrypt bool
+
+	// EncKey, if non-nil, is a pre-derived 16-byte AES-128 session key.
+	EncKey *[16]byte
 }
 
 // ReceiverProgress is a snapshot of live transfer metrics for the progress bar.
@@ -165,7 +176,8 @@ func (r *Receiver) Run() error {
 				if err != nil || pkt.Header.Type != protocol.PacketSessionReq {
 					continue
 				}
-				req, err := protocol.UnmarshalSessionReq(pkt.Payload)
+				encryptedReq := pkt.Header.Flags&protocol.FlagEncrypted != 0
+				req, err := protocol.UnmarshalSessionReq(pkt.Payload, encryptedReq)
 				if err != nil {
 					continue
 				}
@@ -197,7 +209,8 @@ func (r *Receiver) Run() error {
 				continue
 			}
 
-			req, err := protocol.UnmarshalSessionReq(pkt.Payload)
+			encryptedReq2 := pkt.Header.Flags&protocol.FlagEncrypted != 0
+			req, err := protocol.UnmarshalSessionReq(pkt.Payload, encryptedReq2)
 			if err != nil {
 				dbgLog.Printf("[receiver] malformed SESSION_REQ: %v", err)
 				continue
@@ -213,8 +226,61 @@ func (r *Receiver) Run() error {
 		}
 	}
 
+	// --- Encryption setup ---
+	var aead cipher.AEAD
+	if r.cfg.Encrypt {
+		if r.cfg.EncKey != nil {
+			// Pre-derived key: push flow (PUSH_REQ/PUSH_ACCEPT) or get flow.
+			c, err := protocol.NewSessionCipher(*r.cfg.EncKey)
+			if err != nil {
+				return fmt.Errorf("init session cipher: %w", err)
+			}
+			aead = c
+		} else if reqPayload.Encrypted {
+			// Direct recv mode: sender embedded its PubKey in SESSION_REQ.
+			// Generate our ephemeral key, derive session key, send SESSION_ACCEPT.
+			ephemPriv, err := protocol.GenerateEphemeralKey()
+			if err != nil {
+				return fmt.Errorf("generate ephemeral key: %w", err)
+			}
+			key, err := protocol.DeriveSessionKey(ephemPriv, reqPayload.PubKey[:], sessionID)
+			if err != nil {
+				return fmt.Errorf("derive session key: %w", err)
+			}
+			c, err := protocol.NewSessionCipher(key)
+			if err != nil {
+				return fmt.Errorf("init cipher: %w", err)
+			}
+			aead = c
+
+			// Send SESSION_ACCEPT with our public key.
+			pubKeyBytes := ephemPriv.PublicKey().Bytes()
+			var pubKeyArr [32]byte
+			copy(pubKeyArr[:], pubKeyBytes)
+			acceptPkt := protocol.Packet{
+				Header: protocol.Header{
+					Type:      protocol.PacketSessionAccept,
+					SessionID: sessionID,
+					Flags:     protocol.FlagEncrypted,
+				},
+				Payload: protocol.MarshalSessionAccept(&protocol.SessionAcceptPayload{
+					PubKey: pubKeyArr,
+				}),
+			}
+			acceptRaw, err := protocol.MarshalPacket(&acceptPkt)
+			if err != nil {
+				return fmt.Errorf("marshal SESSION_ACCEPT: %w", err)
+			}
+			r.conn.WriteToUDP(acceptRaw, senderAddr)
+			dbgLog.Printf("[receiver] sent SESSION_ACCEPT, session key derived")
+		}
+	}
+
 	// --- Phase 2: Validate and allocate buffer ---
 	chunkSize := protocol.MaxPayload
+	if aead != nil {
+		chunkSize = protocol.MaxEncryptedPayload
+	}
 
 	// Guard against corrupted SESSION_REQ (e.g., from proxy packet loss)
 	const maxFileSize = 1 << 40 // 1 TB sanity limit
@@ -280,7 +346,7 @@ func (r *Receiver) Run() error {
 					return fmt.Errorf("channel closed during transfer")
 				}
 				lastPacketTime = time.Now()
-				pkt, pktErr = protocol.UnmarshalPacket(raw)
+				pkt, pktErr = decryptAndParse(raw, aead, sessionID)
 			case <-time.After(50 * time.Millisecond):
 				if time.Since(lastPacketTime) > inactivityTimeout {
 					hbGen.Stop()
@@ -304,7 +370,7 @@ func (r *Receiver) Run() error {
 				return fmt.Errorf("read: %w", err)
 			}
 			lastPacketTime = time.Now()
-			pkt, pktErr = protocol.UnmarshalPacket(rawBuf[:n])
+			pkt, pktErr = decryptAndParse(rawBuf[:n], aead, sessionID)
 		}
 
 		if pktErr != nil {
@@ -508,4 +574,34 @@ teardownLoop:
 
 	dbgLog.Printf("[receiver] transfer complete: %s (%d bytes)", outputPath, reqPayload.FileSize)
 	return nil
+}
+
+// decryptAndParse parses a raw packet, decrypting the payload if the
+// Encrypted flag is set and aead is non-nil (DATA and PARITY only).
+func decryptAndParse(raw []byte, aead cipher.AEAD, sessionID uint32) (protocol.Packet, error) {
+	if len(raw) < protocol.HeaderSize {
+		return protocol.Packet{}, protocol.ErrPacketTooSmall
+	}
+	hdr, err := protocol.UnmarshalHeader(raw)
+	if err != nil {
+		return protocol.Packet{}, err
+	}
+
+	isDataOrParity := hdr.Type == protocol.PacketData || hdr.Type == protocol.PacketParity
+	isEncrypted := hdr.Flags&protocol.FlagEncrypted != 0
+
+	if isEncrypted && aead != nil && isDataOrParity {
+		needed := protocol.HeaderSize + int(hdr.PayloadLen) + protocol.GCMTagSize
+		if len(raw) < needed {
+			return protocol.Packet{}, fmt.Errorf("encrypted packet too short: %d < %d", len(raw), needed)
+		}
+		nonce := protocol.BuildNonce(sessionID, hdr.Type, hdr.SequenceNum, hdr.BlockGroup)
+		pt, err := protocol.DecryptPacket(aead, raw[:needed], nonce)
+		if err != nil {
+			return protocol.Packet{}, err
+		}
+		return protocol.Packet{Header: hdr, Payload: pt}, nil
+	}
+
+	return protocol.UnmarshalPacket(raw)
 }

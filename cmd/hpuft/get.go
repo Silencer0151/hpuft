@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/binary"
 	"flag"
@@ -19,10 +20,11 @@ func runGet(args []string) {
 	fileName := fs.String("file", "", "name of the file to request (required)")
 	outDir := fs.String("out", ".", "directory to write the received file")
 	debug := fs.Bool("debug", false, "stream raw protocol telemetry to stderr")
+	encrypt := fs.Bool("encrypt", false, "enable AES-128-GCM per-packet encryption")
 	fs.Parse(args)
 
 	if *fileName == "" {
-		fmt.Fprintln(os.Stderr, "usage: hpuft get -file <name> [-addr host:port] [-out dir] [-debug]")
+		fmt.Fprintln(os.Stderr, "usage: hpuft get -file <name> [-addr host:port] [-out dir] [-debug] [-encrypt]")
 		os.Exit(1)
 	}
 
@@ -57,15 +59,39 @@ func runGet(args []string) {
 	// Generate a session ID. The serve daemon reuses it in its SESSION_REQ.
 	sessionID := newGetSessionID()
 
+	// Generate ephemeral key if encrypting.
+	var ephemPriv *ecdh.PrivateKey
+	if *encrypt {
+		ephemPriv, err = protocol.GenerateEphemeralKey()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[get] generate key: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	// Build and send PULL_REQ — this punches the outbound NAT hole.
 	fmt.Fprintf(os.Stdout, "[get] Punching NAT hole via PULL_REQ for %q -> %s\n", *fileName, *serveAddr)
+
+	pullPayload := &protocol.PullReqPayload{
+		FileName:  *fileName,
+		Encrypted: *encrypt,
+	}
+	if *encrypt && ephemPriv != nil {
+		copy(pullPayload.PubKey[:], ephemPriv.PublicKey().Bytes())
+	}
+
+	pullHdrFlags := protocol.Flag(0)
+	if *encrypt {
+		pullHdrFlags |= protocol.FlagEncrypted
+	}
 
 	pullPkt := protocol.Packet{
 		Header: protocol.Header{
 			Type:      protocol.PacketPullReq,
 			SessionID: sessionID,
+			Flags:     pullHdrFlags,
 		},
-		Payload: protocol.MarshalPullReq(&protocol.PullReqPayload{FileName: *fileName}),
+		Payload: protocol.MarshalPullReq(pullPayload),
 	}
 	pullRaw, err := protocol.MarshalPacket(&pullPkt)
 	if err != nil {
@@ -114,7 +140,8 @@ func runGet(args []string) {
 			os.Exit(1)
 
 		case protocol.PacketSessionReq:
-			req, err := protocol.UnmarshalSessionReq(pkt.Payload)
+			encrypted := pkt.Header.Flags&protocol.FlagEncrypted != 0
+			req, err := protocol.UnmarshalSessionReq(pkt.Payload, encrypted)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[get] malformed SESSION_REQ: %v\n", err)
 				os.Exit(1)
@@ -133,10 +160,23 @@ func runGet(args []string) {
 	fmt.Fprintf(os.Stdout, "[get] Received SESSION_REQ. Allocating %s ring buffer...\n",
 		humanBytes(int64(sessionReq.FileSize)))
 
+	// Derive session key if encrypted.
+	var getEncKey *[16]byte
+	if *encrypt && ephemPriv != nil && sessionReq.Encrypted {
+		key, err := protocol.DeriveSessionKey(ephemPriv, sessionReq.PubKey[:], sessionID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[get] derive session key: %v\n", err)
+			os.Exit(1)
+		}
+		getEncKey = &key
+	}
+
 	cfg := receiver.DefaultConfig()
 	cfg.OutputDir = *outDir
 	cfg.Conn = localConn
 	cfg.Debug = *debug
+	cfg.Encrypt = *encrypt
+	cfg.EncKey = getEncKey
 	cfg.IncomingSession = &receiver.IncomingSession{
 		SenderAddr: serveSenderAddr,
 		SessionID:  sessionID,
