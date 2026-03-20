@@ -437,8 +437,13 @@ func (s *Sender) Send() error {
 					break negoLoop
 				}
 
-				// Accept the resume.
+				// Accept the resume. Align to FEC block boundary so the
+				// encoder always starts at the beginning of a complete block.
+				// At most blockSize-1 duplicate packets get re-sent.
+				fecBlockSize := uint64(protocol.DefaultFECConfig().BlockSize)
 				resumeSeqNum = rr.ResumeOffset / uint64(chunkSize)
+				resumeSeqNum = (resumeSeqNum / fecBlockSize) * fecBlockSize
+
 				acceptPayload := protocol.ResumeAcceptPayload{
 					ResumeSequenceNum: resumeSeqNum,
 				}
