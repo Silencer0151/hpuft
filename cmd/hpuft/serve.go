@@ -331,12 +331,14 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		start := time.Now()
 		if err := r.Run(); err != nil {
 			log.Printf("[serve] PUSH FAILED: %q from %s — %v", safeName, clientAddr, err)
-			os.Remove(tmpPath)
+			// Leave .tmp and sidecar for potential resume (unless hash mismatch,
+			// which receiver.Run already cleans up).
 			return
 		}
 		elapsed := time.Since(start)
 
-		// Promote .tmp → final
+		// Promote .tmp → final and clean up sidecar.
+		receiver.DeleteCheckpoint(tmpPath)
 		if err := os.Rename(tmpPath, finalPath); err != nil {
 			log.Printf("[serve] PUSH promote failed for %q: %v", safeName, err)
 			os.Remove(tmpPath)
