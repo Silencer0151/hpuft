@@ -347,6 +347,158 @@ func UnmarshalPullAccept(data []byte) (PullAcceptPayload, error) {
 	return PullAcceptPayload{Port: binary.BigEndian.Uint16(data[0:2])}, nil
 }
 
+// --- RESUME_REQ Payload ---
+//
+// Wire layout (unencrypted):
+//
+//	Offset  Size      Field
+//	0       8 bytes   FullHash (xxHash64 of complete source file)
+//	8       8 bytes   FileSize
+//	16      8 bytes   ResumeOffset (byte offset to resume from)
+//	24      8 bytes   PartialHash (xxHash64 of bytes 0..ResumeOffset)
+//	32      variable  FileName (null-terminated)
+//
+// Wire layout (encrypted):
+//
+//	Offset  Size      Field
+//	0       8 bytes   FullHash
+//	8       8 bytes   FileSize
+//	16      8 bytes   ResumeOffset
+//	24      8 bytes   PartialHash
+//	32      32 bytes  PubKey (X25519 ephemeral public key)
+//	64      variable  FileName (null-terminated)
+const (
+	ResumeReqFixedSize    = 32 // 4 × uint64
+	ResumeReqEncFixedSize = 64 // ResumeReqFixedSize + PubKeySize
+)
+
+// ResumeReqPayload is sent by the receiver to request resuming an
+// interrupted transfer from the last checkpoint.
+type ResumeReqPayload struct {
+	FullHash     uint64   // xxHash64 of the complete source file
+	FileSize     uint64   // total expected file size
+	ResumeOffset uint64   // byte offset to resume from
+	PartialHash  uint64   // xxHash64 of bytes 0..ResumeOffset
+	PubKey       [32]byte // only on wire when Encrypted=true
+	Encrypted    bool
+	FileName     string // original file name
+}
+
+// MarshalResumeReq serializes a ResumeReqPayload into bytes.
+func MarshalResumeReq(p *ResumeReqPayload) []byte {
+	nameBytes := []byte(p.FileName)
+	var buf []byte
+	if p.Encrypted {
+		buf = make([]byte, ResumeReqEncFixedSize+len(nameBytes)+1)
+		binary.BigEndian.PutUint64(buf[0:8], p.FullHash)
+		binary.BigEndian.PutUint64(buf[8:16], p.FileSize)
+		binary.BigEndian.PutUint64(buf[16:24], p.ResumeOffset)
+		binary.BigEndian.PutUint64(buf[24:32], p.PartialHash)
+		copy(buf[32:64], p.PubKey[:])
+		copy(buf[64:], nameBytes)
+	} else {
+		buf = make([]byte, ResumeReqFixedSize+len(nameBytes)+1)
+		binary.BigEndian.PutUint64(buf[0:8], p.FullHash)
+		binary.BigEndian.PutUint64(buf[8:16], p.FileSize)
+		binary.BigEndian.PutUint64(buf[16:24], p.ResumeOffset)
+		binary.BigEndian.PutUint64(buf[24:32], p.PartialHash)
+		copy(buf[32:], nameBytes)
+	}
+	buf[len(buf)-1] = 0
+	return buf
+}
+
+// UnmarshalResumeReq parses a ResumeReqPayload from bytes.
+func UnmarshalResumeReq(data []byte, encrypted bool) (ResumeReqPayload, error) {
+	minSize := ResumeReqFixedSize + 1
+	if encrypted {
+		minSize = ResumeReqEncFixedSize + 1
+	}
+	if len(data) < minSize {
+		return ResumeReqPayload{}, fmt.Errorf("%w: need at least %d bytes, got %d",
+			ErrPayloadTooShort, minSize, len(data))
+	}
+	p := ResumeReqPayload{
+		FullHash:     binary.BigEndian.Uint64(data[0:8]),
+		FileSize:     binary.BigEndian.Uint64(data[8:16]),
+		ResumeOffset: binary.BigEndian.Uint64(data[16:24]),
+		PartialHash:  binary.BigEndian.Uint64(data[24:32]),
+		Encrypted:    encrypted,
+	}
+	var nameData []byte
+	if encrypted {
+		copy(p.PubKey[:], data[32:64])
+		nameData = data[64:]
+	} else {
+		nameData = data[32:]
+	}
+	for i, b := range nameData {
+		if b == 0 {
+			p.FileName = string(nameData[:i])
+			return p, nil
+		}
+	}
+	p.FileName = string(nameData)
+	return p, nil
+}
+
+// --- RESUME_ACCEPT Payload ---
+//
+// Wire layout (unencrypted):
+//
+//	Offset  Size     Field
+//	0       8 bytes  ResumeSequenceNum (confirmed starting sequence)
+//
+// Wire layout (encrypted):
+//
+//	Offset  Size     Field
+//	0       8 bytes  ResumeSequenceNum
+//	8       32 bytes PubKey (sender's ephemeral public key for resumed session)
+const (
+	ResumeAcceptFixedSize    = 8  // ResumeSequenceNum only
+	ResumeAcceptEncFixedSize = 40 // ResumeSequenceNum + PubKeySize
+)
+
+// ResumeAcceptPayload is sent by the sender to confirm a resume request.
+type ResumeAcceptPayload struct {
+	ResumeSequenceNum uint64   // starting sequence for the resumed transfer
+	PubKey            [32]byte // only on wire when Encrypted=true
+	Encrypted         bool
+}
+
+// MarshalResumeAccept serializes a ResumeAcceptPayload into bytes.
+func MarshalResumeAccept(p *ResumeAcceptPayload) []byte {
+	if p.Encrypted {
+		buf := make([]byte, ResumeAcceptEncFixedSize)
+		binary.BigEndian.PutUint64(buf[0:8], p.ResumeSequenceNum)
+		copy(buf[8:40], p.PubKey[:])
+		return buf
+	}
+	buf := make([]byte, ResumeAcceptFixedSize)
+	binary.BigEndian.PutUint64(buf[0:8], p.ResumeSequenceNum)
+	return buf
+}
+
+// UnmarshalResumeAccept parses a ResumeAcceptPayload from bytes.
+func UnmarshalResumeAccept(data []byte, encrypted bool) (ResumeAcceptPayload, error) {
+	minSize := ResumeAcceptFixedSize
+	if encrypted {
+		minSize = ResumeAcceptEncFixedSize
+	}
+	if len(data) < minSize {
+		return ResumeAcceptPayload{}, fmt.Errorf("%w: need at least %d bytes, got %d",
+			ErrPayloadTooShort, minSize, len(data))
+	}
+	p := ResumeAcceptPayload{
+		ResumeSequenceNum: binary.BigEndian.Uint64(data[0:8]),
+		Encrypted:         encrypted,
+	}
+	if encrypted {
+		copy(p.PubKey[:], data[8:40])
+	}
+	return p, nil
+}
+
 // UnmarshalHeartbeat parses a HeartbeatPayload from bytes.
 func UnmarshalHeartbeat(data []byte) (HeartbeatPayload, error) {
 	if len(data) < HeartbeatFixedSize {

@@ -146,14 +146,14 @@ func TestContinuousIncreaseOnCleanLink(t *testing.T) {
 }
 
 func TestCeilingActivatesInPhase2(t *testing.T) {
-	// Ceiling = 1.5× peak delivery should fire when Phase 2 is entered and
+	// Ceiling = 1.2× peak delivery should fire when Phase 2 is entered and
 	// the current rate is above the ceiling. Start at 20 MB/s (above the
-	// 1.5 × 10 MB/s = 15 MB/s ceiling), enter Phase 2 via hold zone, and
+	// 1.2 × 10 MB/s = 12 MB/s ceiling), enter Phase 2 via hold zone, and
 	// verify the ceiling is applied immediately on that same heartbeat.
 	tb := NewTokenBucket(20_000_000, defaultCC())
 
 	// Enter Phase 2: 2% loss (hold zone). Rate is held, but ceiling fires
-	// because 20 MB/s > 1.5 × peakDelivery (10 MB/s) = 15 MB/s.
+	// because 20 MB/s > 1.2 × peakDelivery (10 MB/s) = 12 MB/s.
 	tb.OnHeartbeat(&protocol.HeartbeatPayload{
 		NetworkDeliveryRate: 10_000_000,
 		StorageFlushRate:    10_000_000,
@@ -163,10 +163,10 @@ func TestCeilingActivatesInPhase2(t *testing.T) {
 		t.Fatal("expected Phase 2 after hold-zone heartbeat")
 	}
 
-	expectedCeiling := 15_000_000.0
+	expectedCeiling := 12_000_000.0
 	actual := tb.Rate()
 	if actual < expectedCeiling*0.99 || actual > expectedCeiling*1.01 {
-		t.Fatalf("Phase 2 ceiling: rate = %.2f MB/s, want ~%.2f MB/s (1.5× peak delivery 10 MB/s)",
+		t.Fatalf("Phase 2 ceiling: rate = %.2f MB/s, want ~%.2f MB/s (1.2× peak delivery 10 MB/s)",
 			actual/1e6, expectedCeiling/1e6)
 	}
 }
@@ -337,6 +337,137 @@ func TestCustomCongestionConfig(t *testing.T) {
 	// With DecreaseFrac=0.70 and EWMA converging toward 500K, expect rate < 600K
 	if rate > 600_000 {
 		t.Fatalf("custom DecreaseFrac=0.70: rate = %f, expected < 600K", rate)
+	}
+}
+
+func TestCompoundCollapseDecrease(t *testing.T) {
+	// When delivery collapses (delivery < 25% of rate with NACKs), the CC
+	// holds for 5 consecutive heartbeats, then forces a decrease using
+	// rate × DecreaseFrac (not peakRate). Successive decreases compound.
+	tb := NewTokenBucket(100_000_000, defaultCC()) // 100 MB/s
+
+	// Seed peakRate so ceiling is active
+	tb.OnHeartbeat(&protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 100_000_000,
+		StorageFlushRate:    100_000_000,
+		LossRate:            0,
+	})
+
+	// Now simulate delivery collapse: delivery << rate, with NACKs.
+	collapseHB := &protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 1_000_000, // 1 MB/s — well below 25% of rate
+		StorageFlushRate:    1_000_000,
+		LossRate:            0, // 0% loss — the collapse is invisible to FEC
+		NACKCount:           10,
+	}
+
+	// First 4 collapse heartbeats should hold (streak < 5)
+	for i := 0; i < 4; i++ {
+		tb.OnHeartbeat(collapseHB)
+	}
+	rateBeforeDecrease := tb.Rate()
+	if tb.Stats().Decreases != 0 {
+		t.Fatalf("expected 0 decreases during collapse hold, got %d", tb.Stats().Decreases)
+	}
+
+	// 5th collapse heartbeat triggers compound decrease: rate × 0.85
+	tb.OnHeartbeat(collapseHB)
+	rateAfterFirst := tb.Rate()
+	if tb.Stats().Decreases != 1 {
+		t.Fatalf("expected 1 decrease after 5 collapse holds, got %d", tb.Stats().Decreases)
+	}
+	expected := rateBeforeDecrease * 0.85
+	if rateAfterFirst < expected*0.95 || rateAfterFirst > expected*1.05 {
+		t.Fatalf("first collapse-decrease: got %.2f MB/s, want ~%.2f MB/s (%.2f × 0.85)",
+			rateAfterFirst/1e6, expected/1e6, rateBeforeDecrease/1e6)
+	}
+
+	// Streak resets after decrease. 5 more collapse holds → second compound decrease.
+	for i := 0; i < 4; i++ {
+		tb.OnHeartbeat(collapseHB)
+	}
+	tb.OnHeartbeat(collapseHB) // triggers second decrease
+	rateAfterSecond := tb.Rate()
+	if tb.Stats().Decreases != 2 {
+		t.Fatalf("expected 2 decreases, got %d", tb.Stats().Decreases)
+	}
+
+	// Second decrease compounds: rateAfterFirst × 0.85
+	expected2 := rateAfterFirst * 0.85
+	if rateAfterSecond < expected2*0.95 || rateAfterSecond > expected2*1.05 {
+		t.Fatalf("second collapse-decrease: got %.2f MB/s, want ~%.2f MB/s (%.2f × 0.85)",
+			rateAfterSecond/1e6, expected2/1e6, rateAfterFirst/1e6)
+	}
+}
+
+func TestCollapseDecreaseFloor(t *testing.T) {
+	// Compound collapse-decrease has a floor at 50% of peakRate.
+	// Start with a low rate near the floor and verify it doesn't drop below.
+	tb := NewTokenBucket(10_000_000, defaultCC()) // 10 MB/s
+
+	// Seed peakRate at 10 MB/s
+	tb.OnHeartbeat(&protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 10_000_000,
+		StorageFlushRate:    10_000_000,
+		LossRate:            0,
+	})
+
+	// Set rate just above the floor (50% of peak = 5 MB/s)
+	// Force Phase 2 entry + ceiling to bring rate down near peakRate×1.2 = 12 MB/s
+	tb.OnHeartbeat(&protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 10_000_000,
+		StorageFlushRate:    10_000_000,
+		LossRate:            200, // hold zone → Phase 2
+	})
+
+	collapseHB := &protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 100_000, // extreme collapse
+		StorageFlushRate:    100_000,
+		LossRate:            0,
+		NACKCount:           50,
+	}
+
+	// Keep triggering collapse-decreases until we hit the floor
+	for i := 0; i < 50; i++ {
+		tb.OnHeartbeat(collapseHB)
+	}
+
+	rate := tb.Rate()
+	floor := 10_000_000.0 * 0.50 // 5 MB/s
+	if rate < floor*0.99 {
+		t.Fatalf("rate %.2f MB/s dropped below floor %.2f MB/s (50%% of peakRate)",
+			rate/1e6, floor/1e6)
+	}
+}
+
+func TestPhase1CeilingAt4x(t *testing.T) {
+	// Phase 1 ceiling = 4× peak delivery. This is already covered by
+	// TestContinuousIncreaseOnCleanLink but we verify the exact multiplier
+	// explicitly here with a different starting rate.
+	tb := NewTokenBucket(5_000_000, defaultCC()) // 5 MB/s
+
+	// Peak delivery = 20 MB/s → Phase 1 ceiling = 80 MB/s
+	hb := &protocol.HeartbeatPayload{
+		NetworkDeliveryRate: 20_000_000,
+		StorageFlushRate:    20_000_000,
+		LossRate:            0,
+	}
+
+	// Run enough heartbeats to hit ceiling: 5M × 1.25^N > 80M → N ≈ 13
+	for i := 0; i < 20; i++ {
+		tb.OnHeartbeat(hb)
+	}
+
+	actual := tb.Rate()
+	expectedCeiling := 80_000_000.0
+	if actual < expectedCeiling*0.99 || actual > expectedCeiling*1.01 {
+		t.Fatalf("Phase 1 ceiling: rate = %.2f MB/s, want ~%.2f MB/s (4× peak delivery 20 MB/s)",
+			actual/1e6, expectedCeiling/1e6)
+	}
+
+	// Confirm still in Phase 1 (never entered hold zone)
+	if tb.inPhase2 {
+		t.Fatal("should still be in Phase 1 — no hold zone entry")
 	}
 }
 
