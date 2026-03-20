@@ -6,6 +6,7 @@ import (
 	"hpuft/receiver"
 	"log"
 	"os"
+	"os/signal"
 	"time"
 )
 
@@ -47,20 +48,40 @@ func runRecv(args []string) {
 		go func() { errCh <- r.Run() }()
 		err = RunRecvTUI(r, "receiving", cfg.ListenAddr, errCh)
 
+		// If the TUI exited before the transfer completed (Ctrl+C),
+		// tell the sender to stop immediately.
+		p := r.Progress()
+		if p.BytesReceived < p.TotalBytes {
+			r.SendDisconnect()
+			fmt.Fprintf(os.Stderr, "[recv] interrupted — notified sender\n")
+			os.Exit(1)
+		}
+
 		if err != nil {
+			r.SendDisconnect()
 			fmt.Fprintf(os.Stderr, "[recv] FAILED: %v\n", err)
 			os.Exit(1)
 		}
-		p := r.Progress()
 		elapsed := time.Since(start)
 		mbps := float64(p.TotalBytes) / elapsed.Seconds() / 1e6
 		fmt.Fprintf(os.Stdout, "[recv] TRANSFER COMPLETE in %s (%.1f MB/s) | FEC rebuilt: %d pkts\n",
 			elapsed.Round(time.Millisecond), mbps, p.Rebuilt)
 	} else {
+		// In debug mode, trap SIGINT to send disconnect before exiting.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt)
+		go func() {
+			<-sigCh
+			r.SendDisconnect()
+			fmt.Fprintf(os.Stderr, "\n[recv] interrupted — notified sender\n")
+			os.Exit(1)
+		}()
+
 		if err := r.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "[recv] FAILED: %v\n", err)
 			os.Exit(1)
 		}
+		signal.Stop(sigCh)
 		fmt.Fprintf(os.Stdout, "[recv] TRANSFER COMPLETE\n")
 	}
 }
