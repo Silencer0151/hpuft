@@ -218,15 +218,14 @@ func (hg *HeartbeatGenerator) sendHeartbeat() {
 			}
 			nacks = hg.buf.MissingInRange(scanStart, scanEnd)
 
-			// Report missing sequences as packet loss so the sender's
-			// congestion controller gets honest loss feedback. After the
-			// reorder protection window, remaining gaps are real losses
-			// (or FEC-uncovered losses), not jitter artifacts. This drives
-			// the CC's loss-based backoff when the sender overshoots the
-			// physical link capacity (e.g., probing above GbE ceiling).
-			if len(nacks) > 0 {
-				hg.RecordLoss(len(nacks))
-			}
+			// NOTE: RecordLoss(len(nacks)) was previously called here to
+			// give the CC loss feedback. However, MissingInRange returns
+			// ALL persistent gaps on every heartbeat, so the same gaps are
+			// re-counted as new losses every beat. With 5 gaps over 10
+			// heartbeats, 50 "losses" are reported instead of 5, inflating
+			// LossRate to >5% and crashing the CC. The NACKs already drive
+			// retransmission, and the CC gets delivery-rate feedback via
+			// NetworkDeliveryRate + the delivery-collapse guard.
 
 			// Cap NACK array to fit in a single packet
 			// Max NACK payload: (MaxPayload - HeartbeatFixedSize) / 8
