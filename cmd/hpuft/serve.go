@@ -39,6 +39,7 @@ func runServe(args []string) {
 	}
 	defer conn.Close()
 	conn.SetReadBuffer(16 * 1024 * 1024)
+	conn.SetWriteBuffer(16 * 1024 * 1024)
 
 	fmt.Fprintf(os.Stderr, "[serve] Online. Listening on %s\n", conn.LocalAddr())
 	fmt.Fprintf(os.Stderr, "[serve] Manifest loaded: %d authorized files found in %s\n", len(manifest), *dir)
