@@ -97,6 +97,10 @@ type Receiver struct {
 	totalBytes    atomic.Int64
 	rebuilt       atomic.Int64
 	startNs       atomic.Int64
+
+	// Session info set by Run() for external disconnect signaling.
+	senderAddr atomic.Pointer[net.UDPAddr]
+	sessionID  atomic.Uint32
 }
 
 // Progress returns a live snapshot for the progress bar goroutine.
@@ -106,6 +110,27 @@ func (r *Receiver) Progress() ReceiverProgress {
 		TotalBytes:    r.totalBytes.Load(),
 		Rebuilt:       r.rebuilt.Load(),
 		StartNs:       r.startNs.Load(),
+	}
+}
+
+// SendDisconnect sends a SESSION_REJECT (CLIENT_DISCONNECT) to the sender.
+// Safe to call from a signal handler while Run() is active. No-op if the
+// session hasn't been established yet.
+func (r *Receiver) SendDisconnect() {
+	addr := r.senderAddr.Load()
+	sid := r.sessionID.Load()
+	if addr == nil || sid == 0 {
+		return
+	}
+	pkt := protocol.Packet{
+		Header: protocol.Header{
+			Type:      protocol.PacketSessionReject,
+			SessionID: sid,
+		},
+		Payload: []byte{byte(protocol.RejectClientDisconnect)},
+	}
+	if raw, err := protocol.MarshalPacket(&pkt); err == nil {
+		r.conn.WriteToUDP(raw, addr)
 	}
 }
 
@@ -225,6 +250,10 @@ func (r *Receiver) Run() error {
 			break
 		}
 	}
+
+	// Publish session info for external disconnect signaling (e.g. Ctrl+C).
+	r.senderAddr.Store(senderAddr)
+	r.sessionID.Store(sessionID)
 
 	// --- Encryption setup ---
 	var aead cipher.AEAD

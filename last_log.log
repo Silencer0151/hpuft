@@ -1,164 +1,528 @@
 derrybm@killdozer:~/projects/hpuft$ git pull
-remote: Enumerating objects: 20, done.
-remote: Counting objects: 100% (20/20), done.
-remote: Compressing objects: 100% (5/5), done.
-remote: Total 20 (delta 13), reused 20 (delta 13), pack-reused 0 (from 0)
-Unpacking objects: 100% (20/20), 17.33 KiB | 1.15 MiB/s, done.
+remote: Enumerating objects: 5, done.
+remote: Counting objects: 100% (5/5), done.
+remote: Compressing objects: 100% (2/2), done.
+remote: Total 5 (delta 3), reused 5 (delta 3), pack-reused 0 (from 0)
+Unpacking objects: 100% (5/5), 3.12 KiB | 61.00 KiB/s, done.
 From https://github.com/Silencer0151/hpuft
-   67d16b8..b62c537  main                 -> origin/main
- * [new tag]         encryption-releasev1 -> encryption-releasev1
-Updating 67d16b8..b62c537
+   b62c537..3c77f14  main       -> origin/main
+Updating b62c537..3c77f14
 Fast-forward
- cmd/hpuft/serve.go            |   6 +-
- integration/transfer_test.go  | 207 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- last_log.log                  | 285 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-------------------------------
- protocol/payload.go           | 152 +++++++++++++++++++++++++++++++++++++++++++++++++
- protocol/types.go             |   9 +++
- receiver/buffer.go            | 132 +++++++++++++++++++++++++++++++++----------
- receiver/checkpoint.go        | 116 ++++++++++++++++++++++++++++++++++++++
- receiver/receiver.go          | 171 ++++++++++++++++++++++++++++++++++++++++++++++++++++---
- receiver/writer.go            | 100 ++++++++++++++++++++++++++++++++
- sender/congestion_test.go     | 141 ++++++++++++++++++++++++++++++++++++++++++++--
- sender/sender.go              | 150 ++++++++++++++++++++++++++++++++++++++++++++++--
- sender/sliding_window_test.go | 209 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- 12 files changed, 1532 insertions(+), 146 deletions(-)
- create mode 100644 integration/transfer_test.go
- create mode 100644 receiver/checkpoint.go
- create mode 100644 sender/sliding_window_test.go
+ last_log.log     | 359 ++++++++++++++++++++++++++++++++++++++++++++++-----------------------------------------------------------
+ sender/sender.go |   7 ++-
+ 2 files changed, 163 insertions(+), 203 deletions(-)
 derrybm@killdozer:~/projects/hpuft$ ./build.sh
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-[get] TRANSFER COMPLETE: big.bin in 4.728s (227.1 MB/s) | FEC rebuilt: 0 pkts
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001
+16:45:09.824069 [receiver] session handed off from get: sessionID=0xD7E9A007 file="big.bin" size=1073741824
+16:45:09.874431 [receiver] found checkpoint: HC=184155 offset=251925408, sending RESUME_REQ
+16:45:09.943497 [receiver] RESUME_ACCEPT: starting from seq=184100 (offset=251848800)
+16:45:09.996888 [receiver] RESUMED: buffer from seq=184100 (600799 remaining chunks), writing to big.bin
+16:45:09.996924 [receiver] heartbeat generator started
+16:45:09.996927 [receiver] FEC decoder enabled: block_size=100
+16:45:11.425258 [receiver] 25% complete (1.4s elapsed, ~4s remaining)
+^C
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] rejected by serve: SERVER_BUSY
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] rejected by serve: SERVER_BUSY
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -op
-flag provided but not defined: -op
-Usage of get:
-  -addr string
-        serve daemon address (host:port) (default "127.0.0.1:9001")
-  -debug
-        stream raw protocol telemetry to stderr
-  -encrypt
-        enable AES-128-GCM per-packet encryption
-  -file string
-        name of the file to request (required)
-  -out string
-        directory to write the received file (default ".")
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -op
-flag provided but not defined: -op
-Usage of get:
-  -addr string
-        serve daemon address (host:port) (default "127.0.0.1:9001")
-  -debug
-        stream raw protocol telemetry to stderr
-  -encrypt
-        enable AES-128-GCM per-packet encryption
-  -file string
-        name of the file to request (required)
-  -out string
-        directory to write the received file (default ".")
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] rejected by serve: SERVER_BUSY
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
+[get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
+[get] rejected by serve: SERVER_BUSY
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
+[get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
+^C
+derrybm@killdozer:~/projects/hpuft$ echo forgot to start server ignore punching req above
+forgot to start server ignore punching req above
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-[get] FAILED: inactivity timeout: no packets for 5s
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001
-
+16:45:52.114537 [receiver] session handed off from get: sessionID=0xD12E096B file="big.bin" size=1073741824
+16:45:52.175386 [receiver] found checkpoint: HC=228436 offset=312501816, sending RESUME_REQ
+16:45:52.248687 [receiver] RESUME_ACCEPT: starting from seq=228400 (offset=312451200)
+16:45:52.311051 [receiver] RESUMED: buffer from seq=228400 (556499 remaining chunks), writing to big.bin
+16:45:52.311077 [receiver] heartbeat generator started
+16:45:52.311080 [receiver] FEC decoder enabled: block_size=100
+16:45:52.414309 [receiver] 25% complete (0.1s elapsed, ~0s remaining)
+16:45:56.474838 [receiver] 50% complete (4.2s elapsed, ~4s remaining)
+16:45:59.268107 [receiver] 75% complete (7.0s elapsed, ~2s remaining)
+^C
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
+[get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
+[get] rejected by serve: SERVER_BUSY
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
+[get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
+[get] Received SESSION_REQ. Allocating 1 GB ring buffer...
+16:46:20.214878 [receiver] session handed off from get: sessionID=0x9E92E01A file="big.bin" size=1073741824
+16:46:20.398498 [receiver] found checkpoint: HC=702376 offset=960851736, sending RESUME_REQ
+16:46:20.651639 [receiver] RESUME_ACCEPT: starting from seq=702300 (offset=960746400)
+16:46:20.836111 [receiver] RESUMED: buffer from seq=702300 (82599 remaining chunks), writing to big.bin
+16:46:20.836161 [receiver] heartbeat generator started
+16:46:20.836167 [receiver] FEC decoder enabled: block_size=100
+16:46:20.938942 [receiver] 25% complete (0.1s elapsed, ~0s remaining)
+16:46:20.939498 [receiver] 50% complete (0.1s elapsed, ~0s remaining)
+16:46:20.939544 [receiver] 75% complete (0.1s elapsed, ~0s remaining)
+16:46:23.957309 [receiver] all 784899 chunks received, finalizing...
+16:46:24.006989 [receiver] transfer stats: received=82599 duplicates=1826 | FEC: blocks_recovered=0 shards_recovered=0
+16:46:24.007005 [receiver] hash verified: 0x07EE661A9A06E0C4
+16:46:24.007434 [receiver] ACK_CLOSE received, entering linger state
+16:46:27.008723 [receiver] transfer complete: big.bin (1073741824 bytes)
+[get] TRANSFER COMPLETE
+derrybm@killdozer:~/projects/hpuft$
 
 
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> git status
 On branch main
-Your branch is up to date with 'origin/main'.
 
 Changes not staged for commit:
   (use "git add <file>..." to update what will be committed)
   (use "git restore <file>..." to discard changes in working directory)
-        modified:   cmd/hpuft/serve.go
-        modified:   protocol/payload.go
-        modified:   protocol/types.go
-        modified:   receiver/buffer.go
-        modified:   receiver/receiver.go
-        modified:   receiver/writer.go
-        modified:   sender/congestion_test.go
-
-Untracked files:
-  (use "git add <file>..." to include in what will be committed)
-        integration/
-        receiver/checkpoint.go
-        sender/sliding_window_test.go
+        modified:   last_log.log
+        modified:   sender/sender.go
 
 no changes added to commit (use "git add" and/or "git commit -a")
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> git add .
-The file will have its original line endings in your working directory
-warning: LF will be replaced by CRLF in receiver/receiver.go.
 warning: LF will be replaced by CRLF in sender/sender.go.
 The file will have its original line endings in your working directory
-warning: LF will be replaced by CRLF in integration/transfer_test.go.
-The file will have its original line endings in your working directory
-warning: LF will be replaced by CRLF in receiver/checkpoint.go.
-The file will have its original line endings in your working directory
-warning: LF will be replaced by CRLF in sender/sliding_window_test.go.
-The file will have its original line endings in your working directory
-[main b62c537] ADD: resumable transfers
- 12 files changed, 1552 insertions(+), 166 deletions(-)
- create mode 100644 integration/transfer_test.go
- rewrite last_log.log (80%)
- create mode 100644 receiver/checkpoint.go
- create mode 100644 sender/sliding_window_test.go
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft> git commit -m "FIX FEC block boundary panic and server busy"
+[main 3c77f14] FIX FEC block boundary panic and server busy
+ 2 files changed, 170 insertions(+), 210 deletions(-)
+ rewrite last_log.log (94%)
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> git push
-Enumerating objects: 35, done.
-Counting objects: 100% (35/35), done.
+Enumerating objects: 9, done.
+Counting objects: 100% (9/9), done.
 Delta compression using up to 20 threads
-Compressing objects: 100% (18/18), done.
-Writing objects: 100% (20/20), 17.35 KiB | 4.34 MiB/s, done.
-Total 20 (delta 13), reused 0 (delta 0), pack-reused 0
-remote: Resolving deltas: 100% (13/13), completed with 13 local objects.
+Compressing objects: 100% (5/5), done.
+Writing objects: 100% (5/5), 3.14 KiB | 3.14 MiB/s, done.
+Total 5 (delta 3), reused 0 (delta 0), pack-reused 0
+remote: Resolving deltas: 100% (3/3), completed with 3 local objects.
 To https://github.com/Silencer0151/hpuft.git
-   67d16b8..b62c537  main -> main
+   b62c537..3c77f14  main -> main
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\build.bat
 
 C:\Users\nitro\vscode_projects\go_projects\hpuft>go build -o hpuft.exe ./cmd/hpuft
-PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\
-[serve] Online. Listening on [::]:9001
-[serve] Manifest loaded: 11 authorized files found in .\received\
-16:29:21.629277 [serve] ACCEPTED 192.168.50.9:33379: PULL_REQ for "big.bin"
-16:29:22.549341 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-16:29:22.549858 [calibration] burst complete (10 packets sent), switching to adaptive pacing
-16:29:28.641094 [serve] REJECTED 192.168.50.9:44923: SERVER_BUSY (Transferring to 192.168.50.9:33379)
-16:29:35.452307 [serve] REJECTED 192.168.50.9:44089: SERVER_BUSY (Transferring to 192.168.50.9:33379)
-16:29:48.126853 [serve] REJECTED 192.168.50.9:37661: SERVER_BUSY (Transferring to 192.168.50.9:33379)
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\ -debug
 [serve] Online. Listening on [::]:9001
 [serve] Manifest loaded: 11 authorized files found in .\received\
-16:31:00.172358 [serve] ACCEPTED 192.168.50.9:53251: PULL_REQ for "big.bin"
-16:31:00.172880 [sender] hashing file: C:\Users\nitro\vscode_projects\go_projects\hpuft\received\big.bin (1073741824 bytes)
-16:31:00.397754 [sender] file hash: 0x07EE661A9A06E0C4
-16:31:00.397754 [sender] sending SESSION_REQ: sessionID=0x4BD4747F -> 192.168.50.9:53251 encrypted=false
-16:31:00.503786 [sender] RESUME_ACCEPT: starting from seq=184155 (offset=251924040)
-16:31:00.503786 [sender] file seeked to offset 251924040 for resume
-16:31:00.503786 [calibration] burst: 10 packets at wire speed (link-capacity probe)
-16:31:00.504289 [sender] congestion control ENABLED, starting rate=2.00 MB/s
-16:31:00.504358 [sender] FEC enabled: block_size=100, initial_parity=5%
-16:31:00.654557 [cc_debug] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=0.00)
-16:31:00.654557 [calibration] ended early by heartbeat after 0/10 burst packets
-16:31:00.694332 [fec-encoder] WARNING: block 1841 had 45 shards when block 1842 started (auto-flushing)
-16:31:00.748153 [fec-encoder] RS encode failed: fec: all shards must be equal length: shard 45 has length 1368, shard 0 has length 0
-panic: runtime error: slice bounds out of range [:1368] with capacity 0
-
-goroutine 8 [running]:
-hpuft/sender.(*BlockEncoder).AddShard(0x30965b70c070, 0x732, {0x30965b740580, 0x558, 0x30965b55ccc0?})
-        C:/Users/nitro/vscode_projects/go_projects/hpuft/sender/fec_sender.go:99 +0x471
-hpuft/sender.(*Sender).Send(0x30965b567e10)
-        C:/Users/nitro/vscode_projects/go_projects/hpuft/sender/sender.go:769 +0x3645
-main.handlePullReq.func1({0x30965b54e280?, 0x0?}, {0x30965b548780, 0x7}, 0x4bd4747f, 0x30965b55ccc0, {0x30965b5da340, 0x20, 0x20}, 0x0)
-        C:/Users/nitro/vscode_projects/go_projects/hpuft/cmd/hpuft/serve.go:174 +0x3af
-created by main.handlePullReq in goroutine 1
-        C:/Users/nitro/vscode_projects/go_projects/hpuft/cmd/hpuft/serve.go:150 +0x62d
+16:45:08.731456 [serve] ACCEPTED 192.168.50.9:52863: PULL_REQ for "big.bin"
+16:45:08.732678 [sender] hashing file: C:\Users\nitro\vscode_projects\go_projects\hpuft\received\big.bin (1073741824 bytes)
+16:45:08.978018 [sender] file hash: 0x07EE661A9A06E0C4
+16:45:08.978018 [sender] sending SESSION_REQ: sessionID=0xD7E9A007 -> 192.168.50.9:52863 encrypted=false
+16:45:09.097829 [sender] RESUME_ACCEPT: starting from seq=184100 (offset=251925408)
+16:45:09.097829 [sender] file seeked to offset 251848800 for resume
+16:45:09.097829 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+16:45:09.097829 [sender] congestion control ENABLED, starting rate=2.00 MB/s
+16:45:09.097829 [sender] FEC enabled: block_size=100, initial_parity=5%
+16:45:09.252207 [cc_debug] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=0.00)
+16:45:09.252207 [calibration] ended early by heartbeat after 0/10 burst packets
+16:45:09.352024 [cc_debug] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.66)
+16:45:09.452237 [cc_debug] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=2.44)
+16:45:09.553329 [cc_debug] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=2.28)
+16:45:09.651619 [cc_debug] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.37)
+16:45:09.752705 [cc_debug] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=4.18)
+16:45:09.852673 [cc_debug] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=4.96)
+16:45:09.952546 [cc_debug] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=6.09)
+16:45:10.052546 [cc_debug] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=7.53)
+16:45:10.098480 [diag] window_stall: 85ms in 85 sleeps | new_pkts_sent: 2693 | seqNum=186793
+16:45:10.152102 [cc_debug] INCREASE (phase1): 14.90 -> 18.63 MB/s (loss=0.00% delivery=9.46)
+16:45:10.251880 [cc_debug] INCREASE (phase1): 18.63 -> 23.28 MB/s (loss=0.00% delivery=11.11)
+16:45:10.302898 [cc_debug] INCREASE (phase1): 23.28 -> 29.10 MB/s (loss=0.00% delivery=14.73)
+16:45:10.352779 [cc_debug] INCREASE (phase1): 29.10 -> 36.38 MB/s (loss=0.00% delivery=20.17)
+16:45:10.403919 [cc_debug] INCREASE (phase1): 36.38 -> 45.47 MB/s (loss=0.00% delivery=22.32)
+16:45:10.454015 [cc_debug] INCREASE (phase1): 45.47 -> 56.84 MB/s (loss=0.00% delivery=31.28)
+16:45:10.504466 [cc_debug] INCREASE (phase1): 56.84 -> 71.05 MB/s (loss=0.00% delivery=44.94)
+16:45:10.555272 [cc_debug] INCREASE (phase1): 71.05 -> 88.82 MB/s (loss=0.00% delivery=58.90)
+16:45:10.605507 [cc_debug] INCREASE (phase1): 88.82 -> 111.02 MB/s (loss=0.00% delivery=63.46)
+16:45:10.656588 [cc_debug] INCREASE (phase1): 111.02 -> 138.78 MB/s (loss=0.00% delivery=87.63)
+16:45:10.701898 [cc_debug] INCREASE (phase1): 138.78 -> 173.47 MB/s (loss=0.00% delivery=113.54)
+16:45:10.701898 [sender] queued 14 new NACKs (14 total pending)
+16:45:10.727857 [cc_debug] INCREASE (phase1): 173.47 -> 216.84 MB/s (loss=0.00% delivery=114.41)
+16:45:10.762483 [cc_debug] INCREASE (phase1): 216.84 -> 271.05 MB/s (loss=0.00% delivery=90.63)
+16:45:10.762483 [sender] queued 166 new NACKs (166 total pending)
+16:45:10.813178 [cc_debug] INCREASE (phase1): 271.05 -> 338.81 MB/s (loss=0.00% delivery=114.49)
+16:45:10.813178 [sender] queued 166 new NACKs (166 total pending)
+16:45:10.838378 [cc_debug] INCREASE (phase1): 338.81 -> 423.52 MB/s (loss=0.00% delivery=114.47)
+16:45:10.838378 [sender] queued 166 new NACKs (166 total pending)
+16:45:10.862997 [cc_debug] INCREASE (phase1): 423.52 -> 529.40 MB/s (loss=0.00% delivery=114.51)
+16:45:10.862997 [cc_debug] CEILING: rate capped at 458.04 MB/s (4.0x peak delivery 114.51 MB/s)
+16:45:10.888063 [cc_debug] → Phase 2 (additive): delivery collapse 105.52 MB/s < 25% of rate 458.04 MB/s (NACKs=166)
+16:45:10.888583 [sender] queued 166 new NACKs (166 total pending)
+16:45:10.913537 [sender] queued 166 new NACKs (166 total pending)
+16:45:10.937648 [sender] queued 114 new NACKs (114 total pending)
+16:45:10.963147 [cc_debug] INCREASE (phase2): 137.41 -> 137.44 MB/s (loss=0.00% delivery=105.49)
+16:45:10.963147 [sender] queued 114 new NACKs (114 total pending)
+16:45:10.988275 [sender] queued 114 new NACKs (114 total pending)
+16:45:11.074157 [cc_debug] INCREASE (phase2): 137.44 -> 137.47 MB/s (loss=0.00% delivery=98.23)
+16:45:11.074157 [sender] queued 166 new NACKs (166 total pending)
+16:45:11.098940 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 52392 | seqNum=239185
+16:45:11.124696 [cc_debug] INCREASE (phase2): 137.47 -> 137.51 MB/s (loss=0.00% delivery=114.42)
+16:45:11.124696 [sender] queued 166 new NACKs (166 total pending)
+16:45:12.099185 [diag] window_stall: 284ms in 284 sleeps | new_pkts_sent: 39616 | seqNum=278801
+16:45:13.099226 [diag] window_stall: 543ms in 543 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:13.444985 [serve] REJECTED 192.168.50.9:45716: SERVER_BUSY (Transferring to 192.168.50.9:52863)
+16:45:14.098906 [diag] window_stall: 532ms in 532 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:15.099060 [diag] window_stall: 544ms in 544 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:16.098842 [diag] window_stall: 540ms in 540 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:16.939741 [serve] REJECTED 192.168.50.9:52672: SERVER_BUSY (Transferring to 192.168.50.9:52863)
+16:45:17.098618 [diag] window_stall: 541ms in 541 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:18.098797 [diag] window_stall: 542ms in 542 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:19.010224 [serve] REJECTED 192.168.50.9:33635: SERVER_BUSY (Transferring to 192.168.50.9:52863)
+16:45:19.098622 [diag] window_stall: 538ms in 538 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:19.966857 [serve] REJECTED 192.168.50.9:57063: SERVER_BUSY (Transferring to 192.168.50.9:52863)
+16:45:20.098875 [diag] window_stall: 547ms in 547 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:21.098440 [diag] window_stall: 537ms in 537 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:22.098582 [diag] window_stall: 522ms in 522 sleeps | new_pkts_sent: 0 | seqNum=278801
+16:45:23.098507 [diag] window_stall: 547ms in 547 sleeps | new_pkts_sent: 0 | seqNum=278801
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\ -debug
+[serve] Online. Listening on [::]:9001
+[serve] Manifest loaded: 11 authorized files found in .\received\
+16:45:51.029086 [serve] ACCEPTED 192.168.50.9:59225: PULL_REQ for "big.bin"
+16:45:51.029826 [sender] hashing file: C:\Users\nitro\vscode_projects\go_projects\hpuft\received\big.bin (1073741824 bytes)
+16:45:51.267756 [sender] file hash: 0x07EE661A9A06E0C4
+16:45:51.267756 [sender] sending SESSION_REQ: sessionID=0xD12E096B -> 192.168.50.9:59225 encrypted=false
+16:45:51.402093 [sender] RESUME_ACCEPT: starting from seq=228400 (offset=312501816)
+16:45:51.402093 [sender] file seeked to offset 312451200 for resume
+16:45:51.402606 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+16:45:51.402606 [sender] congestion control ENABLED, starting rate=2.00 MB/s
+16:45:51.402606 [sender] FEC enabled: block_size=100, initial_parity=5%
+16:45:51.565932 [cc_debug] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=0.00)
+16:45:51.565932 [calibration] ended early by heartbeat after 0/10 burst packets
+16:45:51.665375 [cc_debug] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.73)
+16:45:51.765731 [cc_debug] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=2.40)
+16:45:51.865625 [cc_debug] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=2.68)
+16:45:51.965133 [cc_debug] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.29)
+16:45:52.065107 [cc_debug] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=4.07)
+16:45:52.165723 [cc_debug] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=5.03)
+16:45:52.266257 [cc_debug] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=6.10)
+16:45:52.366042 [cc_debug] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=7.53)
+16:45:52.402973 [diag] window_stall: 92ms in 92 sleeps | new_pkts_sent: 2662 | seqNum=231062
+16:45:52.466144 [cc_debug] INCREASE (phase1): 14.90 -> 18.63 MB/s (loss=0.00% delivery=9.56)
+16:45:52.565243 [cc_debug] INCREASE (phase1): 18.63 -> 23.28 MB/s (loss=0.00% delivery=11.56)
+16:45:52.616148 [cc_debug] INCREASE (phase1): 23.28 -> 29.10 MB/s (loss=0.00% delivery=14.63)
+16:45:52.667319 [cc_debug] INCREASE (phase1): 29.10 -> 36.38 MB/s (loss=0.00% delivery=20.09)
+16:45:52.716587 [cc_debug] INCREASE (phase1): 36.38 -> 45.47 MB/s (loss=0.00% delivery=23.49)
+16:45:52.766495 [cc_debug] INCREASE (phase1): 45.47 -> 56.84 MB/s (loss=0.00% delivery=29.91)
+16:45:52.817969 [cc_debug] INCREASE (phase1): 56.84 -> 71.05 MB/s (loss=0.00% delivery=37.19)
+16:45:52.866873 [cc_debug] INCREASE (phase1): 71.05 -> 88.82 MB/s (loss=0.00% delivery=46.72)
+16:45:52.918745 [cc_debug] INCREASE (phase1): 88.82 -> 111.02 MB/s (loss=0.00% delivery=59.96)
+16:45:52.969284 [cc_debug] INCREASE (phase1): 111.02 -> 138.78 MB/s (loss=0.00% delivery=76.15)
+16:45:53.021709 [cc_debug] INCREASE (phase1): 138.78 -> 173.47 MB/s (loss=0.00% delivery=106.84)
+16:45:53.046690 [cc_debug] INCREASE (phase1): 173.47 -> 216.84 MB/s (loss=0.00% delivery=114.35)
+16:45:53.046690 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.072432 [cc_debug] INCREASE (phase1): 216.84 -> 271.05 MB/s (loss=0.00% delivery=114.66)
+16:45:53.072432 [sender] queued 63 new NACKs (63 total pending)
+16:45:53.096431 [cc_debug] INCREASE (phase1): 271.05 -> 338.81 MB/s (loss=0.00% delivery=114.47)
+16:45:53.125431 [cc_debug] INCREASE (phase1): 338.81 -> 423.52 MB/s (loss=0.00% delivery=86.67)
+16:45:53.126431 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.176383 [cc_debug] INCREASE (phase1): 423.52 -> 529.40 MB/s (loss=0.00% delivery=114.51)
+16:45:53.176383 [cc_debug] CEILING: rate capped at 458.64 MB/s (4.0x peak delivery 114.66 MB/s)
+16:45:53.176383 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.200958 [cc_debug] → Phase 2 (additive): delivery collapse 114.38 MB/s < 25% of rate 458.64 MB/s (NACKs=166)
+16:45:53.200958 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.226349 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.251369 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.275596 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=105.40)
+16:45:53.275596 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.275596 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.301327 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.326442 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=113.75)
+16:45:53.326442 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.326442 [sender] queued 138 new NACKs (138 total pending)
+16:45:53.351101 [sender] queued 97 new NACKs (97 total pending)
+16:45:53.376225 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=105.41)
+16:45:53.376225 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.376225 [sender] queued 97 new NACKs (97 total pending)
+16:45:53.402909 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 53486 | seqNum=284548
+16:45:53.492997 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=90.47)
+16:45:53.492997 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.492997 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.543913 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.569368 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.594347 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=114.63)
+16:45:53.594347 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.594347 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.619305 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.644282 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.669353 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=105.51)
+16:45:53.669415 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.669415 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.694189 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.718911 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.744140 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=105.52)
+16:45:53.744140 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.744666 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.768922 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.794463 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.819055 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=105.57)
+16:45:53.819055 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.819055 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.844513 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.869013 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.894223 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=114.57)
+16:45:53.894223 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.894743 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.918917 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.944201 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.969162 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=105.47)
+16:45:53.969162 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:53.969162 [sender] queued 166 new NACKs (166 total pending)
+16:45:53.993917 [sender] queued 166 new NACKs (166 total pending)
+16:45:54.018697 [sender] queued 166 new NACKs (166 total pending)
+16:45:54.044346 [cc_debug] INCREASE (phase2): 137.59 -> 137.61 MB/s (loss=0.00% delivery=100.60)
+16:45:54.044346 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:54.044346 [sender] queued 57 new NACKs (166 total pending)
+16:45:54.069588 [sender] queued 166 new NACKs (275 total pending)
+16:45:54.119665 [sender] queued 166 new NACKs (166 total pending)
+16:45:54.220877 [sender] queued 166 new NACKs (166 total pending)
+16:45:54.320533 [sender] queued 166 new NACKs (166 total pending)
+16:45:54.403114 [diag] window_stall: 231ms in 231 sleeps | new_pkts_sent: 46600 | seqNum=331148
+16:45:54.421197 [sender] queued 166 new NACKs (166 total pending)
+16:45:54.521300 [cc_debug] COLLAPSE-DECREASE (streak=5): 137.59 -> 116.95 MB/s (peak=114.66 delivery=4.53 NACKs=166)
+16:45:54.521300 [sender] queued 166 new NACKs (166 total pending)
+16:45:54.621459 [sender] queued 59 new NACKs (59 total pending)
+16:45:54.734420 [cc_debug] INCREASE (phase2): 116.95 -> 116.97 MB/s (loss=0.00% delivery=3.09)
+16:45:54.820451 [cc_debug] INCREASE (phase2): 116.97 -> 118.21 MB/s (loss=0.00% delivery=71.26)
+16:45:54.870541 [cc_debug] INCREASE (phase2): 118.21 -> 119.46 MB/s (loss=0.00% delivery=85.26)
+16:45:54.920361 [cc_debug] INCREASE (phase2): 119.46 -> 120.70 MB/s (loss=0.00% delivery=90.58)
+16:45:54.920361 [sender] queued 45 new NACKs (45 total pending)
+16:45:54.973783 [cc_debug] INCREASE (phase2): 120.70 -> 121.95 MB/s (loss=0.00% delivery=83.10)
+16:45:55.020437 [cc_debug] INCREASE (phase2): 121.95 -> 123.28 MB/s (loss=0.00% delivery=95.42)
+16:45:55.020437 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.070300 [cc_debug] INCREASE (phase2): 123.28 -> 124.62 MB/s (loss=0.00% delivery=94.65)
+16:45:55.070300 [sender] queued 15 new NACKs (15 total pending)
+16:45:55.128184 [cc_debug] INCREASE (phase2): 124.62 -> 125.96 MB/s (loss=0.00% delivery=77.04)
+16:45:55.128184 [sender] queued 133 new NACKs (133 total pending)
+16:45:55.170318 [cc_debug] INCREASE (phase2): 125.96 -> 127.29 MB/s (loss=0.00% delivery=89.97)
+16:45:55.170318 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.219831 [cc_debug] INCREASE (phase2): 127.29 -> 128.62 MB/s (loss=0.00% delivery=96.31)
+16:45:55.219831 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.270075 [cc_debug] INCREASE (phase2): 128.62 -> 129.94 MB/s (loss=0.00% delivery=99.36)
+16:45:55.270075 [sender] queued 104 new NACKs (104 total pending)
+16:45:55.330451 [cc_debug] INCREASE (phase2): 129.94 -> 130.03 MB/s (loss=0.00% delivery=73.30)
+16:45:55.370474 [cc_debug] INCREASE (phase2): 130.03 -> 130.89 MB/s (loss=0.00% delivery=112.41)
+16:45:55.370474 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.395490 [cc_debug] INCREASE (phase2): 130.89 -> 132.21 MB/s (loss=0.00% delivery=102.45)
+16:45:55.395490 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.402765 [diag] window_stall: 176ms in 176 sleeps | new_pkts_sent: 45051 | seqNum=376199
+16:45:55.420548 [cc_debug] INCREASE (phase2): 132.21 -> 133.46 MB/s (loss=0.00% delivery=114.49)
+16:45:55.420548 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.445559 [cc_debug] INCREASE (phase2): 133.46 -> 134.77 MB/s (loss=0.00% delivery=111.43)
+16:45:55.445559 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.470379 [cc_debug] INCREASE (phase2): 134.77 -> 135.61 MB/s (loss=0.00% delivery=102.52)
+16:45:55.470379 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.495210 [cc_debug] INCREASE (phase2): 135.61 -> 136.44 MB/s (loss=0.00% delivery=108.13)
+16:45:55.495210 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.520266 [cc_debug] INCREASE (phase2): 136.44 -> 137.78 MB/s (loss=0.00% delivery=104.34)
+16:45:55.520266 [cc_debug] CEILING: rate capped at 137.59 MB/s (1.2x peak delivery 114.66 MB/s)
+16:45:55.520266 [sender] queued 73 new NACKs (73 total pending)
+16:45:55.633244 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.658332 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.683282 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.707998 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.733446 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.758117 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.783055 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.808217 [sender] queued 135 new NACKs (135 total pending)
+16:45:55.833475 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.882890 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.908534 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.958102 [sender] queued 166 new NACKs (166 total pending)
+16:45:55.982901 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.033133 [sender] queued 90 new NACKs (90 total pending)
+16:45:56.083449 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.132932 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.182933 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.233380 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.283121 [sender] queued 150 new NACKs (150 total pending)
+16:45:56.333409 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.383618 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.402785 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 71157 | seqNum=447356
+16:45:56.408511 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.433633 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.458397 [sender] queued 138 new NACKs (138 total pending)
+16:45:56.483630 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.533679 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.558306 [sender] queued 23 new NACKs (23 total pending)
+16:45:56.583364 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.633560 [sender] queued 151 new NACKs (151 total pending)
+16:45:56.683621 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.733900 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.783120 [sender] queued 8 new NACKs (8 total pending)
+16:45:56.833226 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.884300 [sender] queued 166 new NACKs (166 total pending)
+16:45:56.933562 [sender] queued 16 new NACKs (16 total pending)
+16:45:56.983554 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.033070 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.058803 [sender] queued 46 new NACKs (46 total pending)
+16:45:57.084149 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.133960 [sender] queued 25 new NACKs (25 total pending)
+16:45:57.183220 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.234072 [sender] queued 59 new NACKs (59 total pending)
+16:45:57.284076 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.333905 [sender] queued 42 new NACKs (42 total pending)
+16:45:57.383798 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.402711 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 71504 | seqNum=518860
+16:45:57.434161 [sender] queued 144 new NACKs (144 total pending)
+16:45:57.509029 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.533972 [sender] queued 137 new NACKs (137 total pending)
+16:45:57.583733 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.635195 [sender] queued 109 new NACKs (109 total pending)
+16:45:57.683472 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.733844 [sender] queued 57 new NACKs (57 total pending)
+16:45:57.809251 [sender] queued 166 new NACKs (166 total pending)
+16:45:57.859251 [sender] queued 28 new NACKs (28 total pending)
+16:45:57.909380 [sender] queued 67 new NACKs (67 total pending)
+16:45:57.959081 [sender] queued 79 new NACKs (79 total pending)
+16:45:58.058421 [sender] queued 41 new NACKs (41 total pending)
+16:45:58.084648 [sender] queued 96 new NACKs (96 total pending)
+16:45:58.159424 [sender] queued 67 new NACKs (67 total pending)
+16:45:58.183835 [sender] queued 62 new NACKs (62 total pending)
+16:45:58.234281 [sender] queued 46 new NACKs (46 total pending)
+16:45:58.284728 [sender] queued 20 new NACKs (20 total pending)
+16:45:58.384797 [sender] queued 81 new NACKs (81 total pending)
+16:45:58.402870 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 68339 | seqNum=587199
+16:45:58.459830 [sender] queued 40 new NACKs (40 total pending)
+16:45:58.485023 [sender] queued 85 new NACKs (85 total pending)
+16:45:58.535124 [sender] queued 110 new NACKs (110 total pending)
+16:45:58.584548 [sender] queued 37 new NACKs (37 total pending)
+16:45:58.634178 [sender] queued 79 new NACKs (79 total pending)
+16:45:58.685062 [sender] queued 100 new NACKs (100 total pending)
+16:45:58.734899 [sender] queued 94 new NACKs (94 total pending)
+16:45:58.835080 [sender] queued 37 new NACKs (37 total pending)
+16:45:58.909575 [sender] queued 71 new NACKs (71 total pending)
+16:45:58.985108 [sender] queued 82 new NACKs (82 total pending)
+16:45:59.034814 [sender] queued 49 new NACKs (49 total pending)
+16:45:59.085424 [sender] queued 109 new NACKs (109 total pending)
+16:45:59.186130 [sender] queued 27 new NACKs (27 total pending)
+16:45:59.236358 [sender] queued 9 new NACKs (9 total pending)
+16:45:59.402855 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 73491 | seqNum=660690
+16:45:59.435375 [sender] queued 69 new NACKs (69 total pending)
+16:45:59.511047 [sender] queued 70 new NACKs (70 total pending)
+16:45:59.585894 [sender] queued 72 new NACKs (72 total pending)
+16:45:59.661055 [sender] queued 77 new NACKs (77 total pending)
+16:45:59.685678 [sender] queued 70 new NACKs (70 total pending)
+16:45:59.736572 [sender] queued 58 new NACKs (58 total pending)
+16:45:59.786524 [sender] queued 72 new NACKs (72 total pending)
+16:45:59.861931 [sender] queued 18 new NACKs (18 total pending)
+16:45:59.887216 [sender] queued 63 new NACKs (63 total pending)
+16:45:59.936295 [sender] queued 63 new NACKs (63 total pending)
+16:46:00.036938 [sender] queued 61 new NACKs (61 total pending)
+16:46:00.403077 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 72563 | seqNum=733253
+16:46:01.402852 [diag] window_stall: 354ms in 354 sleeps | new_pkts_sent: 26205 | seqNum=759458
+16:46:02.403161 [diag] window_stall: 560ms in 560 sleeps | new_pkts_sent: 0 | seqNum=759458
+16:46:03.402740 [diag] window_stall: 544ms in 544 sleeps | new_pkts_sent: 0 | seqNum=759458
+16:46:04.403536 [diag] window_stall: 542ms in 542 sleeps | new_pkts_sent: 0 | seqNum=759458
+16:46:05.402658 [diag] window_stall: 554ms in 554 sleeps | new_pkts_sent: 0 | seqNum=759458
+16:46:06.402807 [diag] window_stall: 543ms in 543 sleeps | new_pkts_sent: 0 | seqNum=759458
+16:46:06.461580 [serve] REJECTED 192.168.50.9:40357: SERVER_BUSY (Transferring to 192.168.50.9:59225)
+16:46:07.402832 [diag] window_stall: 541ms in 541 sleeps | new_pkts_sent: 0 | seqNum=759458
+PS C:\Users\nitro\vscode_projects\go_projects\hpuft> .\hpuft.exe serve -listen :9001 -dir .\received\ -debug
+[serve] Online. Listening on [::]:9001
+[serve] Manifest loaded: 11 authorized files found in .\received\
+16:46:19.129820 [serve] ACCEPTED 192.168.50.9:33346: PULL_REQ for "big.bin"
+16:46:19.130350 [sender] hashing file: C:\Users\nitro\vscode_projects\go_projects\hpuft\received\big.bin (1073741824 bytes)
+16:46:19.367801 [sender] file hash: 0x07EE661A9A06E0C4
+16:46:19.367801 [sender] sending SESSION_REQ: sessionID=0x9E92E01A -> 192.168.50.9:33346 encrypted=false
+16:46:19.805136 [sender] RESUME_ACCEPT: starting from seq=702300 (offset=960851736)
+16:46:19.805136 [sender] file seeked to offset 960746400 for resume
+16:46:19.805136 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+16:46:19.805136 [sender] congestion control ENABLED, starting rate=2.00 MB/s
+16:46:19.805136 [sender] FEC enabled: block_size=100, initial_parity=5%
+16:46:20.090103 [cc_debug] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=0.00)
+16:46:20.090103 [calibration] ended early by heartbeat after 0/10 burst packets
+16:46:20.190154 [cc_debug] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.79)
+16:46:20.290689 [cc_debug] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=2.44)
+16:46:20.390667 [cc_debug] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=2.61)
+16:46:20.489633 [cc_debug] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.41)
+16:46:20.590068 [cc_debug] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=4.09)
+16:46:20.690350 [cc_debug] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=4.88)
+16:46:20.790023 [cc_debug] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=6.22)
+16:46:20.805312 [diag] window_stall: 159ms in 159 sleeps | new_pkts_sent: 1937 | seqNum=704237
+16:46:20.890090 [cc_debug] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=7.57)
+16:46:20.989719 [cc_debug] INCREASE (phase1): 14.90 -> 18.63 MB/s (loss=0.00% delivery=9.74)
+16:46:21.090270 [cc_debug] INCREASE (phase1): 18.63 -> 23.28 MB/s (loss=0.00% delivery=11.12)
+16:46:21.140730 [cc_debug] INCREASE (phase1): 23.28 -> 29.10 MB/s (loss=0.00% delivery=14.72)
+16:46:21.190910 [cc_debug] INCREASE (phase1): 29.10 -> 36.38 MB/s (loss=0.00% delivery=19.41)
+16:46:21.240117 [cc_debug] INCREASE (phase1): 36.38 -> 45.47 MB/s (loss=0.00% delivery=24.83)
+16:46:21.290133 [cc_debug] INCREASE (phase1): 45.47 -> 56.84 MB/s (loss=0.00% delivery=32.85)
+16:46:21.340342 [cc_debug] INCREASE (phase1): 56.84 -> 71.05 MB/s (loss=0.00% delivery=41.35)
+16:46:21.391975 [cc_debug] INCREASE (phase1): 71.05 -> 88.82 MB/s (loss=0.00% delivery=51.17)
+16:46:21.443090 [cc_debug] INCREASE (phase1): 88.82 -> 111.02 MB/s (loss=0.00% delivery=61.90)
+16:46:21.494125 [cc_debug] INCREASE (phase1): 111.02 -> 138.78 MB/s (loss=0.00% delivery=83.70)
+16:46:21.545886 [cc_debug] INCREASE (phase1): 138.78 -> 173.47 MB/s (loss=0.00% delivery=100.40)
+16:46:21.570721 [cc_debug] INCREASE (phase1): 173.47 -> 216.84 MB/s (loss=0.00% delivery=112.58)
+16:46:21.571241 [sender] queued 166 new NACKs (166 total pending)
+16:46:21.595362 [cc_debug] INCREASE (phase1): 216.84 -> 271.05 MB/s (loss=0.00% delivery=114.60)
+16:46:21.595362 [sender] queued 42 new NACKs (42 total pending)
+16:46:21.620797 [cc_debug] INCREASE (phase1): 271.05 -> 338.81 MB/s (loss=0.00% delivery=114.45)
+16:46:21.650742 [cc_debug] INCREASE (phase1): 338.81 -> 423.52 MB/s (loss=0.00% delivery=87.18)
+16:46:21.650742 [sender] queued 166 new NACKs (166 total pending)
+16:46:21.700599 [cc_debug] INCREASE (phase1): 423.52 -> 529.40 MB/s (loss=0.00% delivery=114.38)
+16:46:21.700599 [cc_debug] CEILING: rate capped at 458.41 MB/s (4.0x peak delivery 114.60 MB/s)
+16:46:21.700599 [sender] queued 166 new NACKs (166 total pending)
+16:46:21.725911 [cc_debug] → Phase 2 (additive): delivery collapse 114.42 MB/s < 25% of rate 458.41 MB/s (NACKs=166)
+16:46:21.725911 [sender] queued 166 new NACKs (166 total pending)
+16:46:21.750316 [sender] queued 166 new NACKs (166 total pending)
+16:46:21.776138 [sender] queued 166 new NACKs (166 total pending)
+16:46:21.800673 [cc_debug] INCREASE (phase2): 137.52 -> 137.54 MB/s (loss=0.00% delivery=105.48)
+16:46:21.800673 [sender] queued 166 new NACKs (166 total pending)
+16:46:21.805232 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 44248 | seqNum=748485
+16:46:21.826151 [sender] queued 166 new NACKs (166 total pending)
+16:46:21.850890 [cc_debug] INCREASE (phase2): 137.54 -> 137.56 MB/s (loss=0.00% delivery=108.77)
+16:46:21.850890 [sender] queued 97 new NACKs (97 total pending)
+16:46:21.875662 [sender] queued 97 new NACKs (97 total pending)
+16:46:21.900744 [cc_debug] INCREASE (phase2): 137.56 -> 137.58 MB/s (loss=0.00% delivery=105.50)
+16:46:21.900744 [cc_debug] CEILING: rate capped at 137.58 MB/s (1.2x peak delivery 114.65 MB/s)
+16:46:21.901250 [sender] queued 97 new NACKs (97 total pending)
+16:46:22.019634 [cc_debug] INCREASE (phase2): 137.58 -> 137.60 MB/s (loss=0.00% delivery=91.33)
+16:46:22.019815 [cc_debug] CEILING: rate capped at 137.58 MB/s (1.2x peak delivery 114.65 MB/s)
+16:46:22.019815 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.069268 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.094624 [cc_debug] INCREASE (phase2): 137.58 -> 137.60 MB/s (loss=0.00% delivery=114.55)
+16:46:22.094624 [cc_debug] CEILING: rate capped at 137.58 MB/s (1.2x peak delivery 114.65 MB/s)
+16:46:22.094624 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.119656 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.144332 [cc_debug] INCREASE (phase2): 137.58 -> 137.60 MB/s (loss=0.00% delivery=105.39)
+16:46:22.144332 [cc_debug] CEILING: rate capped at 137.58 MB/s (1.2x peak delivery 114.65 MB/s)
+16:46:22.144332 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.169567 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.194692 [cc_debug] INCREASE (phase2): 137.58 -> 137.60 MB/s (loss=0.00% delivery=105.51)
+16:46:22.194692 [cc_debug] CEILING: rate capped at 137.58 MB/s (1.2x peak delivery 114.65 MB/s)
+16:46:22.194692 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.221341 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.244217 [cc_debug] INCREASE (phase2): 137.58 -> 137.60 MB/s (loss=0.00% delivery=114.58)
+16:46:22.244741 [cc_debug] CEILING: rate capped at 137.58 MB/s (1.2x peak delivery 114.65 MB/s)
+16:46:22.244741 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.269601 [sender] queued 166 new NACKs (166 total pending)
+16:46:22.291051 [sender] sent 2 tail block parity packets for block 7848 (99 data shards)
+16:46:22.291571 [sender] all 784899 packets sent in 2.486s (431.84 MB/s) | CC: +35 =1 -0
+16:46:22.291571 [sender] waiting for TRANSFER_COMPLETE...
+16:46:22.294806 [sender] teardown: retransmitting 166/166 NACKed packets (0 on cooldown)
+16:46:22.340500 [cc_debug] INCREASE (phase2): 137.58 -> 137.60 MB/s (loss=0.00% delivery=105.65)
+16:46:22.340500 [cc_debug] CEILING: rate capped at 137.58 MB/s (1.2x peak delivery 114.65 MB/s)
+16:46:22.340500 [sender] teardown: retransmitting 166/166 NACKed packets (0 on cooldown)
+16:46:22.386781 [sender] teardown: retransmitting 20/166 NACKed packets (146 on cooldown)
+16:46:22.394880 [sender] teardown: retransmitting 166/166 NACKed packets (0 on cooldown)
+16:46:22.496193 [sender] teardown: retransmitting 166/166 NACKed packets (0 on cooldown)
+16:46:22.595962 [sender] teardown: retransmitting 166/166 NACKed packets (0 on cooldown)
+16:46:22.695420 [sender] teardown: retransmitting 166/166 NACKed packets (0 on cooldown)
+16:46:22.795287 [cc_debug] COLLAPSE-DECREASE (streak=5): 137.58 -> 116.94 MB/s (peak=114.65 delivery=2.27 NACKs=166)
+16:46:22.795287 [sender] teardown: retransmitting 166/166 NACKed packets (0 on cooldown)
+16:46:22.805259 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 36414 | seqNum=784899
+16:46:22.896133 [sender] teardown: retransmitting 166/166 NACKed packets (0 on cooldown)
+16:46:22.995117 [sender] teardown: retransmitting 166/166 NACKed packets (0 on cooldown)
+16:46:23.095195 [sender] teardown: retransmitting 64/64 NACKed packets (0 on cooldown)
+16:46:23.161157 [sender] received TRANSFER_COMPLETE
+16:46:23.161157 [sender] sent ACK_CLOSE, entering linger state
+16:46:23.805276 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 0 | seqNum=784899
+16:46:24.805358 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 0 | seqNum=784899
+16:46:25.805614 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 0 | seqNum=784899
+16:46:26.161465 [sender] linger complete, session finished
+16:46:26.161508 [serve] TRANSFER COMPLETE: "big.bin" to 192.168.50.9:33346 in 7.032s (431.8 MB/s data, +4.545s repair)
 PS C:\Users\nitro\vscode_projects\go_projects\hpuft>
