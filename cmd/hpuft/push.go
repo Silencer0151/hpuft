@@ -51,6 +51,7 @@ func runPush(args []string) {
 		os.Exit(1)
 	}
 	defer localConn.Close()
+	localConn.SetWriteBuffer(16 * 1024 * 1024)
 
 	rAddr, err := net.ResolveUDPAddr("udp", *serveAddr)
 	if err != nil {
