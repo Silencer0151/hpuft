@@ -490,18 +490,17 @@ func (r *Receiver) Run() error {
 		stats.PacketsReceived, stats.Duplicates, fecStats.BlocksRecovered, fecStats.ShardsRecovered)
 
 	if computedHash != reqPayload.Checksum {
-		// Always print diagnostics on hash mismatch (even non-debug mode).
-		log.Printf("[receiver] HASH MISMATCH: computed=0x%016X expected=0x%016X",
-			computedHash, reqPayload.Checksum)
-		log.Printf("[receiver] buffer stats: received=%d duplicates=%d | FEC: blocks_recovered=%d shards_recovered=%d | bytes_written=%d file_size=%d",
-			stats.PacketsReceived, stats.Duplicates, fecStats.BlocksRecovered, fecStats.ShardsRecovered,
-			writer.BytesWritten(), reqPayload.FileSize)
-
 		// Re-hash the file from disk to determine if corruption is in the
 		// DiskWriter's incremental hash or in the actual received data.
+		diskDiag := ""
 		if diskHash, err := HashFile(outputPath); err == nil {
-			log.Printf("[receiver] DIAG disk re-hash=0x%016X (matches writer=%v, matches expected=%v)",
-				diskHash, diskHash == computedHash, diskHash == reqPayload.Checksum)
+			if diskHash == computedHash {
+				diskDiag = fmt.Sprintf(" | disk re-hash matches writer (data corruption in transfer)")
+			} else if diskHash == reqPayload.Checksum {
+				diskDiag = fmt.Sprintf(" | disk OK but writer hash wrong (DiskWriter bug)")
+			} else {
+				diskDiag = fmt.Sprintf(" | disk=0x%016X (neither match)", diskHash)
+			}
 		}
 
 		rejectPkt := protocol.Packet{
@@ -515,8 +514,9 @@ func (r *Receiver) Run() error {
 		r.conn.WriteToUDP(raw, senderAddr)
 
 		os.Remove(outputPath)
-		return fmt.Errorf("hash mismatch: computed 0x%016X, expected 0x%016X",
-			computedHash, reqPayload.Checksum)
+		return fmt.Errorf("hash mismatch: computed 0x%016X, expected 0x%016X | received=%d dups=%d written=%d%s",
+			computedHash, reqPayload.Checksum,
+			stats.PacketsReceived, stats.Duplicates, writer.BytesWritten(), diskDiag)
 	}
 
 	dbgLog.Printf("[receiver] hash verified: 0x%016X", computedHash)
