@@ -304,11 +304,17 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		// so we can decrease again if needed after recovery.
 		const collapseDecreaseThreshold = 5
 		if tb.collapseHoldStreak >= collapseDecreaseThreshold {
-			// Use peakRate (not smoothedRate) as the decrease base. During a
-			// delivery collapse the EWMA gets poisoned by near-zero delivery
-			// readings (e.g., 5 readings at 4 MB/s drops EWMA from 100 to 20).
-			// peakRate reflects actual link capacity and gives a sensible target.
-			newRate := tb.peakRate * tb.cc.DecreaseFrac
+			// Compound decrease: use the CURRENT rate (not peakRate) so that
+			// successive collapse-decreases keep dropping. The first lands at
+			// peakRate×0.85 (from the ceiling), subsequent ones compound:
+			// 97→82→70→... This lets the sender back off far enough for OS
+			// buffers to drain during sustained overflow.
+			// Floor at 50% of peakRate so we don't crater needlessly.
+			newRate := tb.rate * tb.cc.DecreaseFrac
+			floor := tb.peakRate * 0.50
+			if newRate < floor {
+				newRate = floor
+			}
 			tb.logf("[cc_debug] COLLAPSE-DECREASE (streak=%d): %.2f -> %.2f MB/s (peak=%.2f delivery=%.2f NACKs=%d)",
 				tb.collapseHoldStreak, tb.rate/1e6, newRate/1e6, tb.peakRate/1e6, rawEffective/1e6, hb.NACKCount)
 			tb.rate = newRate
@@ -410,11 +416,12 @@ applyCeiling:
 	//     4× bounds this at ~400 MB/s on a Gigabit LAN — effectively disabling
 	//     pacing just as nodelay would, but without the absurd log output.
 	//
-	// Phase 2 uses 1.5× because by then the delivery rate was measured near
-	// actual link capacity (loss triggered the phase transition at or near the
-	// ceiling), so 1.5× is a reliable upper bound for additive probing.
+	// Phase 2 uses 1.2× because by then the delivery rate was measured near
+	// actual link capacity. 1.5× overshoots Gigabit (~114 MB/s peak) to
+	// 172 MB/s, causing recurring OS buffer overflow and collapse-decrease
+	// cycles. 1.2× (≈137 MB/s) probes headroom without flooding.
 	const phase1CeilingMult = 4.0
-	const phase2CeilingMult = 1.5
+	const phase2CeilingMult = 1.2
 	ceilingMult := phase1CeilingMult
 	if tb.inPhase2 {
 		ceilingMult = phase2CeilingMult
