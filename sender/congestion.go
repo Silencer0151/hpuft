@@ -304,9 +304,13 @@ func (tb *TokenBucket) OnHeartbeat(hb *protocol.HeartbeatPayload) float64 {
 		// so we can decrease again if needed after recovery.
 		const collapseDecreaseThreshold = 5
 		if tb.collapseHoldStreak >= collapseDecreaseThreshold {
-			newRate := tb.smoothedRate * tb.cc.DecreaseFrac
-			tb.logf("[cc_debug] COLLAPSE-DECREASE (streak=%d): %.2f -> %.2f MB/s (delivery=%.2f NACKs=%d)",
-				tb.collapseHoldStreak, tb.rate/1e6, newRate/1e6, rawEffective/1e6, hb.NACKCount)
+			// Use peakRate (not smoothedRate) as the decrease base. During a
+			// delivery collapse the EWMA gets poisoned by near-zero delivery
+			// readings (e.g., 5 readings at 4 MB/s drops EWMA from 100 to 20).
+			// peakRate reflects actual link capacity and gives a sensible target.
+			newRate := tb.peakRate * tb.cc.DecreaseFrac
+			tb.logf("[cc_debug] COLLAPSE-DECREASE (streak=%d): %.2f -> %.2f MB/s (peak=%.2f delivery=%.2f NACKs=%d)",
+				tb.collapseHoldStreak, tb.rate/1e6, newRate/1e6, tb.peakRate/1e6, rawEffective/1e6, hb.NACKCount)
 			tb.rate = newRate
 			tb.collapseHoldStreak = 0
 			tb.decreases.Add(1)
