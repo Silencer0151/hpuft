@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"time"
 )
 
@@ -189,13 +190,38 @@ func runGet(args []string) {
 		os.Exit(1)
 	}
 
+	// sendDisconnect notifies the sender we're leaving so it can release
+	// resources (e.g. the serve daemon's busy flag) immediately.
+	sendDisconnect := func() {
+		pkt := protocol.Packet{
+			Header: protocol.Header{
+				Type:      protocol.PacketSessionReject,
+				SessionID: sessionID,
+			},
+			Payload: []byte{byte(protocol.RejectClientDisconnect)},
+		}
+		if raw, err := protocol.MarshalPacket(&pkt); err == nil {
+			localConn.WriteToUDP(raw, serveSenderAddr)
+		}
+	}
+
 	if !*debug {
 		start := time.Now()
 		errCh := make(chan error, 1)
 		go func() { errCh <- r.Run() }()
 		err = RunRecvTUI(r, *fileName, *serveAddr, errCh)
 
+		// If the TUI exited before the transfer completed (Ctrl+C),
+		// tell the sender to stop so it releases busy immediately.
+		p := r.Progress()
+		if p.BytesReceived < p.TotalBytes {
+			sendDisconnect()
+			fmt.Fprintf(os.Stderr, "[get] interrupted — notified server\n")
+			os.Exit(1)
+		}
+
 		if err != nil {
+			sendDisconnect()
 			fmt.Fprintf(os.Stderr, "[get] FAILED: %v\n", err)
 			os.Exit(1)
 		}
@@ -204,10 +230,21 @@ func runGet(args []string) {
 		fmt.Fprintf(os.Stdout, "[get] TRANSFER COMPLETE: %s in %s (%.1f MB/s) | FEC rebuilt: %d pkts\n",
 			*fileName, elapsed.Round(time.Millisecond), mbps, r.Progress().Rebuilt)
 	} else {
+		// In debug mode, trap SIGINT to send disconnect before exiting.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt)
+		go func() {
+			<-sigCh
+			sendDisconnect()
+			fmt.Fprintf(os.Stderr, "\n[get] interrupted — notified server\n")
+			os.Exit(1)
+		}()
+
 		if err := r.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "[get] FAILED: %v\n", err)
 			os.Exit(1)
 		}
+		signal.Stop(sigCh)
 		fmt.Fprintf(os.Stdout, "[get] TRANSFER COMPLETE\n")
 	}
 }

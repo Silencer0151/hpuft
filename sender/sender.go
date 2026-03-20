@@ -533,6 +533,11 @@ func (s *Sender) Send() error {
 	}
 
 	// --- Step 6: Start heartbeat listener goroutine ---
+	// lastHeartbeatNs tracks the most recent heartbeat arrival time.
+	// The main send loop checks this to detect dead receivers.
+	var lastHeartbeatNs atomic.Int64
+	lastHeartbeatNs.Store(time.Now().UnixNano()) // seed so we don't false-trigger before first HB
+
 	var nackMu sync.Mutex
 	nackPending := make(map[uint64]struct{})
 
@@ -601,6 +606,8 @@ func (s *Sender) Send() error {
 					continue
 				}
 
+				lastHeartbeatNs.Store(time.Now().UnixNano())
+
 				if bucket != nil {
 					bucket.OnHeartbeat(&hb)
 				}
@@ -661,7 +668,22 @@ func (s *Sender) Send() error {
 		}
 	}()
 
+	hbTimeoutNs := int64(s.cfg.Session.SenderHeartbeatTimeout)
+	var hbPollCounter int
+
 	for seqNum < totalChunks {
+		// Periodic receiver liveness check: if no heartbeat has arrived
+		// within SenderHeartbeatTimeout, the receiver is presumed dead.
+		hbPollCounter++
+		if hbPollCounter >= 1000 {
+			hbPollCounter = 0
+			if time.Now().UnixNano()-lastHeartbeatNs.Load() > hbTimeoutNs {
+				close(doneCh)
+				hbWg.Wait()
+				return fmt.Errorf("receiver heartbeat timeout (%s) — aborting transfer", s.cfg.Session.SenderHeartbeatTimeout)
+			}
+		}
+
 		const maxNACKsPerIteration = 3
 		nackMu.Lock()
 		var nacksToSend []uint64
