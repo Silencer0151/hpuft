@@ -490,8 +490,12 @@ func (r *Receiver) Run() error {
 		stats.PacketsReceived, stats.Duplicates, fecStats.BlocksRecovered, fecStats.ShardsRecovered)
 
 	if computedHash != reqPayload.Checksum {
-		dbgLog.Printf("[receiver] HASH MISMATCH: computed=0x%016X expected=0x%016X",
+		// Always print diagnostics on hash mismatch (even non-debug mode).
+		log.Printf("[receiver] HASH MISMATCH: computed=0x%016X expected=0x%016X",
 			computedHash, reqPayload.Checksum)
+		log.Printf("[receiver] buffer stats: received=%d duplicates=%d | FEC: blocks_recovered=%d shards_recovered=%d | bytes_written=%d file_size=%d",
+			stats.PacketsReceived, stats.Duplicates, fecStats.BlocksRecovered, fecStats.ShardsRecovered,
+			writer.BytesWritten(), reqPayload.FileSize)
 
 		rejectPkt := protocol.Packet{
 			Header: protocol.Header{
