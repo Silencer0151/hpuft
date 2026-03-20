@@ -340,6 +340,140 @@ func (s *Sender) Send() error {
 		}
 	}
 
+	// --- Step 3b: Resume negotiation ---
+	// After SESSION_REQ is sent and encryption is set up, wait briefly for
+	// a RESUME_REQ from the receiver. If the receiver has a checkpoint from
+	// a previous interrupted transfer, it will send RESUME_REQ instead of
+	// proceeding with a fresh transfer.
+	chunkSize := protocol.MaxPayload
+	if aead != nil {
+		chunkSize = protocol.MaxEncryptedPayload
+	}
+	var resumeSeqNum uint64 // 0 = fresh transfer
+
+	// The negotiation window: listen for RESUME_REQ for up to 1 second.
+	// The receiver checks for a checkpoint immediately after SESSION_REQ and
+	// sends RESUME_REQ within milliseconds if one exists. A heartbeat arrival
+	// means the receiver started a fresh transfer (heartbeat generator launches
+	// only after resume check completes).
+	{
+		negoBuf := make([]byte, protocol.MTUHardCap)
+		negoDeadline := time.Now().Add(1 * time.Second)
+
+		negoLoop:
+		for time.Now().Before(negoDeadline) {
+			var n int
+			var readErr error
+
+			if recvChan != nil {
+				select {
+				case raw, ok := <-recvChan:
+					if !ok {
+						break negoLoop
+					}
+					n = copy(negoBuf, raw)
+				case <-time.After(100 * time.Millisecond):
+					continue
+				}
+			} else {
+				conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+				n, readErr = conn.Read(negoBuf)
+				if readErr != nil {
+					if os.IsTimeout(readErr) {
+						continue
+					}
+					break negoLoop
+				}
+			}
+
+			if n < protocol.HeaderSize {
+				continue
+			}
+			hdr, hdrErr := protocol.UnmarshalHeader(negoBuf[:n])
+			if hdrErr != nil || hdr.SessionID != sessionID {
+				continue
+			}
+
+			switch hdr.Type {
+			case protocol.PacketResumeReq:
+				payloadEnd := protocol.HeaderSize + int(hdr.PayloadLen)
+				if payloadEnd > n {
+					continue
+				}
+				rr, rrErr := protocol.UnmarshalResumeReq(negoBuf[protocol.HeaderSize:payloadEnd], false)
+				if rrErr != nil {
+					continue
+				}
+
+				// Validate: file size and full hash must match.
+				if rr.FileSize != fileSize || rr.FullHash != checksum {
+					dbgLog.Printf("[sender] RESUME_REQ rejected: file mismatch")
+					rejectPkt := protocol.Packet{
+						Header: protocol.Header{
+							Type:      protocol.PacketSessionReject,
+							SessionID: sessionID,
+						},
+						Payload: []byte{byte(protocol.RejectResumeHashMismatch)},
+					}
+					raw, _ := protocol.MarshalPacket(&rejectPkt)
+					writeFn(raw)
+					break negoLoop
+				}
+
+				// Validate partial hash: hash bytes 0..ResumeOffset from source.
+				partialHash, phErr := receiver.HashFileRange(s.cfg.FilePath, int64(rr.ResumeOffset))
+				if phErr != nil || partialHash != rr.PartialHash {
+					dbgLog.Printf("[sender] RESUME_REQ rejected: partial hash mismatch (computed=0x%016X, received=0x%016X, err=%v)",
+						partialHash, rr.PartialHash, phErr)
+					rejectPkt := protocol.Packet{
+						Header: protocol.Header{
+							Type:      protocol.PacketSessionReject,
+							SessionID: sessionID,
+						},
+						Payload: []byte{byte(protocol.RejectResumeHashMismatch)},
+					}
+					raw, _ := protocol.MarshalPacket(&rejectPkt)
+					writeFn(raw)
+					break negoLoop
+				}
+
+				// Accept the resume.
+				resumeSeqNum = rr.ResumeOffset / uint64(chunkSize)
+				acceptPayload := protocol.ResumeAcceptPayload{
+					ResumeSequenceNum: resumeSeqNum,
+				}
+				acceptPkt := protocol.Packet{
+					Header: protocol.Header{
+						Type:      protocol.PacketResumeAccept,
+						SessionID: sessionID,
+					},
+					Payload: protocol.MarshalResumeAccept(&acceptPayload),
+				}
+				raw, _ := protocol.MarshalPacket(&acceptPkt)
+				writeFn(raw)
+
+				dbgLog.Printf("[sender] RESUME_ACCEPT: starting from seq=%d (offset=%d)",
+					resumeSeqNum, rr.ResumeOffset)
+				break negoLoop
+
+			case protocol.PacketHeartbeat:
+				// Receiver started a fresh transfer — no resume.
+				break negoLoop
+
+			case protocol.PacketTransferComplete:
+				// Edge case: receiver already has the complete file.
+				break negoLoop
+
+			default:
+				continue
+			}
+		}
+
+		if recvChan == nil {
+			conn.SetReadDeadline(time.Time{})
+		}
+	}
+
 	// --- Step 4: Open file and prepare send state ---
 	file, err := os.Open(s.cfg.FilePath)
 	if err != nil {
@@ -347,10 +481,15 @@ func (s *Sender) Send() error {
 	}
 	defer file.Close()
 
-	chunkSize := protocol.MaxPayload
-	if aead != nil {
-		chunkSize = protocol.MaxEncryptedPayload
+	// Seek past already-transferred data if resuming.
+	if resumeSeqNum > 0 {
+		seekOffset := int64(resumeSeqNum) * int64(chunkSize)
+		if _, err := file.Seek(seekOffset, io.SeekStart); err != nil {
+			return fmt.Errorf("seek to resume offset: %w", err)
+		}
+		dbgLog.Printf("[sender] file seeked to offset %d for resume", seekOffset)
 	}
+
 	totalChunks := fileSize / uint64(chunkSize)
 	if fileSize%uint64(chunkSize) != 0 {
 		totalChunks++
@@ -384,6 +523,9 @@ func (s *Sender) Send() error {
 	// --- Set progress totals ---
 	s.totalBytes.Store(int64(fileSize))
 	s.startNs.Store(time.Now().UnixNano())
+	if resumeSeqNum > 0 {
+		s.bytesSent.Store(int64(resumeSeqNum) * int64(chunkSize))
+	}
 
 	// --- Step 6: Start heartbeat listener goroutine ---
 	var nackMu sync.Mutex
@@ -495,7 +637,7 @@ func (s *Sender) Send() error {
 	// --- Step 8: Main send loop ---
 	sendBuf := make([]byte, protocol.MTUHardCap)
 	readBuf := make([]byte, chunkSize)
-	var seqNum uint64
+	seqNum := resumeSeqNum
 	startTime := time.Now()
 
 	// Diagnostic: track time spent stalled on full sliding window.

@@ -18,6 +18,8 @@ const (
 	PacketPushReq          PacketType = 0x08
 	PacketPushAccept       PacketType = 0x09
 	PacketSessionAccept    PacketType = 0x0A
+	PacketResumeReq        PacketType = 0x0B
+	PacketResumeAccept     PacketType = 0x0C
 )
 
 func (p PacketType) String() string {
@@ -44,6 +46,10 @@ func (p PacketType) String() string {
 		return "PUSH_ACCEPT"
 	case PacketSessionAccept:
 		return "SESSION_ACCEPT"
+	case PacketResumeReq:
+		return "RESUME_REQ"
+	case PacketResumeAccept:
+		return "RESUME_ACCEPT"
 	default:
 		return "UNKNOWN"
 	}
@@ -70,6 +76,7 @@ const (
 	RejectFileNotFound       RejectReason = 0x04
 	RejectFileExists                RejectReason = 0x05
 	RejectEncryptionUnsupported     RejectReason = 0x06
+	RejectResumeHashMismatch        RejectReason = 0x07
 )
 
 func (r RejectReason) String() string {
@@ -86,6 +93,8 @@ func (r RejectReason) String() string {
 		return "FILE_EXISTS"
 	case RejectEncryptionUnsupported:
 		return "ENCRYPTION_UNSUPPORTED"
+	case RejectResumeHashMismatch:
+		return "RESUME_HASH_MISMATCH"
 	default:
 		return "UNKNOWN"
 	}

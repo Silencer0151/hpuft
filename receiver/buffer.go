@@ -28,17 +28,28 @@ type ReceiveBuffer struct {
 	chunkSize   int    // bytes per chunk (protocol.MaxPayload for data)
 	totalChunks uint64 // total expected sequence numbers
 
-	// highestContiguous is the largest N such that all slots 0..N are present.
-	// Starts at -1 (nothing contiguous yet). Stored as int64 to allow -1 sentinel.
+	// baseSeqNum is the starting sequence number for resumed transfers.
+	// For fresh transfers this is 0. For resumed transfers, sequences
+	// below baseSeqNum are considered already received and are rejected.
+	baseSeqNum uint64
+
+	// highestContiguous is the largest absolute seqNum N such that all
+	// slots baseSeqNum..N are present. Starts at baseSeqNum-1 (nothing
+	// contiguous yet). Stored as int64 to allow -1 sentinel.
 	highestContiguous int64
 
 	// highestReceived is the largest SequenceNum we've seen inserted.
 	highestReceived uint64
 	hasAnyPacket    bool
 
-	// readCursor tracks how far the disk writer has consumed.
-	// Everything in [readCursor, highestContiguous] is available to read.
+	// readCursor tracks how far the disk writer has consumed (relative index).
+	// Everything in [readCursor, highestContiguous-baseSeqNum] is available to read.
 	readCursor uint64
+
+	// originalTotalChunks is the total chunks for the whole file, used by
+	// IsComplete and Stats. For fresh transfers this equals totalChunks.
+	// For resumed transfers, totalChunks is the remaining chunk count.
+	originalTotalChunks uint64
 
 	// stats
 	packetsReceived uint64
@@ -64,12 +75,43 @@ func NewReceiveBuffer(fileSize uint64, chunkSize int) *ReceiveBuffer {
 	}
 
 	return &ReceiveBuffer{
-		data:              make([]byte, totalChunks*uint64(chunkSize)),
-		present:           make([]bool, totalChunks),
-		chunkSize:         chunkSize,
-		totalChunks:       totalChunks,
-		highestContiguous: -1,
-		readCursor:        0,
+		data:                make([]byte, totalChunks*uint64(chunkSize)),
+		present:             make([]bool, totalChunks),
+		chunkSize:           chunkSize,
+		totalChunks:         totalChunks,
+		originalTotalChunks: totalChunks,
+		highestContiguous:   -1,
+		readCursor:          0,
+	}
+}
+
+// NewReceiveBufferWithOffset creates a buffer for resuming a transfer.
+// Only sequences from baseSeqNum onward are allocated. Sequences below
+// baseSeqNum are considered already received and will be rejected by Insert.
+func NewReceiveBufferWithOffset(fileSize uint64, chunkSize int, baseSeqNum uint64) *ReceiveBuffer {
+	if chunkSize <= 0 {
+		chunkSize = protocol.MaxPayload
+	}
+
+	originalTotal := fileSize / uint64(chunkSize)
+	if fileSize%uint64(chunkSize) != 0 {
+		originalTotal++
+	}
+
+	remaining := originalTotal - baseSeqNum
+	if baseSeqNum >= originalTotal {
+		remaining = 0
+	}
+
+	return &ReceiveBuffer{
+		data:                make([]byte, remaining*uint64(chunkSize)),
+		present:             make([]bool, remaining),
+		chunkSize:           chunkSize,
+		totalChunks:         remaining,
+		originalTotalChunks: originalTotal,
+		baseSeqNum:          baseSeqNum,
+		highestContiguous:   int64(baseSeqNum) - 1, // all seqs before base are "present"
+		readCursor:          0,
 	}
 }
 
@@ -83,20 +125,25 @@ func (rb *ReceiveBuffer) Insert(seqNum uint64, payload []byte) (isNew bool, err 
 	if rb.closed {
 		return false, ErrBufferClosed
 	}
-	if seqNum >= rb.totalChunks {
+	if seqNum < rb.baseSeqNum {
+		rb.duplicates++ // pre-resume sequence, treat as dup
+		return false, nil
+	}
+	slot := seqNum - rb.baseSeqNum
+	if slot >= rb.totalChunks {
 		return false, ErrSequenceOutOfRange
 	}
 	if len(payload) > rb.chunkSize {
 		return false, ErrPayloadTooLarge
 	}
 
-	if rb.present[seqNum] {
+	if rb.present[slot] {
 		rb.duplicates++
 		return false, nil
 	}
 
 	// Place payload at exact offset
-	offset := seqNum * uint64(rb.chunkSize)
+	offset := slot * uint64(rb.chunkSize)
 	copy(rb.data[offset:offset+uint64(len(payload))], payload)
 
 	// Zero-pad if payload is shorter than chunkSize (final chunk of file)
@@ -107,7 +154,7 @@ func (rb *ReceiveBuffer) Insert(seqNum uint64, payload []byte) (isNew bool, err 
 		}
 	}
 
-	rb.present[seqNum] = true
+	rb.present[slot] = true
 	rb.packetsReceived++
 
 	// Track highest sequence number seen
@@ -125,11 +172,16 @@ func (rb *ReceiveBuffer) Insert(seqNum uint64, payload []byte) (isNew bool, err 
 // advanceContiguous pushes highestContiguous forward as far as possible.
 // Must be called with mu held.
 func (rb *ReceiveBuffer) advanceContiguous() {
-	next := uint64(rb.highestContiguous + 1)
-	for next < rb.totalChunks && rb.present[next] {
-		next++
+	// Convert absolute highestContiguous to a slot index.
+	nextAbsolute := uint64(rb.highestContiguous + 1)
+	if nextAbsolute < rb.baseSeqNum {
+		nextAbsolute = rb.baseSeqNum
 	}
-	rb.highestContiguous = int64(next) - 1
+	nextSlot := nextAbsolute - rb.baseSeqNum
+	for nextSlot < rb.totalChunks && rb.present[nextSlot] {
+		nextSlot++
+	}
+	rb.highestContiguous = int64(nextSlot+rb.baseSeqNum) - 1
 }
 
 // HighestContiguous returns the largest N such that all sequences 0..N
@@ -160,12 +212,14 @@ func (rb *ReceiveBuffer) ReadContiguous() []byte {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	if rb.highestContiguous < 0 || rb.readCursor > uint64(rb.highestContiguous) {
+	if rb.highestContiguous < int64(rb.baseSeqNum) || rb.readCursor > uint64(rb.highestContiguous)-rb.baseSeqNum {
 		return nil
 	}
 
+	// readCursor and endSlot are slot-relative (0-based within our allocation).
+	endSlot := uint64(rb.highestContiguous) - rb.baseSeqNum
 	startOffset := rb.readCursor * uint64(rb.chunkSize)
-	endOffset := (uint64(rb.highestContiguous) + 1) * uint64(rb.chunkSize)
+	endOffset := (endSlot + 1) * uint64(rb.chunkSize)
 
 	return rb.data[startOffset:endOffset]
 }
@@ -189,38 +243,49 @@ func (rb *ReceiveBuffer) ReadCursor() uint64 {
 func (rb *ReceiveBuffer) IsPresent(seqNum uint64) bool {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
-	if seqNum >= rb.totalChunks {
+	if seqNum < rb.baseSeqNum {
+		return true // pre-resume sequences are considered present
+	}
+	slot := seqNum - rb.baseSeqNum
+	if slot >= rb.totalChunks {
 		return false
 	}
-	return rb.present[seqNum]
+	return rb.present[slot]
 }
 
-// MissingInRange returns all sequence numbers in [start, end) that have
-// not been received. Used by the heartbeat generator to build NACK arrays
-// after FEC recovery has been attempted.
+// MissingInRange returns all absolute sequence numbers in [start, end)
+// that have not been received. Used by the heartbeat generator to build
+// NACK arrays after FEC recovery has been attempted.
 func (rb *ReceiveBuffer) MissingInRange(start, end uint64) []uint64 {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	if end > rb.totalChunks {
-		end = rb.totalChunks
+	// Clamp to the range we actually manage.
+	if start < rb.baseSeqNum {
+		start = rb.baseSeqNum
+	}
+	maxAbsolute := rb.baseSeqNum + rb.totalChunks
+	if end > maxAbsolute {
+		end = maxAbsolute
 	}
 
 	var missing []uint64
 	for i := start; i < end; i++ {
-		if !rb.present[i] {
+		slot := i - rb.baseSeqNum
+		if !rb.present[slot] {
 			missing = append(missing, i)
 		}
 	}
 	return missing
 }
 
-// Stats returns buffer statistics.
+// Stats returns buffer statistics. TotalChunks is the original total for the
+// whole file (not the remaining count for resumed transfers).
 func (rb *ReceiveBuffer) Stats() BufferStats {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 	return BufferStats{
-		TotalChunks:       rb.totalChunks,
+		TotalChunks:       rb.originalTotalChunks,
 		PacketsReceived:   rb.packetsReceived,
 		Duplicates:        rb.duplicates,
 		HighestContiguous: rb.highestContiguous,
@@ -232,7 +297,12 @@ func (rb *ReceiveBuffer) Stats() BufferStats {
 func (rb *ReceiveBuffer) IsComplete() bool {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
-	return rb.highestContiguous == int64(rb.totalChunks)-1
+	return rb.highestContiguous == int64(rb.originalTotalChunks)-1
+}
+
+// BaseSeqNum returns the starting sequence offset (0 for fresh transfers).
+func (rb *ReceiveBuffer) BaseSeqNum() uint64 {
+	return rb.baseSeqNum
 }
 
 // Close marks the buffer as closed. Further Insert calls will return ErrBufferClosed.
