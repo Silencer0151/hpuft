@@ -335,6 +335,10 @@ func (r *Receiver) Run() error {
 
 	eofReceived := false
 
+	// Debug progress milestones at 25%, 50%, 75%
+	transferStart := time.Now()
+	nextMilestone := uint64(1) // 1=25%, 2=50%, 3=75%
+
 	for !recvBuf.IsComplete() {
 		var pkt protocol.Packet
 		var pktErr error
@@ -395,6 +399,19 @@ func (r *Receiver) Run() error {
 			if isNew {
 				hbGen.RecordPacket(len(pkt.Payload))
 				r.bytesReceived.Add(int64(len(pkt.Payload)))
+
+				// Debug progress milestones
+				if nextMilestone <= 3 {
+					threshold := int64(reqPayload.FileSize) * int64(nextMilestone) / 4
+					if r.bytesReceived.Load() >= threshold {
+						elapsed := time.Since(transferStart).Seconds()
+						pct := nextMilestone * 25
+						remain := elapsed/float64(pct)*float64(100-pct)
+						dbgLog.Printf("[receiver] %d%% complete (%.1fs elapsed, ~%.0fs remaining)",
+							pct, elapsed, remain)
+						nextMilestone++
+					}
+				}
 			}
 
 			// Echo the sender's own timestamp back so the sender can compute
