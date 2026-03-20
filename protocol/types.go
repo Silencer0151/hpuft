@@ -77,6 +77,7 @@ const (
 	RejectFileExists                RejectReason = 0x05
 	RejectEncryptionUnsupported     RejectReason = 0x06
 	RejectResumeHashMismatch        RejectReason = 0x07
+	RejectClientDisconnect          RejectReason = 0x08
 )
 
 func (r RejectReason) String() string {
@@ -95,6 +96,8 @@ func (r RejectReason) String() string {
 		return "ENCRYPTION_UNSUPPORTED"
 	case RejectResumeHashMismatch:
 		return "RESUME_HASH_MISMATCH"
+	case RejectClientDisconnect:
+		return "CLIENT_DISCONNECT"
 	default:
 		return "UNKNOWN"
 	}
@@ -257,6 +260,7 @@ type SessionConfig struct {
 	InactivityMultiplier    int           // timeout = multiplier * heartbeat interval (default 5)
 	SenderProbeInterval     time.Duration // interval between probe packets (default 500ms)
 	SenderProbeTimeout      time.Duration // total time in probe state before teardown (default 10s)
+	SenderHeartbeatTimeout  time.Duration // max silence from receiver during data phase before abort (default 3s)
 	LingerDuration          time.Duration // post-transfer linger on both sides (default 3s)
 	ReceiverTeardownRetries int           // TRANSFER_COMPLETE retransmit count (default 3)
 	StaleIDReservation      time.Duration // how long purged SessionIDs stay reserved (default 10s)
@@ -268,6 +272,7 @@ func DefaultSessionConfig() SessionConfig {
 		InactivityMultiplier:    5,
 		SenderProbeInterval:     500 * time.Millisecond,
 		SenderProbeTimeout:      10 * time.Second,
+		SenderHeartbeatTimeout:  3 * time.Second,
 		LingerDuration:          3 * time.Second,
 		ReceiverTeardownRetries: 3,
 		StaleIDReservation:      10 * time.Second,
