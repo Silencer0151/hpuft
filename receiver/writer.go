@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/cespare/xxhash/v2"
 )
@@ -46,6 +47,12 @@ type DiskWriter struct {
 
 	// err stores any write error
 	err error
+
+	// Checkpoint support
+	checkpointPath    string
+	lastCheckpointAt  time.Time
+	lastCheckpointPct float64
+	checkpointData    *CheckpointData // template for periodic checkpoint writes
 }
 
 // NewDiskWriter creates a writer that will flush data from buf to outputPath.
@@ -63,6 +70,70 @@ func NewDiskWriter(buf *ReceiveBuffer, outputPath string, fileSize uint64, chunk
 		fileSize:  fileSize,
 		chunkSize: chunkSize,
 		done:      make(chan struct{}),
+	}, nil
+}
+
+// SetCheckpointConfig enables periodic checkpoint writing during Flush.
+// fullHash is the expected hash of the complete file (from SESSION_REQ).
+// fileName is the original file name.
+func (dw *DiskWriter) SetCheckpointConfig(outputPath string, fullHash uint64, fileName string, chunkSize int) {
+	dw.mu.Lock()
+	defer dw.mu.Unlock()
+	dw.checkpointPath = CheckpointPath(outputPath)
+	dw.lastCheckpointAt = time.Now()
+	dw.checkpointData = &CheckpointData{
+		FileSize:  dw.fileSize,
+		FullHash:  fullHash,
+		ChunkSize: uint32(chunkSize),
+		FileName:  fileName,
+	}
+}
+
+// PartialHash returns the xxHash64 of all bytes written so far without
+// finalizing the streaming hasher. Safe to call mid-transfer.
+func (dw *DiskWriter) PartialHash() uint64 {
+	dw.mu.Lock()
+	defer dw.mu.Unlock()
+	return dw.hasher.Sum64()
+}
+
+// NewDiskWriterForResume creates a writer that continues from a previous
+// transfer. It opens the existing .tmp file, seeks to resumeOffset, and
+// re-hashes bytes 0..resumeOffset to seed the streaming hasher.
+func NewDiskWriterForResume(buf *ReceiveBuffer, outputPath string, fileSize uint64, chunkSize int, resumeOffset uint64) (*DiskWriter, error) {
+	// Re-hash the existing data to seed the streaming hasher.
+	h := xxhash.New()
+	if resumeOffset > 0 {
+		f, err := os.Open(outputPath)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.CopyN(h, f, int64(resumeOffset)); err != nil {
+			f.Close()
+			return nil, err
+		}
+		f.Close()
+	}
+
+	// Open for writing at the resume offset.
+	f, err := os.OpenFile(outputPath, os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.Seek(int64(resumeOffset), io.SeekStart); err != nil {
+		f.Close()
+		return nil, err
+	}
+
+	return &DiskWriter{
+		buf:          buf,
+		file:         f,
+		hasher:       h,
+		filePath:     outputPath,
+		fileSize:     fileSize,
+		chunkSize:    chunkSize,
+		bytesWritten: resumeOffset,
+		done:         make(chan struct{}),
 	}, nil
 }
 
@@ -109,6 +180,20 @@ func (dw *DiskWriter) Flush() (int, error) {
 	// Advance the buffer reader by the number of complete chunks consumed
 	chunksConsumed := uint64(len(data)) / uint64(dw.chunkSize)
 	dw.buf.AdvanceReader(chunksConsumed)
+
+	// Periodic checkpoint: every 5 seconds or every 1% progress.
+	if dw.checkpointData != nil {
+		pct := float64(dw.bytesWritten) / float64(dw.fileSize) * 100
+		elapsed := time.Since(dw.lastCheckpointAt)
+		if elapsed >= 5*time.Second || pct >= dw.lastCheckpointPct+1.0 {
+			dw.checkpointData.HighestContiguous = dw.buf.ReadCursor() + dw.buf.BaseSeqNum() - 1
+			dw.checkpointData.PartialHash = dw.hasher.Sum64()
+			// Write outside the lock would be nicer but checkpoint I/O is fast.
+			_ = WriteCheckpoint(dw.checkpointPath, dw.checkpointData)
+			dw.lastCheckpointAt = time.Now()
+			dw.lastCheckpointPct = pct
+		}
+	}
 
 	return n, nil
 }
@@ -207,6 +292,21 @@ func HashBytes(data []byte) uint64 {
 	h := xxhash.New()
 	h.Write(data)
 	return h.Sum64()
+}
+
+// HashFileRange computes the xxHash64 of the first `length` bytes of a file.
+func HashFileRange(path string, length int64) (uint64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	h := xxhash.New()
+	if _, err := io.CopyN(h, f, length); err != nil {
+		return 0, err
+	}
+	return h.Sum64(), nil
 }
 
 // HashUint64ToBytes converts a uint64 hash to big-endian bytes.

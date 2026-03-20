@@ -1,116 +1,209 @@
-derrybm@killdozer:~/projects/hpuft$ git pull
-remote: Enumerating objects: 9, done.
-remote: Counting objects: 100% (9/9), done.
-remote: Compressing objects: 100% (1/1), done.
-remote: Total 5 (delta 4), reused 5 (delta 4), pack-reused 0 (from 0)
-Unpacking objects: 100% (5/5), 5.02 KiB | 197.00 KiB/s, done.
-From https://github.com/Silencer0151/hpuft
-   7e3cfd7..9463837  main       -> origin/main
-Updating 7e3cfd7..9463837
-Fast-forward
- last_log.log         | 1046 ++++++++++++++++++++++++++++++++++------------------------------------------------------------------
- receiver/receiver.go |   22 +--
- 2 files changed, 361 insertions(+), 707 deletions(-)
-derrybm@killdozer:~/projects/hpuft$ ./build.sh
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
+derrybm@killdozer:~/projects/hpuft$ ls -ltr ./received/
+total 1309924
+-rw-rw-r-- 1 derrybm derrybm  237931368 Mar 15 23:07 darksouls3_2022.09.05.mp4
+-rw-rw-r-- 1 derrybm derrybm     235844 Mar 16 13:54 log.txt
+-rw-rw-r-- 1 derrybm derrybm   29445262 Mar 16 18:59 nihilus_cosplay.jpg
+-rw-rw-r-- 1 derrybm derrybm 1073741824 Mar 16 20:25 big.bin
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug -out ./received/
+[get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
+^C
+derrybm@killdozer:~/projects/hpuft$ echo server was not on
+server was not on
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug -out ./received/
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-11:56:08.637016 [receiver] session handed off from get: sessionID=0x7DC9AB46 file="big.bin" size=1073741824
-11:56:08.852629 [receiver] allocated buffer: 784899 chunks of 1368 bytes, writing to big.bin
-11:56:08.852680 [receiver] heartbeat generator started
-11:56:08.852685 [receiver] FEC decoder enabled: block_size=100
-11:56:21.048927 [receiver] all 784899 chunks received, finalizing...
-11:56:21.397780 [receiver] transfer stats: received=784899 duplicates=1198 | FEC: blocks_recovered=0 shards_recovered=0
-11:56:21.397805 [receiver] hash verified: 0x07EE661A9A06E0C4
-11:56:21.397903 [receiver] retransmitting TRANSFER_COMPLETE (attempt 1/3)
-11:56:21.397922 [receiver] retransmitting TRANSFER_COMPLETE (attempt 2/3)
-11:56:21.398351 [receiver] ACK_CLOSE received, entering linger state
-11:56:24.399556 [receiver] transfer complete: big.bin (1073741824 bytes)
+12:08:44.356331 [receiver] session handed off from get: sessionID=0x6D7449FA file="big.bin" size=1073741824
+12:08:44.537600 [receiver] allocated buffer: 784899 chunks of 1368 bytes, writing to received/big.bin
+12:08:44.537669 [receiver] heartbeat generator started
+12:08:44.537673 [receiver] FEC decoder enabled: block_size=100
+12:08:48.544970 [receiver] 25% complete (4.0s elapsed, ~12s remaining)
+12:08:51.103201 [receiver] 50% complete (6.6s elapsed, ~7s remaining)
+12:08:53.701981 [receiver] 75% complete (9.2s elapsed, ~3s remaining)
+12:08:56.365614 [receiver] all 784899 chunks received, finalizing...
+12:08:56.453575 [receiver] transfer stats: received=784899 duplicates=664 | FEC: blocks_recovered=0 shards_recovered=0
+12:08:56.453587 [receiver] hash verified: 0x07EE661A9A06E0C4
+12:08:56.453986 [receiver] ACK_CLOSE received, entering linger state
+12:08:59.455299 [receiver] transfer complete: received/big.bin (1073741824 bytes)
 [get] TRANSFER COMPLETE
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug -out ./received/ -encrypt
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-[get] TRANSFER COMPLETE: big.bin in 16.181s (66.4 MB/s) | FEC rebuilt: 0 pkts
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
-[get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
-[get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-11:56:57.446315 [receiver] session handed off from get: sessionID=0x0D83EE88 file="big.bin" size=1073741824
-11:56:57.662872 [receiver] allocated buffer: 784899 chunks of 1368 bytes, writing to big.bin
-11:56:57.662933 [receiver] heartbeat generator started
-11:56:57.662938 [receiver] FEC decoder enabled: block_size=100
-11:57:10.332061 [receiver] all 784899 chunks received, finalizing...
-11:57:10.632163 [receiver] transfer stats: received=784899 duplicates=1004 | FEC: blocks_recovered=0 shards_recovered=0
-11:57:10.632182 [receiver] hash verified: 0x07EE661A9A06E0C4
-11:57:10.632249 [receiver] retransmitting TRANSFER_COMPLETE (attempt 1/3)
-11:57:10.632274 [receiver] retransmitting TRANSFER_COMPLETE (attempt 2/3)
-11:57:10.632628 [receiver] ACK_CLOSE received, entering linger state
-11:57:13.633942 [receiver] transfer complete: big.bin (1073741824 bytes)
+12:09:08.127260 [receiver] session handed off from get: sessionID=0x386CB080 file="big.bin" size=1073741824
+12:09:08.343242 [receiver] allocated buffer: 794188 chunks of 1352 bytes, writing to received/big.bin
+12:09:08.343324 [receiver] heartbeat generator started
+12:09:08.343330 [receiver] FEC decoder enabled: block_size=100
+12:09:12.223031 [receiver] 25% complete (3.9s elapsed, ~12s remaining)
+12:09:14.751127 [receiver] 50% complete (6.4s elapsed, ~6s remaining)
+12:09:17.317324 [receiver] 75% complete (9.0s elapsed, ~3s remaining)
+12:09:19.919586 [receiver] all 794188 chunks received, finalizing...
+12:09:20.026150 [receiver] transfer stats: received=794188 duplicates=736 | FEC: blocks_recovered=0 shards_recovered=0
+12:09:20.026164 [receiver] hash verified: 0x07EE661A9A06E0C4
+12:09:20.026612 [receiver] ACK_CLOSE received, entering linger state
+12:09:23.027850 [receiver] transfer complete: received/big.bin (1073741824 bytes)
 [get] TRANSFER COMPLETE
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug -encrypt
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-11:57:41.894797 [receiver] session handed off from get: sessionID=0xE5E14111 file="big.bin" size=1073741824
-11:57:42.110860 [receiver] allocated buffer: 784899 chunks of 1368 bytes, writing to big.bin
-11:57:42.110932 [receiver] heartbeat generator started
-11:57:42.110937 [receiver] FEC decoder enabled: block_size=100
-11:57:54.375368 [receiver] all 784899 chunks received, finalizing...
-11:57:54.608851 [receiver] transfer stats: received=784899 duplicates=1325 | FEC: blocks_recovered=0 shards_recovered=0
-11:57:54.608867 [receiver] hash verified: 0x07EE661A9A06E0C4
-11:57:54.608913 [receiver] retransmitting TRANSFER_COMPLETE (attempt 1/3)
-11:57:54.608921 [receiver] retransmitting TRANSFER_COMPLETE (attempt 2/3)
-11:57:54.608938 [receiver] retransmitting TRANSFER_COMPLETE (attempt 3/3)
-11:57:54.608946 [receiver] no ACK_CLOSE after retries, proceeding with unilateral teardown (transfer verified)
-11:57:57.610498 [receiver] transfer complete: big.bin (1073741824 bytes)
+12:09:30.311289 [receiver] session handed off from get: sessionID=0x2FCC2CDA file="big.bin" size=1073741824
+12:09:30.527679 [receiver] allocated buffer: 794188 chunks of 1352 bytes, writing to big.bin
+12:09:30.527746 [receiver] heartbeat generator started
+12:09:30.527750 [receiver] FEC decoder enabled: block_size=100
+12:09:34.471093 [receiver] 25% complete (3.9s elapsed, ~12s remaining)
+12:09:37.200760 [receiver] 50% complete (6.7s elapsed, ~7s remaining)
+12:09:39.841468 [receiver] 75% complete (9.3s elapsed, ~3s remaining)
+12:09:42.525524 [receiver] all 794188 chunks received, finalizing...
+12:09:42.879878 [receiver] transfer stats: received=794188 duplicates=562 | FEC: blocks_recovered=0 shards_recovered=0
+12:09:42.879912 [receiver] hash verified: 0x07EE661A9A06E0C4
+12:09:42.880375 [receiver] ACK_CLOSE received, entering linger state
+12:09:45.881600 [receiver] transfer complete: big.bin (1073741824 bytes)
 [get] TRANSFER COMPLETE
 derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-11:58:06.846181 [receiver] session handed off from get: sessionID=0xBA34499E file="big.bin" size=1073741824
-11:58:07.064663 [receiver] allocated buffer: 784899 chunks of 1368 bytes, writing to big.bin
-11:58:07.064718 [receiver] heartbeat generator started
-11:58:07.064724 [receiver] FEC decoder enabled: block_size=100
-11:58:19.698746 [receiver] all 784899 chunks received, finalizing...
-11:58:20.047229 [receiver] transfer stats: received=784899 duplicates=940 | FEC: blocks_recovered=0 shards_recovered=0
-11:58:20.047250 [receiver] hash verified: 0x07EE661A9A06E0C4
-11:58:20.047315 [receiver] retransmitting TRANSFER_COMPLETE (attempt 1/3)
-11:58:20.047381 [receiver] retransmitting TRANSFER_COMPLETE (attempt 2/3)
-11:58:20.047840 [receiver] ACK_CLOSE received, entering linger state
-11:58:23.049106 [receiver] transfer complete: big.bin (1073741824 bytes)
-[get] TRANSFER COMPLETE
-derrybm@killdozer:~/projects/hpuft$ rm big.bin
-derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
-[get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
-[get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-11:58:29.809728 [receiver] session handed off from get: sessionID=0x8E2B3635 file="big.bin" size=1073741824
-11:58:29.812845 [receiver] allocated buffer: 784899 chunks of 1368 bytes, writing to big.bin
-11:58:29.812899 [receiver] heartbeat generator started
-11:58:29.812909 [receiver] FEC decoder enabled: block_size=100
-11:58:41.795629 [receiver] all 784899 chunks received, finalizing...
-11:58:42.146329 [receiver] transfer stats: received=784899 duplicates=1616 | FEC: blocks_recovered=0 shards_recovered=0
-11:58:42.146345 [receiver] hash verified: 0x07EE661A9A06E0C4
-11:58:42.146413 [receiver] retransmitting TRANSFER_COMPLETE (attempt 1/3)
-11:58:42.146423 [receiver] retransmitting TRANSFER_COMPLETE (attempt 2/3)
-11:58:42.146788 [receiver] ACK_CLOSE received, entering linger state
-11:58:45.148013 [receiver] transfer complete: big.bin (1073741824 bytes)
+12:09:56.151655 [receiver] session handed off from get: sessionID=0xFA01296B file="big.bin" size=1073741824
+12:09:56.370350 [receiver] allocated buffer: 784899 chunks of 1368 bytes, writing to big.bin
+12:09:56.370389 [receiver] heartbeat generator started
+12:09:56.370393 [receiver] FEC decoder enabled: block_size=100
+12:10:00.413949 [receiver] 25% complete (4.0s elapsed, ~12s remaining)
+12:10:03.216429 [receiver] 50% complete (6.8s elapsed, ~7s remaining)
+12:10:05.930777 [receiver] 75% complete (9.6s elapsed, ~3s remaining)
+12:10:08.667467 [receiver] all 784899 chunks received, finalizing...
+12:10:08.874992 [receiver] transfer stats: received=784899 duplicates=2719 | FEC: blocks_recovered=0 shards_recovered=0
+12:10:08.875008 [receiver] hash verified: 0x07EE661A9A06E0C4
+12:10:08.875076 [receiver] retransmitting TRANSFER_COMPLETE (attempt 1/3)
+12:10:08.875086 [receiver] retransmitting TRANSFER_COMPLETE (attempt 2/3)
+12:10:08.875534 [receiver] ACK_CLOSE received, entering linger state
+12:10:11.876739 [receiver] transfer complete: big.bin (1073741824 bytes)
 [get] TRANSFER COMPLETE
 derrybm@killdozer:~/projects/hpuft$
-
-derrybm@killdozer:~/projects/hpuft$ git pull
-Already up to date.
-derrybm@killdozer:~/projects/hpuft$ ./build.sh
+derrybm@killdozer:~/projects/hpuft$ echo deleted big bin in server
+deleted big bin in server
+derrybm@killdozer:~/projects/hpuft$ ./hpuft push -file received/big.bin -addr 192.168.50.82:9001 -debug
+[push] Target: big.bin (1 GB)
+[push] Pushing to 192.168.50.82:9001...
+[push] PUSH_ACCEPT received. Starting transfer...
+12:11:43.242828 [sender] hashing file: received/big.bin (1073741824 bytes)
+12:11:43.443785 [sender] file hash: 0x07EE661A9A06E0C4
+12:11:43.443835 [sender] sending SESSION_REQ: sessionID=0x7E3F2178 -> 192.168.50.82:9001 encrypted=false
+12:11:43.443931 [calibration] burst: 10 packets at wire speed (link-capacity probe)
+12:11:43.443946 [sender] congestion control ENABLED, starting rate=2.00 MB/s
+12:11:43.443975 [sender] FEC enabled: block_size=100, initial_parity=5%
+12:11:43.444227 [calibration] burst complete (10 packets sent), switching to adaptive pacing
+12:11:43.548747 [cc_debug] INCREASE (phase1): 2.00 -> 2.50 MB/s (loss=0.00% delivery=1.39)
+12:11:43.648838 [cc_debug] INCREASE (phase1): 2.50 -> 3.12 MB/s (loss=0.00% delivery=1.69)
+12:11:43.748500 [cc_debug] INCREASE (phase1): 3.12 -> 3.91 MB/s (loss=0.00% delivery=2.16)
+12:11:43.848598 [cc_debug] INCREASE (phase1): 3.91 -> 4.88 MB/s (loss=0.00% delivery=3.11)
+12:11:43.949095 [cc_debug] INCREASE (phase1): 4.88 -> 6.10 MB/s (loss=0.00% delivery=3.25)
+12:11:44.048751 [cc_debug] INCREASE (phase1): 6.10 -> 7.63 MB/s (loss=0.00% delivery=4.02)
+12:11:44.149474 [cc_debug] INCREASE (phase1): 7.63 -> 9.54 MB/s (loss=0.00% delivery=5.69)
+12:11:44.248795 [cc_debug] INCREASE (phase1): 9.54 -> 11.92 MB/s (loss=0.00% delivery=6.30)
+12:11:44.348518 [cc_debug] INCREASE (phase1): 11.92 -> 14.90 MB/s (loss=0.00% delivery=10.71)
+12:11:44.398849 [cc_debug] INCREASE (phase1): 14.90 -> 18.63 MB/s (loss=0.00% delivery=13.60)
+12:11:44.444092 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 3867 | seqNum=3867
+12:11:44.448921 [cc_debug] INCREASE (phase1): 18.63 -> 23.28 MB/s (loss=0.00% delivery=16.58)
+12:11:44.498974 [cc_debug] INCREASE (phase1): 23.28 -> 29.10 MB/s (loss=0.00% delivery=20.39)
+12:11:44.549273 [cc_debug] INCREASE (phase1): 29.10 -> 36.38 MB/s (loss=0.00% delivery=25.29)
+12:11:44.599443 [cc_debug] INCREASE (phase1): 36.38 -> 45.47 MB/s (loss=0.00% delivery=30.88)
+12:11:44.649351 [cc_debug] INCREASE (phase1): 45.47 -> 56.84 MB/s (loss=0.00% delivery=38.11)
+12:11:44.699057 [cc_debug] INCREASE (phase1): 56.84 -> 71.05 MB/s (loss=0.00% delivery=46.48)
+12:11:44.749166 [cc_debug] INCREASE (phase1): 71.05 -> 88.82 MB/s (loss=0.00% delivery=58.81)
+12:11:44.799562 [cc_debug] INCREASE (phase1): 88.82 -> 111.02 MB/s (loss=0.00% delivery=73.75)
+12:11:44.850082 [cc_debug] INCREASE (phase1): 111.02 -> 138.78 MB/s (loss=0.00% delivery=100.19)
+12:11:44.883515 [cc_debug] INCREASE (phase1): 138.78 -> 173.47 MB/s (loss=0.00% delivery=113.05)
+12:11:44.900091 [cc_debug] INCREASE (phase1): 173.47 -> 216.84 MB/s (loss=0.00% delivery=100.34)
+12:11:44.925081 [cc_debug] INCREASE (phase1): 216.84 -> 271.05 MB/s (loss=0.00% delivery=118.50)
+12:11:44.957370 [cc_debug] INCREASE (phase1): 271.05 -> 338.81 MB/s (loss=0.00% delivery=107.28)
+12:11:44.975174 [cc_debug] INCREASE (phase1): 338.81 -> 423.52 MB/s (loss=0.00% delivery=118.93)
+12:11:45.006967 [cc_debug] INCREASE (phase1): 423.52 -> 529.40 MB/s (loss=0.00% delivery=108.21)
+12:11:45.007001 [cc_debug] CEILING: rate capped at 475.71 MB/s (4.0x peak delivery 118.93 MB/s)
+12:11:45.451547 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 63931 | seqNum=67798
+12:11:46.445068 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 82195 | seqNum=149993
+12:11:47.444651 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 83650 | seqNum=233643
+12:11:48.453274 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 84348 | seqNum=317991
+12:11:49.444391 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 82811 | seqNum=400802
+12:11:50.444334 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 83695 | seqNum=484497
+12:11:51.444729 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 83658 | seqNum=568155
+12:11:51.901691 [cc_debug] → Phase 2 (additive): delivery collapse 114.53 MB/s < 25% of rate 501.05 MB/s (NACKs=2)
+12:11:51.901736 [sender] queued 2 new NACKs (2 total pending)
+12:11:52.444798 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 83497 | seqNum=651652
+12:11:53.228461 [sender] queued 11 new NACKs (11 total pending)
+12:11:53.253453 [cc_debug] INCREASE (phase2): 150.79 -> 151.57 MB/s (loss=0.00% delivery=113.25)
+12:11:53.277841 [cc_debug] INCREASE (phase2): 151.57 -> 152.30 MB/s (loss=0.00% delivery=115.50)
+12:11:53.303069 [cc_debug] INCREASE (phase2): 152.30 -> 153.15 MB/s (loss=0.00% delivery=114.58)
+12:11:53.328984 [cc_debug] INCREASE (phase2): 153.15 -> 153.58 MB/s (loss=0.00% delivery=114.42)
+12:11:53.354049 [cc_debug] INCREASE (phase2): 153.58 -> 154.01 MB/s (loss=0.00% delivery=114.29)
+12:11:53.377662 [cc_debug] INCREASE (phase2): 154.01 -> 155.16 MB/s (loss=0.00% delivery=114.27)
+12:11:53.405707 [cc_debug] INCREASE (phase2): 155.16 -> 155.44 MB/s (loss=0.00% delivery=114.39)
+12:11:53.427658 [cc_debug] INCREASE (phase2): 155.44 -> 156.03 MB/s (loss=0.00% delivery=114.43)
+12:11:53.444766 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 83147 | seqNum=734799
+12:11:53.453471 [cc_debug] INCREASE (phase2): 156.03 -> 156.52 MB/s (loss=0.00% delivery=114.48)
+12:11:53.478714 [cc_debug] INCREASE (phase2): 156.52 -> 157.02 MB/s (loss=0.00% delivery=114.28)
+12:11:53.502793 [cc_debug] INCREASE (phase2): 157.02 -> 158.01 MB/s (loss=0.00% delivery=114.41)
+12:11:53.527979 [cc_debug] INCREASE (phase2): 158.01 -> 158.93 MB/s (loss=0.00% delivery=114.38)
+12:11:53.554665 [cc_debug] INCREASE (phase2): 158.93 -> 159.29 MB/s (loss=0.00% delivery=114.57)
+12:11:53.578730 [cc_debug] INCREASE (phase2): 159.29 -> 159.85 MB/s (loss=0.00% delivery=114.49)
+12:11:53.602870 [cc_debug] INCREASE (phase2): 159.85 -> 160.69 MB/s (loss=0.00% delivery=114.28)
+12:11:53.631800 [cc_debug] INCREASE (phase2): 160.69 -> 160.97 MB/s (loss=0.00% delivery=113.01)
+12:11:53.653054 [cc_debug] INCREASE (phase2): 160.97 -> 161.93 MB/s (loss=0.00% delivery=114.35)
+12:11:53.653062 [cc_debug] CEILING: rate capped at 161.21 MB/s (1.2x peak delivery 134.34 MB/s)
+12:11:54.047242 [sender] sent 2 tail block parity packets for block 7848 (99 data shards)
+12:11:54.047253 [sender] all 784899 packets sent in 10.603s (101.27 MB/s) | CC: +382 =1 -0
+12:11:54.047259 [sender] waiting for TRANSFER_COMPLETE...
+12:11:54.418360 [sender] received TRANSFER_COMPLETE
+12:11:54.418450 [sender] sent ACK_CLOSE, entering linger state
+12:11:54.445053 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 50100 | seqNum=784899
+12:11:55.444325 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 0 | seqNum=784899
+12:11:56.444700 [diag] window_stall: 0ms in 0 sleeps | new_pkts_sent: 0 | seqNum=784899
+12:11:57.422645 [sender] linger complete, session finished
+[push] TRANSFER COMPLETE
 derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file big.bin -addr 192.168.50.82:9001 -debug
 [get] Punching NAT hole via PULL_REQ for "big.bin" -> 192.168.50.82:9001
 [get] Received SESSION_REQ. Allocating 1 GB ring buffer...
-11:59:50.974279 [receiver] session handed off from get: sessionID=0xEE69146A file="big.bin" size=1073741824
-11:59:51.190776 [receiver] allocated buffer: 784899 chunks of 1368 bytes, writing to big.bin
-11:59:51.190941 [receiver] heartbeat generator started
-11:59:51.190946 [receiver] FEC decoder enabled: block_size=100
-12:00:04.382968 [receiver] all 784899 chunks received, finalizing...
-12:00:04.682266 [receiver] transfer stats: received=784899 duplicates=3276 | FEC: blocks_recovered=0 shards_recovered=0
-12:00:04.682283 [receiver] hash verified: 0x07EE661A9A06E0C4
-12:00:04.682351 [receiver] retransmitting TRANSFER_COMPLETE (attempt 1/3)
-12:00:04.682377 [receiver] retransmitting TRANSFER_COMPLETE (attempt 2/3)
-12:00:04.682963 [receiver] ACK_CLOSE received, entering linger state
-12:00:07.684154 [receiver] transfer complete: big.bin (1073741824 bytes)
+12:12:08.630766 [receiver] session handed off from get: sessionID=0xFC6A7F9C file="big.bin" size=1073741824
+12:12:08.849603 [receiver] allocated buffer: 784899 chunks of 1368 bytes, writing to big.bin
+12:12:08.849664 [receiver] heartbeat generator started
+12:12:08.849669 [receiver] FEC decoder enabled: block_size=100
+12:12:12.773075 [receiver] 25% complete (3.9s elapsed, ~12s remaining)
+12:12:15.515682 [receiver] 50% complete (6.7s elapsed, ~7s remaining)
+12:12:18.323562 [receiver] 75% complete (9.5s elapsed, ~3s remaining)
+12:12:20.991651 [receiver] all 784899 chunks received, finalizing...
+12:12:21.238283 [receiver] transfer stats: received=784899 duplicates=1510 | FEC: blocks_recovered=0 shards_recovered=0
+12:12:21.238319 [receiver] hash verified: 0x07EE661A9A06E0C4
+12:12:21.238802 [receiver] ACK_CLOSE received, entering linger state
+12:12:24.240062 [receiver] transfer complete: big.bin (1073741824 bytes)
+[get] TRANSFER COMPLETE
+derrybm@killdozer:~/projects/hpuft$ ls ./received/
+big.bin  darksouls3_2022.09.05.mp4  log.txt  nihilus_cosplay.jpg
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file darksouls3_2022.09.05.mp4 -addr 192.168.50.82:9001 -debug
+[get] Punching NAT hole via PULL_REQ for "darksouls3_2022.09.05.mp4" -> 192.168.50.82:9001
+[get] Received SESSION_REQ. Allocating 227 MB ring buffer...
+12:12:58.657176 [receiver] session handed off from get: sessionID=0x01E659BC file="darksouls3_2022.09.05.mp4" size=237931368
+12:12:58.658608 [receiver] allocated buffer: 173927 chunks of 1368 bytes, writing to darksouls3_2022.09.05.mp4
+12:12:58.658640 [receiver] heartbeat generator started
+12:12:58.658644 [receiver] FEC decoder enabled: block_size=100
+12:13:00.508985 [receiver] 25% complete (1.9s elapsed, ~6s remaining)
+12:13:01.083686 [receiver] 50% complete (2.4s elapsed, ~2s remaining)
+12:13:02.291411 [receiver] 75% complete (3.6s elapsed, ~1s remaining)
+12:13:03.011724 [receiver] all 173927 chunks received, finalizing...
+12:13:03.149015 [receiver] transfer stats: received=173927 duplicates=3300 | FEC: blocks_recovered=0 shards_recovered=0
+12:13:03.149050 [receiver] hash verified: 0x2681C51BDEAEBA6F
+12:13:03.149545 [receiver] ACK_CLOSE received, entering linger state
+12:13:06.150867 [receiver] transfer complete: darksouls3_2022.09.05.mp4 (237931368 bytes)
+[get] TRANSFER COMPLETE
+derrybm@killdozer:~/projects/hpuft$ ./hpuft get -file large.txt -addr 192.168.50.82:9001 -debug -encrypt
+[get] Punching NAT hole via PULL_REQ for "large.txt" -> 192.168.50.82:9001
+[get] Received SESSION_REQ. Allocating 49 MB ring buffer...
+12:13:24.319204 [receiver] session handed off from get: sessionID=0xE0236A14 file="large.txt" size=51683363
+12:13:24.320609 [receiver] allocated buffer: 38228 chunks of 1352 bytes, writing to large.txt
+12:13:24.320644 [receiver] heartbeat generator started
+12:13:24.320649 [receiver] FEC decoder enabled: block_size=100
+12:13:25.680677 [receiver] 25% complete (1.4s elapsed, ~4s remaining)
+12:13:25.855418 [receiver] 50% complete (1.5s elapsed, ~2s remaining)
+12:13:25.980139 [receiver] 75% complete (1.7s elapsed, ~1s remaining)
+12:13:26.174155 [receiver] all 38228 chunks received, finalizing...
+12:13:26.270489 [receiver] transfer stats: received=38228 duplicates=81 | FEC: blocks_recovered=0 shards_recovered=0
+12:13:26.270514 [receiver] hash verified: 0xC8D53A70649F36EF
+12:13:26.271036 [receiver] ACK_CLOSE received, entering linger state
+12:13:29.272331 [receiver] transfer complete: large.txt (51683363 bytes)
 [get] TRANSFER COMPLETE
 derrybm@killdozer:~/projects/hpuft$

@@ -291,21 +291,172 @@ func (r *Receiver) Run() error {
 		return fmt.Errorf("empty filename in SESSION_REQ")
 	}
 
-	recvBuf := NewReceiveBuffer(reqPayload.FileSize, chunkSize)
-	defer recvBuf.Close()
-
 	outputPath := r.cfg.OutputPath
 	if outputPath == "" {
 		outputPath = filepath.Join(r.cfg.OutputDir, filepath.Base(reqPayload.FileName))
 	}
-	writer, err := NewDiskWriter(recvBuf, outputPath, reqPayload.FileSize, chunkSize)
-	if err != nil {
-		return fmt.Errorf("create disk writer: %w", err)
+
+	// --- Resume detection ---
+	// Check for a checkpoint sidecar matching this file. If found, attempt
+	// to resume from the last checkpoint instead of starting fresh.
+	var resumeSeqNum uint64
+	var resumeOffset uint64
+	resumed := false
+
+	cp, cpTmpPath := FindCheckpoint(r.cfg.OutputDir, reqPayload.FileName, reqPayload.FileSize, reqPayload.Checksum)
+	if r.cfg.OutputPath != "" {
+		// serve/push mode: check using the explicit output path
+		cp2, err2 := ReadCheckpoint(CheckpointPath(r.cfg.OutputPath))
+		if err2 == nil && cp2.FileSize == reqPayload.FileSize && cp2.FullHash == reqPayload.Checksum {
+			cp = cp2
+			cpTmpPath = r.cfg.OutputPath
+		}
 	}
+
+	if cp != nil && cpTmpPath != "" {
+		// Verify the .tmp file on disk and adjust if truncated.
+		tmpInfo, err := os.Stat(cpTmpPath)
+		if err == nil {
+			cpResumeOffset := (cp.HighestContiguous + 1) * uint64(cp.ChunkSize)
+			if uint64(tmpInfo.Size()) < cpResumeOffset {
+				// Truncated: adjust down to actual file size, rounded to chunk boundary.
+				cpResumeOffset = uint64(tmpInfo.Size()) / uint64(cp.ChunkSize) * uint64(cp.ChunkSize)
+			}
+
+			if cpResumeOffset > 0 {
+				// Recompute partial hash from the actual .tmp file data.
+				partialHash, hashErr := HashFileRange(cpTmpPath, int64(cpResumeOffset))
+				if hashErr == nil {
+					resumeOffset = cpResumeOffset
+					resumeSeqNum = cpResumeOffset / uint64(chunkSize)
+
+					// Build and send RESUME_REQ.
+					resumePayload := protocol.ResumeReqPayload{
+						FullHash:     reqPayload.Checksum,
+						FileSize:     reqPayload.FileSize,
+						ResumeOffset: resumeOffset,
+						PartialHash:  partialHash,
+						FileName:     filepath.Base(reqPayload.FileName),
+						Encrypted:    reqPayload.Encrypted,
+					}
+					if reqPayload.Encrypted && aead == nil {
+						// Direct recv encrypted: our public key was already sent in SESSION_ACCEPT.
+						// Don't include PubKey in RESUME_REQ since key exchange already happened.
+						resumePayload.Encrypted = false
+					}
+					resumePkt := protocol.Packet{
+						Header: protocol.Header{
+							Type:      protocol.PacketResumeReq,
+							SessionID: sessionID,
+						},
+						Payload: protocol.MarshalResumeReq(&resumePayload),
+					}
+					resumeRaw, _ := protocol.MarshalPacket(&resumePkt)
+
+					dbgLog.Printf("[receiver] found checkpoint: HC=%d offset=%d, sending RESUME_REQ",
+						cp.HighestContiguous, resumeOffset)
+
+					// Send RESUME_REQ and wait for RESUME_ACCEPT or SESSION_REJECT.
+					r.conn.WriteToUDP(resumeRaw, senderAddr)
+
+					// Wait up to 10 seconds for a response.
+					resumeAccepted := false
+					resumeDeadline := time.Now().Add(10 * time.Second)
+					for time.Now().Before(resumeDeadline) {
+						var respRaw []byte
+						if r.cfg.RecvChan != nil {
+							select {
+							case raw, ok := <-r.cfg.RecvChan:
+								if !ok {
+									break
+								}
+								respRaw = raw
+							case <-time.After(500 * time.Millisecond):
+								// Retransmit RESUME_REQ
+								r.conn.WriteToUDP(resumeRaw, senderAddr)
+								continue
+							}
+						} else {
+							r.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+							n, _, readErr := r.conn.ReadFromUDP(rawBuf)
+							if readErr != nil {
+								if os.IsTimeout(readErr) {
+									// Retransmit RESUME_REQ
+									r.conn.WriteToUDP(resumeRaw, senderAddr)
+									continue
+								}
+								break
+							}
+							respRaw = rawBuf[:n]
+						}
+
+						pkt, pktErr := protocol.UnmarshalPacket(respRaw)
+						if pktErr != nil || pkt.Header.SessionID != sessionID {
+							continue
+						}
+						if pkt.Header.Type == protocol.PacketResumeAccept {
+							ra, raErr := protocol.UnmarshalResumeAccept(pkt.Payload, false)
+							if raErr == nil {
+								resumeSeqNum = ra.ResumeSequenceNum
+								resumeOffset = resumeSeqNum * uint64(chunkSize)
+								resumeAccepted = true
+								dbgLog.Printf("[receiver] RESUME_ACCEPT: starting from seq=%d (offset=%d)",
+									resumeSeqNum, resumeOffset)
+								break
+							}
+						}
+						if pkt.Header.Type == protocol.PacketSessionReject {
+							dbgLog.Printf("[receiver] sender rejected resume, falling back to fresh transfer")
+							break
+						}
+					}
+					if resumeAccepted {
+						resumed = true
+						outputPath = cpTmpPath
+					} else {
+						// Resume failed, fall back to fresh transfer.
+						resumeSeqNum = 0
+						resumeOffset = 0
+						DeleteCheckpoint(cpTmpPath)
+					}
+				}
+			}
+		}
+	}
+
+	// Clear the read deadline that may have been set during resume negotiation.
+	if r.cfg.RecvChan == nil {
+		r.conn.SetReadDeadline(time.Time{})
+	}
+
+	var recvBuf *ReceiveBuffer
+	var writer *DiskWriter
+	if resumed {
+		recvBuf = NewReceiveBufferWithOffset(reqPayload.FileSize, chunkSize, resumeSeqNum)
+		var dwErr error
+		writer, dwErr = NewDiskWriterForResume(recvBuf, outputPath, reqPayload.FileSize, chunkSize, resumeOffset)
+		if dwErr != nil {
+			return fmt.Errorf("create resume disk writer: %w", dwErr)
+		}
+		dbgLog.Printf("[receiver] RESUMED: buffer from seq=%d (%d remaining chunks), writing to %s",
+			resumeSeqNum, recvBuf.Stats().TotalChunks-resumeSeqNum, outputPath)
+		// Pre-seed bytesReceived so progress bar starts from the resumed offset.
+		r.bytesReceived.Store(int64(resumeOffset))
+	} else {
+		recvBuf = NewReceiveBuffer(reqPayload.FileSize, chunkSize)
+		var dwErr error
+		writer, dwErr = NewDiskWriter(recvBuf, outputPath, reqPayload.FileSize, chunkSize)
+		if dwErr != nil {
+			return fmt.Errorf("create disk writer: %w", dwErr)
+		}
+		dbgLog.Printf("[receiver] allocated buffer: %d chunks of %d bytes, writing to %s",
+			recvBuf.Stats().TotalChunks, chunkSize, outputPath)
+	}
+	defer recvBuf.Close()
 	defer writer.Close()
 
-	dbgLog.Printf("[receiver] allocated buffer: %d chunks of %d bytes, writing to %s",
-		recvBuf.Stats().TotalChunks, chunkSize, outputPath)
+	// Enable checkpoint writing for future resume.
+	writer.SetCheckpointConfig(outputPath, reqPayload.Checksum, filepath.Base(reqPayload.FileName), chunkSize)
 
 	r.totalBytes.Store(int64(reqPayload.FileSize))
 	r.startNs.Store(time.Now().UnixNano())
@@ -531,12 +682,16 @@ func (r *Receiver) Run() error {
 		r.conn.WriteToUDP(raw, senderAddr)
 
 		os.Remove(outputPath)
+		DeleteCheckpoint(outputPath)
 		return fmt.Errorf("hash mismatch: computed 0x%016X, expected 0x%016X | received=%d dups=%d written=%d%s",
 			computedHash, reqPayload.Checksum,
 			stats.PacketsReceived, stats.Duplicates, writer.BytesWritten(), diskDiag)
 	}
 
 	dbgLog.Printf("[receiver] hash verified: 0x%016X", computedHash)
+
+	// Clean up checkpoint sidecar on success.
+	DeleteCheckpoint(outputPath)
 
 	// --- Phase 6: Graceful Teardown ---
 	completePkt := protocol.Packet{
