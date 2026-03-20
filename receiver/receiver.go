@@ -497,6 +497,13 @@ func (r *Receiver) Run() error {
 			stats.PacketsReceived, stats.Duplicates, fecStats.BlocksRecovered, fecStats.ShardsRecovered,
 			writer.BytesWritten(), reqPayload.FileSize)
 
+		// Re-hash the file from disk to determine if corruption is in the
+		// DiskWriter's incremental hash or in the actual received data.
+		if diskHash, err := HashFile(outputPath); err == nil {
+			log.Printf("[receiver] DIAG disk re-hash=0x%016X (matches writer=%v, matches expected=%v)",
+				diskHash, diskHash == computedHash, diskHash == reqPayload.Checksum)
+		}
+
 		rejectPkt := protocol.Packet{
 			Header: protocol.Header{
 				Type:      protocol.PacketSessionReject,
