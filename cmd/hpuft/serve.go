@@ -19,6 +19,7 @@ func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	listenAddr := fs.String("listen", ":9001", "address to listen on for PULL_REQ / PUSH_REQ")
 	dir := fs.String("dir", ".", "directory of files available to serve")
+	debug := fs.Bool("debug", false, "enable CC/protocol debug logging for transfers")
 	fs.Parse(args)
 
 	// Serve uses structured event logging on stderr with timestamps.
@@ -99,9 +100,9 @@ func runServe(args []string) {
 
 		switch pkt.Header.Type {
 		case protocol.PacketPullReq:
-			handlePullReq(conn, clientAddr, &pkt, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan)
+			handlePullReq(conn, clientAddr, &pkt, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan, *debug)
 		case protocol.PacketPushReq:
-			handlePushReq(conn, clientAddr, &pkt, *dir, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan, &activeChanDrops)
+			handlePushReq(conn, clientAddr, &pkt, *dir, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan, &activeChanDrops, *debug)
 		}
 	}
 }
@@ -109,7 +110,7 @@ func runServe(args []string) {
 func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
 	manifest map[string]string, manifestMu *sync.RWMutex,
 	busy *int32, busyClient *string,
-	activeMu *sync.Mutex, activeChan *chan []byte) {
+	activeMu *sync.Mutex, activeChan *chan []byte, debug bool) {
 
 	req, err := protocol.UnmarshalPullReq(pkt.Payload, pkt.Header.Flags&protocol.FlagEncrypted != 0)
 	if err != nil || req.FileName == "" {
@@ -161,7 +162,8 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		cfg.MuxConn = conn
 		cfg.MuxAddr = clientAddr
 		cfg.RecvChan = ch
-		cfg.Quiet = true
+		cfg.Quiet = !debug
+		cfg.Debug = debug
 		cfg.Encrypt = isEncrypted
 		if isEncrypted && len(peerPubKey) > 0 {
 			cfg.PeerPubKey = peerPubKey
@@ -196,7 +198,7 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 	dir string, manifest map[string]string, manifestMu *sync.RWMutex,
 	busy *int32, busyClient *string,
 	activeMu *sync.Mutex, activeChan *chan []byte,
-	activeChanDrops *atomic.Int64) {
+	activeChanDrops *atomic.Int64, debug bool) {
 
 	req, err := protocol.UnmarshalPushReq(pkt.Payload, pkt.Header.Flags&protocol.FlagEncrypted != 0)
 	if err != nil || req.FileName == "" {
@@ -318,6 +320,7 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		cfg.OutputPath = tmpPath
 		cfg.Encrypt = isEncrypted
 		cfg.EncKey = encKey
+		cfg.Debug = debug
 
 		r, err := receiver.New(cfg)
 		if err != nil {
