@@ -499,6 +499,55 @@ func UnmarshalResumeAccept(data []byte, encrypted bool) (ResumeAcceptPayload, er
 	return p, nil
 }
 
+// --- LIST_REQ / LIST_RESP Payloads ---
+//
+// LIST_REQ has no payload (header only).
+//
+// LIST_RESP wire layout:
+//
+//	Payload: newline-separated filenames, no trailing newline.
+//	         Truncated to MaxPayload if the list is very large.
+
+// MarshalListResp serializes a slice of filenames into a LIST_RESP payload.
+func MarshalListResp(names []string) []byte {
+	if len(names) == 0 {
+		return []byte{}
+	}
+	var b []byte
+	for i, name := range names {
+		if i > 0 {
+			b = append(b, '\n')
+		}
+		b = append(b, name...)
+		if len(b) >= MaxPayload {
+			b = b[:MaxPayload]
+			break
+		}
+	}
+	return b
+}
+
+// UnmarshalListResp parses a LIST_RESP payload into a slice of filenames.
+func UnmarshalListResp(data []byte) []string {
+	if len(data) == 0 {
+		return nil
+	}
+	var names []string
+	start := 0
+	for i, b := range data {
+		if b == '\n' {
+			if i > start {
+				names = append(names, string(data[start:i]))
+			}
+			start = i + 1
+		}
+	}
+	if start < len(data) {
+		names = append(names, string(data[start:]))
+	}
+	return names
+}
+
 // UnmarshalHeartbeat parses a HeartbeatPayload from bytes.
 func UnmarshalHeartbeat(data []byte) (HeartbeatPayload, error) {
 	if len(data) < HeartbeatFixedSize {

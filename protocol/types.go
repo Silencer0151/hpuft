@@ -20,6 +20,8 @@ const (
 	PacketSessionAccept    PacketType = 0x0A
 	PacketResumeReq        PacketType = 0x0B
 	PacketResumeAccept     PacketType = 0x0C
+	PacketListReq          PacketType = 0x0D
+	PacketListResp         PacketType = 0x0E
 )
 
 func (p PacketType) String() string {
@@ -50,6 +52,10 @@ func (p PacketType) String() string {
 		return "RESUME_REQ"
 	case PacketResumeAccept:
 		return "RESUME_ACCEPT"
+	case PacketListReq:
+		return "LIST_REQ"
+	case PacketListResp:
+		return "LIST_RESP"
 	default:
 		return "UNKNOWN"
 	}
