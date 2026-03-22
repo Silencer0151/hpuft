@@ -65,6 +65,15 @@ func runServe(args []string) {
 			continue
 		}
 
+		// LIST_REQ is always handled immediately, regardless of busy state.
+		// Parse speculatively; if it fails or isn't a LIST_REQ, fall through.
+		if earlyPkt, err := protocol.UnmarshalPacket(rawBuf[:n]); err == nil {
+			if earlyPkt.Header.Type == protocol.PacketListReq {
+				handleListReq(conn, clientAddr, &earlyPkt, manifest, &manifestMu)
+				continue
+			}
+		}
+
 		// If a transfer is in progress, new PULL_REQ/PUSH_REQ get a SERVER_BUSY
 		// rejection immediately. All other packets are forwarded to the active
 		// goroutine for it to decode. Drop on channel full; sender/receiver retransmit.
@@ -103,6 +112,8 @@ func runServe(args []string) {
 			handlePullReq(conn, clientAddr, &pkt, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan, *debug)
 		case protocol.PacketPushReq:
 			handlePushReq(conn, clientAddr, &pkt, *dir, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan, &activeChanDrops, *debug)
+		case protocol.PacketListReq:
+			handleListReq(conn, clientAddr, &pkt, manifest, &manifestMu)
 		}
 	}
 }
@@ -356,6 +367,30 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		log.Printf("[serve] PUSH COMPLETE: %q from %s in %s (%.1f MB/s) — added to manifest",
 			safeName, clientAddr, elapsed.Round(time.Millisecond), mbps)
 	}(safeName, finalPath, pkt.Header.SessionID, clientAddr, pushEncKey, req.Encrypted)
+}
+
+func handleListReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
+	manifest map[string]string, manifestMu *sync.RWMutex) {
+
+	manifestMu.RLock()
+	names := make([]string, 0, len(manifest))
+	for name := range manifest {
+		names = append(names, name)
+	}
+	manifestMu.RUnlock()
+
+	respPkt := protocol.Packet{
+		Header: protocol.Header{
+			Type:      protocol.PacketListResp,
+			SessionID: pkt.Header.SessionID,
+		},
+		Payload: protocol.MarshalListResp(names),
+	}
+	raw, err := protocol.MarshalPacket(&respPkt)
+	if err != nil {
+		return
+	}
+	conn.WriteToUDP(raw, clientAddr)
 }
 
 // buildManifest scans dir (non-recursively) and returns an allowlist map of
