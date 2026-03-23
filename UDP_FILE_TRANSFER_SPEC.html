@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HP-UDP Design Specification v5.0</title>
+    <title>HP-UDP Design Specification v5.1</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -126,7 +126,7 @@
 </head>
 <body>
 
-    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v5.0</span></h1>
+    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v5.1</span></h1>
 
     <div class="changelog">
         <strong>Changelog from v4.2 → v5.0 (End-to-End Encryption):</strong>
@@ -258,7 +258,11 @@
                     <code>0x07</code> PULL_REQ,
                     <code>0x08</code> PUSH_REQ,
                     <code>0x09</code> PUSH_ACCEPT,
-                    <code>0x0A</code> SESSION_ACCEPT.
+                    <code>0x0A</code> SESSION_ACCEPT,
+                    <code>0x0B</code> RESUME_REQ,
+                    <code>0x0C</code> RESUME_ACCEPT,
+                    <code>0x0D</code> LIST_REQ,
+                    <code>0x0E</code> LIST_RESP.
                 </td>
             </tr>
             <tr>
@@ -799,7 +803,12 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     </div>
 
     <h3>B. Sender Inactivity Timeout</h3>
-    <p>If the sender does not receive a Heartbeat for <strong>5 consecutive expected heartbeat intervals</strong>, it assumes the receiver has failed or the return path is broken:</p>
+    <p>The sender monitors receiver liveness through two complementary mechanisms:</p>
+    <h4>Hard Abort — Heartbeat Staleness (Data Phase)</h4>
+    <p>During active data transmission, the sender tracks the timestamp of the most recent Heartbeat received. If no Heartbeat arrives for <strong>3 seconds</strong> (<code>SenderHeartbeatTimeout</code>), the sender immediately aborts the session and frees all resources. This covers the common case of a client disconnecting mid-transfer (e.g. Ctrl+C) and ensures the serve daemon's busy flag is released within seconds rather than minutes.</p>
+    <p>The client may also send a <code>SESSION_REJECT</code> with reason <code>CLIENT_DISCONNECT (0x08)</code> to signal a graceful shutdown; the sender releases resources immediately on receipt without waiting for the timeout.</p>
+    <h4>Probe State — Intermittent Loss (Pre-completion)</h4>
+    <p>If the sender does not receive a Heartbeat for <strong>5 consecutive expected heartbeat intervals</strong>, it assumes the receiver has failed or the return path is temporarily broken:</p>
     <ul>
         <li>The sender pauses transmission and enters a <strong>Probe state</strong>, sending a single DATA packet every 500ms.</li>
         <li>If no Heartbeat arrives within <strong>10 seconds</strong> of entering Probe state, the sender tears down the session and frees resources.</li>
@@ -945,6 +954,8 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
             <tr><td><code>0x04</code></td><td><code>FILE_NOT_FOUND</code></td><td>The requested filename is not in the serve manifest.</td></tr>
             <tr><td><code>0x05</code></td><td><code>FILE_EXISTS</code></td><td>A push was rejected because the filename already exists on the server (no-overwrite policy).</td></tr>
             <tr><td><code>0x06</code></td><td><code>ENCRYPTION_UNSUPPORTED</code></td><td>The receiver does not support encryption and received a request with the Encrypted flag (0x04) set.</td></tr>
+            <tr><td><code>0x07</code></td><td><code>RESUME_HASH_MISMATCH</code></td><td>The sender rejected a RESUME_REQ because the FullHash or PartialHash in the request did not match the file on disk.</td></tr>
+            <tr><td><code>0x08</code></td><td><code>CLIENT_DISCONNECT</code></td><td>Sent by the client as a graceful disconnect signal (e.g. Ctrl+C). The sender releases the session immediately upon receipt rather than waiting for the heartbeat timeout.</td></tr>
         </tbody>
     </table>
 
@@ -959,7 +970,18 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
         <li>The server's sender thread uses the <code>SessionID</code> supplied in the <code>PULL_REQ</code> header, eliminating an extra round-trip for ID assignment.</li>
     </ol>
 
-    <h3>C. PUSH_REQ / PUSH_ACCEPT — Client-Initiated Push</h3>
+    <h3>C. LIST_REQ / LIST_RESP — Catalog Query</h3>
+    <p><code>LIST_REQ (0x0D)</code> allows a client to query the serve daemon's file manifest without initiating a transfer. The serve daemon responds with <code>LIST_RESP (0x0E)</code> immediately, regardless of whether a transfer is currently in progress (<code>SERVER_BUSY</code> does not apply to listing).</p>
+    <p><strong>Wire format — LIST_REQ:</strong> Packet type <code>0x0D</code>. No payload. The client generates a random <code>SessionID</code> used solely to match the response.</p>
+    <p><strong>Wire format — LIST_RESP:</strong> Packet type <code>0x0E</code>. Payload is the available filenames as a newline-delimited UTF-8 string (no trailing newline). Empty payload means no files are available. The list is truncated to fit within a single MTU payload (<code>MaxPayload = 1368</code> bytes) if the manifest is very large.</p>
+    <p><strong>Flow:</strong></p>
+    <ol>
+        <li><strong>Client</strong> generates a random <code>SessionID</code>, binds a local UDP socket, and sends <code>LIST_REQ</code> to the server's control port.</li>
+        <li><strong>Server</strong> reads the manifest under a read lock and immediately writes a <code>LIST_RESP</code> to the client's address with the same <code>SessionID</code>. The busy flag is not checked.</li>
+        <li><strong>Client</strong> waits up to 2 seconds for a matching <code>LIST_RESP</code> (matching by <code>SessionID</code>), retrying up to 3 times on timeout.</li>
+    </ol>
+
+    <h3>D. PUSH_REQ / PUSH_ACCEPT — Client-Initiated Push</h3>
     <p>The push flow allows a client to deposit a file into the serve daemon's directory. Three security invariants are always enforced:</p>
     <ol>
         <li><strong>Base-name-only rule:</strong> The filename from the <code>PUSH_REQ</code> payload is sanitized to its base name — the substring after the last <code>/</code> or <code>\</code> separator (Go: <code>filepath.Base()</code>; C: manual reverse scan for both separators). Path traversal sequences such as <code>../../etc/passwd</code> or <code>/absolute/path</code> are reduced to just the final filename component before any further processing.</li>
@@ -978,6 +1000,64 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
 
     <h3>D. Manifest Lifecycle</h3>
     <p>The manifest is a filename-to-absolute-path map built at daemon startup by a non-recursive directory scan. Symlinks and directories are excluded. Files added to the directory after startup are invisible until the daemon is restarted — this is an intentional security boundary. Successful push transfers atomically add their promoted file to the in-memory manifest under a write-lock (Go: <code>sync.RWMutex</code>; C: <code>pthread_rwlock_t</code>). PULL_REQ handlers acquire a read-lock when consulting the manifest.</p>
+
+    <h2>12. Resumable Transfers</h2>
+    <p>A transfer interrupted mid-flight (network loss, client Ctrl+C, daemon restart) can be resumed from the last confirmed checkpoint rather than restarting from byte zero. The mechanism uses a <em>checkpoint sidecar file</em> written periodically by the receiver and a one-RTT <strong>RESUME_REQ / RESUME_ACCEPT</strong> negotiation inserted into the existing session setup flow.</p>
+
+    <h3>A. Checkpoint Sidecar</h3>
+    <p>While receiving, the receiver writes a checkpoint sidecar (filename: <code>&lt;output&gt;.hpuft-resume</code>) every 5 seconds or every 1% of total file progress, whichever comes first. The sidecar records:</p>
+    <table>
+        <thead><tr><th>Field</th><th>Size</th><th>Description</th></tr></thead>
+        <tbody>
+            <tr><td><code>HighestContiguous</code></td><td>8 bytes</td><td>Highest sequence number N such that all sequences 0…N have been received and flushed to the .tmp file.</td></tr>
+            <tr><td><code>PartialHash</code></td><td>8 bytes</td><td>xxHash64 streaming state of the bytes written so far (bytes 0 through <code>HighestContiguous × ChunkSize</code>).</td></tr>
+            <tr><td><code>FileSize</code></td><td>8 bytes</td><td>Total declared file size from the original SESSION_REQ.</td></tr>
+            <tr><td><code>FullHash</code></td><td>8 bytes</td><td>xxHash64 of the complete file, as declared in SESSION_REQ.</td></tr>
+            <tr><td><code>ChunkSize</code></td><td>4 bytes</td><td>Payload bytes per DATA packet for this transfer.</td></tr>
+            <tr><td><code>FileName</code></td><td>variable</td><td>Null-terminated UTF-8 filename.</td></tr>
+        </tbody>
+    </table>
+    <p>The sidecar is written atomically (write to <code>.hpuft-resume.tmp</code>, then rename) to prevent partial reads. It is deleted on successful transfer completion or on hash mismatch.</p>
+
+    <h3>B. Resume Negotiation Protocol</h3>
+    <p>Resume negotiation is inserted between PULL_REQ acceptance and the start of data transmission:</p>
+    <ol>
+        <li><strong>Sender</strong> sends <code>SESSION_REQ</code> as normal (including <code>FullHash</code> and <code>FileSize</code>).</li>
+        <li><strong>Receiver</strong> checks for a matching checkpoint sidecar. A sidecar matches if its <code>FileName</code>, <code>FullHash</code>, and <code>FileSize</code> all equal the values in the incoming <code>SESSION_REQ</code>. If no sidecar is found, the receiver proceeds with a fresh transfer.</li>
+        <li><strong>Receiver</strong> re-hashes the existing <code>.tmp</code> file from byte 0 to the checkpoint offset to re-seed its streaming hasher, then sends <code>RESUME_REQ (0x0B)</code>.</li>
+        <li><strong>Sender</strong> holds a 1-second negotiation window after sending <code>SESSION_REQ</code>. During this window it listens for <code>RESUME_REQ</code> before beginning calibration and data transmission. A Heartbeat from the receiver breaks the window early (indicating a fresh transfer).</li>
+        <li><strong>Sender</strong> validates the <code>RESUME_REQ</code>: it checks <code>FullHash</code> and <code>FileSize</code>, then independently computes <code>PartialHash</code> over the first <code>ResumeOffset</code> bytes of its own file copy. If either hash mismatches, it sends <code>SESSION_REJECT</code> with reason <code>RESUME_HASH_MISMATCH (0x07)</code> and the receiver falls back to a fresh transfer.</li>
+        <li>On success, the sender sends <code>RESUME_ACCEPT (0x0C)</code> containing the confirmed <code>ResumeSequenceNum</code>, seeks the file to <code>ResumeSequenceNum × ChunkSize</code>, and begins transmission from that sequence number.</li>
+    </ol>
+
+    <h3>C. FEC Block Alignment</h3>
+    <p>The sender aligns the resume sequence number to a FEC block boundary before seeking:</p>
+    <pre>resumeSeqNum = (resumeSeqNum / fecBlockSize) * fecBlockSize</pre>
+    <p>This ensures the FEC encoder always starts at shard 0 of a fresh block. Without alignment, a resume starting mid-block would present the encoder with empty shards for earlier positions in the block, causing a bounds panic. At most <code>fecBlockSize − 1</code> duplicate packets are re-sent as a result of the alignment rollback (≤ 99 packets with the default block size of 100).</p>
+
+    <h3>D. RESUME_REQ Wire Format</h3>
+    <p>Packet type <code>0x0B</code>. The payload carries enough information for the sender to independently verify the receiver's state before committing to a resume:</p>
+    <table>
+        <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+        <tbody>
+            <tr><td>0</td><td>8 bytes</td><td><code>FullHash</code> — xxHash64 of the complete file (must match sender's copy)</td></tr>
+            <tr><td>8</td><td>8 bytes</td><td><code>FileSize</code> — total file size in bytes</td></tr>
+            <tr><td>16</td><td>8 bytes</td><td><code>ResumeOffset</code> — byte offset of the checkpoint in the .tmp file</td></tr>
+            <tr><td>24</td><td>8 bytes</td><td><code>PartialHash</code> — xxHash64 of bytes 0…ResumeOffset</td></tr>
+            <tr><td>32</td><td>32 bytes</td><td><code>PubKey</code> (encrypted transfers only)</td></tr>
+            <tr><td>32/64</td><td>variable</td><td>Null-terminated UTF-8 filename</td></tr>
+        </tbody>
+    </table>
+
+    <h3>E. RESUME_ACCEPT Wire Format</h3>
+    <p>Packet type <code>0x0C</code>. Sent by the sender to confirm a resume and communicate the aligned starting sequence number:</p>
+    <table>
+        <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+        <tbody>
+            <tr><td>0</td><td>8 bytes</td><td><code>ResumeSequenceNum</code> — FEC-block-aligned sequence number where transmission will begin</td></tr>
+            <tr><td>8</td><td>32 bytes</td><td><code>PubKey</code> (encrypted transfers only)</td></tr>
+        </tbody>
+    </table>
 
     <h2>Appendix A: Protocol Constants (Defaults)</h2>
     <table>
@@ -1037,7 +1117,8 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <h2>Appendix B: Revision Log</h2>
     <div class="changelog">
         <ul>
-            <li><strong>v5.0</strong> — End-to-end encryption: ephemeral X25519 key exchange + AES-128-GCM per-packet encryption (§4.5); <code>SESSION_ACCEPT</code> (0x0A) packet type; <code>Encrypted</code> flag (0x04); 1-RTT handshake when encrypted (0-RTT preserved for unencrypted); deterministic nonce from header fields; encrypt-after-FEC data path; extended payloads for SESSION_REQ, PUSH_REQ, PUSH_ACCEPT, PULL_REQ; <code>ENCRYPTION_UNSUPPORTED</code> reject code; encrypted MaxPayload 1352 bytes; backward compatible with v4.x unencrypted transfers.</li>
+            <li><strong>v5.1</strong> — Resumable transfers (§12): checkpoint sidecar (<code>.hpuft-resume</code>), <code>RESUME_REQ (0x0B)</code> / <code>RESUME_ACCEPT (0x0C)</code> packet types, FEC block-boundary alignment, PartialHash cross-validation; graceful client disconnect: <code>CLIENT_DISCONNECT</code> reject reason <code>(0x08)</code>, sender hard-abort on 3s heartbeat staleness (<code>SenderHeartbeatTimeout</code>); catalog query: <code>LIST_REQ (0x0D)</code> / <code>LIST_RESP (0x0E)</code>, served regardless of busy state; <code>RESUME_HASH_MISMATCH (0x07)</code> reject code.</li>
+        <li><strong>v5.0</strong> — End-to-end encryption: ephemeral X25519 key exchange + AES-128-GCM per-packet encryption (§4.5); <code>SESSION_ACCEPT</code> (0x0A) packet type; <code>Encrypted</code> flag (0x04); 1-RTT handshake when encrypted (0-RTT preserved for unencrypted); deterministic nonce from header fields; encrypt-after-FEC data path; extended payloads for SESSION_REQ, PUSH_REQ, PUSH_ACCEPT, PULL_REQ; <code>ENCRYPTION_UNSUPPORTED</code> reject code; encrypted MaxPayload 1352 bytes; backward compatible with v4.x unencrypted transfers.</li>
             <li><strong>v4.2</strong> — C implementation readiness: universal big-endian byte order declaration covering all payload fields (not just header); language-neutral wording throughout (monotonic clock, <code>clock_nanosleep</code>, <code>pthread_rwlock_t</code>, manual basename scan, ephemeral <code>bind()</code>+<code>getsockname()</code>); expanded deficit-accumulator C guidance (<code>TIMER_ABSTIME</code>, <code>SCHED_FIFO</code>); architecture-neutral teardown socket ownership (epoll single-thread vs goroutine); power-of-2 sliding window slot count (65,536) for bitmask index wrapping; <code>io_uring</code> receiver disk I/O note.</li>
             <li><strong>v4.1</strong> — Sender sliding window: bounded ring buffer (50,000 slots) replaces unbounded <code>map</code>; backpressure NACK starvation deadlock fix (<code>if IsFull { continue }</code> replaces bare spin).</li>
             <li><strong>v4.0</strong> — WAN reliability overhaul: same-clock RTT measurement via <code>SenderTimestampNs</code> header field (HeaderSize 24→32, MaxPayload 1376→1368); frozen-timestamp RTT guard (<code>lastEchoNs</code>); RTT-aware NACK cooldown map; tail-drop deadlock prevention via proactive tail injection; teardown micro-burst prevention (batch-10 / 2ms); <code>StorageFlushRate</code> removed from CC effective-rate; delivery-collapse threshold 50%→25%; progress bar repair state.</li>
