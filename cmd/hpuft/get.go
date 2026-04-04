@@ -163,13 +163,15 @@ func runGet(args []string) {
 
 	// Derive session key if encrypted.
 	var getEncKey *[16]byte
+	var getIVBase *[8]byte
 	if *encrypt && ephemPriv != nil && sessionReq.Encrypted {
-		key, err := protocol.DeriveSessionKey(ephemPriv, sessionReq.PubKey[:], sessionID)
+		key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, sessionReq.PubKey[:], sessionID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[get] derive session key: %v\n", err)
 			os.Exit(1)
 		}
 		getEncKey = &key
+		getIVBase = &derivedIVBase
 	}
 
 	cfg := receiver.DefaultConfig()
@@ -178,6 +180,7 @@ func runGet(args []string) {
 	cfg.Debug = *debug
 	cfg.Encrypt = *encrypt
 	cfg.EncKey = getEncKey
+	cfg.IVBase = getIVBase
 	cfg.IncomingSession = &receiver.IncomingSession{
 		SenderAddr: serveSenderAddr,
 		SessionID:  sessionID,
@@ -211,18 +214,19 @@ func runGet(args []string) {
 		go func() { errCh <- r.Run() }()
 		err = RunRecvTUI(r, *fileName, *serveAddr, errCh)
 
-		// If the TUI exited before the transfer completed (Ctrl+C),
-		// tell the sender to stop so it releases busy immediately.
+		// Surface the actual receiver error before checking completion.
+		// Without this order, a GCM/timeout failure looks like a Ctrl+C.
+		if err != nil {
+			sendDisconnect()
+			fmt.Fprintf(os.Stderr, "[get] FAILED: %v\n", err)
+			os.Exit(1)
+		}
+
+		// If err==nil but bytes are short, the user pressed Ctrl+C.
 		p := r.Progress()
 		if p.BytesReceived < p.TotalBytes {
 			sendDisconnect()
 			fmt.Fprintf(os.Stderr, "[get] interrupted — notified server\n")
-			os.Exit(1)
-		}
-
-		if err != nil {
-			sendDisconnect()
-			fmt.Fprintf(os.Stderr, "[get] FAILED: %v\n", err)
 			os.Exit(1)
 		}
 		elapsed := time.Since(start)

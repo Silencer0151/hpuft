@@ -80,6 +80,10 @@ type Config struct {
 	// Takes priority over PeerPubKey when both are set.
 	EncKey *[16]byte
 
+	// IVBase, if non-nil, is the 8-byte iv_base derived alongside EncKey via
+	// HKDF. Must be set whenever EncKey is set. Used to construct GCM nonces.
+	IVBase *[8]byte
+
 	// PeerPubKey is the peer's X25519 public key (32 bytes). The serve daemon
 	// sets this for pull transfers after receiving PULL_REQ with the client's key.
 	// When Encrypt=true, EncKey=nil, and PeerPubKey is non-nil, the sender
@@ -234,6 +238,7 @@ func (s *Sender) Send() error {
 	//   4. Encrypted + neither set (direct send/recv): generate ephemeral key,
 	//      embed in SESSION_REQ, wait for SESSION_ACCEPT.
 	var aead cipher.AEAD
+	var ivBase [8]byte
 	if s.cfg.Encrypt {
 		if s.cfg.EncKey != nil {
 			// Case 2: pre-derived key (push flow).
@@ -242,6 +247,9 @@ func (s *Sender) Send() error {
 				return fmt.Errorf("init session cipher: %w", err)
 			}
 			aead = c
+			if s.cfg.IVBase != nil {
+				ivBase = *s.cfg.IVBase
+			}
 		}
 		// Cases 3 and 4 are handled after SESSION_REQ is sent.
 	}
@@ -286,7 +294,7 @@ func (s *Sender) Send() error {
 
 	// Case 3: serve pull — derive key immediately from PeerPubKey.
 	if s.cfg.Encrypt && s.cfg.EncKey == nil && len(s.cfg.PeerPubKey) > 0 {
-		key, err := protocol.DeriveSessionKey(ephemPriv, s.cfg.PeerPubKey, sessionID)
+		key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, s.cfg.PeerPubKey, sessionID)
 		if err != nil {
 			return fmt.Errorf("derive session key (pull): %w", err)
 		}
@@ -295,6 +303,7 @@ func (s *Sender) Send() error {
 			return fmt.Errorf("init cipher (pull): %w", err)
 		}
 		aead = c
+		ivBase = derivedIVBase
 		dbgLog.Printf("[sender] session key derived (pull flow, no SESSION_ACCEPT)")
 	}
 
@@ -326,7 +335,7 @@ func (s *Sender) Send() error {
 				continue
 			}
 			conn.SetReadDeadline(time.Time{})
-			key, err := protocol.DeriveSessionKey(ephemPriv, accept.PubKey[:], sessionID)
+			key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, accept.PubKey[:], sessionID)
 			if err != nil {
 				return fmt.Errorf("derive session key: %w", err)
 			}
@@ -335,165 +344,22 @@ func (s *Sender) Send() error {
 				return fmt.Errorf("init cipher: %w", err)
 			}
 			aead = c
+			ivBase = derivedIVBase
 			dbgLog.Printf("[sender] session key derived (direct, SESSION_ACCEPT received)")
 			break acceptLoop
 		}
 	}
 
-	// --- Step 3b: Resume negotiation ---
-	// After SESSION_REQ is sent and encryption is set up, wait briefly for
-	// a RESUME_REQ from the receiver. If the receiver has a checkpoint from
-	// a previous interrupted transfer, it will send RESUME_REQ instead of
-	// proceeding with a fresh transfer.
+	// --- Step 4: Open file and prepare send state ---
 	chunkSize := protocol.MaxPayload
 	if aead != nil {
 		chunkSize = protocol.MaxEncryptedPayload
 	}
-	var resumeSeqNum uint64 // 0 = fresh transfer
-
-	// The negotiation window: listen for RESUME_REQ for up to 1 second.
-	// The receiver checks for a checkpoint immediately after SESSION_REQ and
-	// sends RESUME_REQ within milliseconds if one exists. A heartbeat arrival
-	// means the receiver started a fresh transfer (heartbeat generator launches
-	// only after resume check completes).
-	{
-		negoBuf := make([]byte, protocol.MTUHardCap)
-		negoDeadline := time.Now().Add(1 * time.Second)
-
-		negoLoop:
-		for time.Now().Before(negoDeadline) {
-			var n int
-			var readErr error
-
-			if recvChan != nil {
-				select {
-				case raw, ok := <-recvChan:
-					if !ok {
-						break negoLoop
-					}
-					n = copy(negoBuf, raw)
-				case <-time.After(100 * time.Millisecond):
-					continue
-				}
-			} else {
-				conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-				n, readErr = conn.Read(negoBuf)
-				if readErr != nil {
-					if os.IsTimeout(readErr) {
-						continue
-					}
-					break negoLoop
-				}
-			}
-
-			if n < protocol.HeaderSize {
-				continue
-			}
-			hdr, hdrErr := protocol.UnmarshalHeader(negoBuf[:n])
-			if hdrErr != nil || hdr.SessionID != sessionID {
-				continue
-			}
-
-			switch hdr.Type {
-			case protocol.PacketResumeReq:
-				payloadEnd := protocol.HeaderSize + int(hdr.PayloadLen)
-				if payloadEnd > n {
-					continue
-				}
-				rr, rrErr := protocol.UnmarshalResumeReq(negoBuf[protocol.HeaderSize:payloadEnd], false)
-				if rrErr != nil {
-					continue
-				}
-
-				// Validate: file size and full hash must match.
-				if rr.FileSize != fileSize || rr.FullHash != checksum {
-					dbgLog.Printf("[sender] RESUME_REQ rejected: file mismatch")
-					rejectPkt := protocol.Packet{
-						Header: protocol.Header{
-							Type:      protocol.PacketSessionReject,
-							SessionID: sessionID,
-						},
-						Payload: []byte{byte(protocol.RejectResumeHashMismatch)},
-					}
-					raw, _ := protocol.MarshalPacket(&rejectPkt)
-					writeFn(raw)
-					break negoLoop
-				}
-
-				// Validate partial hash: hash bytes 0..ResumeOffset from source.
-				partialHash, phErr := receiver.HashFileRange(s.cfg.FilePath, int64(rr.ResumeOffset))
-				if phErr != nil || partialHash != rr.PartialHash {
-					dbgLog.Printf("[sender] RESUME_REQ rejected: partial hash mismatch (computed=0x%016X, received=0x%016X, err=%v)",
-						partialHash, rr.PartialHash, phErr)
-					rejectPkt := protocol.Packet{
-						Header: protocol.Header{
-							Type:      protocol.PacketSessionReject,
-							SessionID: sessionID,
-						},
-						Payload: []byte{byte(protocol.RejectResumeHashMismatch)},
-					}
-					raw, _ := protocol.MarshalPacket(&rejectPkt)
-					writeFn(raw)
-					break negoLoop
-				}
-
-				// Accept the resume. Align to FEC block boundary so the
-				// encoder always starts at the beginning of a complete block.
-				// At most blockSize-1 duplicate packets get re-sent.
-				fecBlockSize := uint64(protocol.DefaultFECConfig().BlockSize)
-				resumeSeqNum = rr.ResumeOffset / uint64(chunkSize)
-				resumeSeqNum = (resumeSeqNum / fecBlockSize) * fecBlockSize
-
-				acceptPayload := protocol.ResumeAcceptPayload{
-					ResumeSequenceNum: resumeSeqNum,
-				}
-				acceptPkt := protocol.Packet{
-					Header: protocol.Header{
-						Type:      protocol.PacketResumeAccept,
-						SessionID: sessionID,
-					},
-					Payload: protocol.MarshalResumeAccept(&acceptPayload),
-				}
-				raw, _ := protocol.MarshalPacket(&acceptPkt)
-				writeFn(raw)
-
-				dbgLog.Printf("[sender] RESUME_ACCEPT: starting from seq=%d (offset=%d)",
-					resumeSeqNum, rr.ResumeOffset)
-				break negoLoop
-
-			case protocol.PacketHeartbeat:
-				// Receiver started a fresh transfer — no resume.
-				break negoLoop
-
-			case protocol.PacketTransferComplete:
-				// Edge case: receiver already has the complete file.
-				break negoLoop
-
-			default:
-				continue
-			}
-		}
-
-		if recvChan == nil {
-			conn.SetReadDeadline(time.Time{})
-		}
-	}
-
-	// --- Step 4: Open file and prepare send state ---
 	file, err := os.Open(s.cfg.FilePath)
 	if err != nil {
 		return fmt.Errorf("open file: %w", err)
 	}
 	defer file.Close()
-
-	// Seek past already-transferred data if resuming.
-	if resumeSeqNum > 0 {
-		seekOffset := int64(resumeSeqNum) * int64(chunkSize)
-		if _, err := file.Seek(seekOffset, io.SeekStart); err != nil {
-			return fmt.Errorf("seek to resume offset: %w", err)
-		}
-		dbgLog.Printf("[sender] file seeked to offset %d for resume", seekOffset)
-	}
 
 	totalChunks := fileSize / uint64(chunkSize)
 	if fileSize%uint64(chunkSize) != 0 {
@@ -528,9 +394,6 @@ func (s *Sender) Send() error {
 	// --- Set progress totals ---
 	s.totalBytes.Store(int64(fileSize))
 	s.startNs.Store(time.Now().UnixNano())
-	if resumeSeqNum > 0 {
-		s.bytesSent.Store(int64(resumeSeqNum) * int64(chunkSize))
-	}
 
 	// --- Step 6: Start heartbeat listener goroutine ---
 	// lastHeartbeatNs tracks the most recent heartbeat arrival time.
@@ -649,7 +512,7 @@ func (s *Sender) Send() error {
 	// --- Step 8: Main send loop ---
 	sendBuf := make([]byte, protocol.MTUHardCap)
 	readBuf := make([]byte, chunkSize)
-	seqNum := resumeSeqNum
+	seqNum := uint64(0)
 	startTime := time.Now()
 
 	// Diagnostic: track time spent stalled on full sliding window.
@@ -722,7 +585,7 @@ func (s *Sender) Send() error {
 			if aead != nil {
 				hdr.Flags |= protocol.FlagEncrypted
 				protocol.MarshalHeader(sendBuf, &hdr)
-				nonce := protocol.BuildNonce(sessionID, protocol.PacketData, nackSeq, hdr.BlockGroup)
+				nonce := protocol.BuildNonce(ivBase, nackSeq)
 				writeFn(protocol.EncryptPacket(aead, sendBuf[:totalPktSize], nonce))
 			} else {
 				writeFn(sendBuf[:totalPktSize])
@@ -781,7 +644,7 @@ func (s *Sender) Send() error {
 		if aead != nil {
 			hdr.Flags |= protocol.FlagEncrypted
 			protocol.MarshalHeader(sendBuf, &hdr)
-			nonce := protocol.BuildNonce(sessionID, protocol.PacketData, seqNum, hdr.BlockGroup)
+			nonce := protocol.BuildNonce(ivBase, seqNum)
 			writeFn(protocol.EncryptPacket(aead, sendBuf[:totalSize], nonce))
 		} else {
 			writeFn(sendBuf[:totalSize])
@@ -795,7 +658,7 @@ func (s *Sender) Send() error {
 
 		parityResult := blockEncoder.AddShard(hdr.BlockGroup, readBuf[:n])
 		if parityResult != nil {
-			sendParityPackets(writeFn, sessionID, parityResult, sendBuf, bucket, s.cfg.SendDelay, aead)
+			sendParityPackets(writeFn, sessionID, parityResult, sendBuf, bucket, s.cfg.SendDelay, aead, ivBase)
 		}
 
 		seqNum++
@@ -814,7 +677,7 @@ func (s *Sender) Send() error {
 	// --- FEC: flush tail block parity ---
 	tailResult := blockEncoder.FlushTail()
 	if tailResult != nil {
-		sendParityPackets(writeFn, sessionID, tailResult, sendBuf, bucket, s.cfg.SendDelay, aead)
+		sendParityPackets(writeFn, sessionID, tailResult, sendBuf, bucket, s.cfg.SendDelay, aead, ivBase)
 		dbgLog.Printf("[sender] sent %d tail block parity packets for block %d (%d data shards)",
 			tailResult.ParityCount, tailResult.BlockGroup, tailResult.DataCount)
 	}
@@ -867,7 +730,7 @@ func (s *Sender) Send() error {
 	nackPending = make(map[uint64]struct{})
 	nackMu.Unlock()
 
-	retransmitNACKs(writeFn, sessionID, pendingNACKs, sendBuf, sw, totalChunks, bucket, aead)
+	retransmitNACKs(writeFn, sessionID, pendingNACKs, sendBuf, sw, totalChunks, bucket, aead, ivBase)
 
 	// nackCooldown tracks the last retransmit time per sequence number.
 	// On a 50ms-RTT path the receiver fires one heartbeat per HB interval
@@ -992,7 +855,7 @@ func (s *Sender) Send() error {
 						if end > len(toRetransmit) {
 							end = len(toRetransmit)
 						}
-						retransmitNACKs(writeFn, sessionID, toRetransmit[i:end], sendBuf, sw, totalChunks, bucket, aead)
+						retransmitNACKs(writeFn, sessionID, toRetransmit[i:end], sendBuf, sw, totalChunks, bucket, aead, ivBase)
 						time.Sleep(2 * time.Millisecond)
 					}
 				}
@@ -1105,6 +968,7 @@ func retransmitNACKs(
 	totalChunks uint64,
 	bucket *TokenBucket,
 	aead cipher.AEAD,
+	ivBase [8]byte,
 ) {
 	for _, nackSeq := range nacks {
 		chunk, ok := sw.Load(nackSeq)
@@ -1135,7 +999,7 @@ func retransmitNACKs(
 		if aead != nil {
 			hdr.Flags |= protocol.FlagEncrypted
 			protocol.MarshalHeader(sendBuf, &hdr)
-			nonce := protocol.BuildNonce(sessionID, protocol.PacketData, nackSeq, hdr.BlockGroup)
+			nonce := protocol.BuildNonce(ivBase, nackSeq)
 			writeFn(protocol.EncryptPacket(aead, sendBuf[:totalSize], nonce))
 		} else {
 			writeFn(sendBuf[:totalSize])
@@ -1152,6 +1016,7 @@ func sendParityPackets(
 	bucket *TokenBucket,
 	fixedDelay time.Duration,
 	aead cipher.AEAD,
+	ivBase [8]byte,
 ) {
 	for i, payload := range result.Payloads {
 		hdr := protocol.Header{
@@ -1169,7 +1034,7 @@ func sendParityPackets(
 		if aead != nil {
 			hdr.Flags |= protocol.FlagEncrypted
 			protocol.MarshalHeader(sendBuf, &hdr)
-			nonce := protocol.BuildNonce(sessionID, protocol.PacketParity, uint64(i), result.BlockGroup)
+			nonce := protocol.BuildNonce(ivBase, uint64(i))
 			writeFn(protocol.EncryptPacket(aead, sendBuf[:totalSize], nonce))
 		} else {
 			writeFn(sendBuf[:totalSize])

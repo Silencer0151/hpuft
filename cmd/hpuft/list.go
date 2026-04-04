@@ -65,13 +65,13 @@ func runList(args []string) {
 		if err != nil || pkt.Header.Type != protocol.PacketListResp || pkt.Header.SessionID != sessionID {
 			continue
 		}
-		names := protocol.UnmarshalListResp(pkt.Payload)
-		if len(names) == 0 {
+		entries := protocol.UnmarshalListResp(pkt.Payload)
+		if len(entries) == 0 {
 			fmt.Println("(no files available)")
 			return
 		}
-		for _, name := range names {
-			fmt.Println(name)
+		for _, e := range entries {
+			fmt.Printf("%-40s %s\n", e.Name, humanBytes(int64(e.Size)))
 		}
 		return
 	}

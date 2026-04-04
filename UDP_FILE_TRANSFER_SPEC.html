@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HP-UDP Design Specification v5.1</title>
+    <title>HP-UDP Design Specification v5.2</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -126,7 +126,22 @@
 </head>
 <body>
 
-    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v5.1</span></h1>
+    <h1>Design Specification: High-Performance UDP File Transfer Protocol (HP-UDP) <span class="version-badge">v5.2</span></h1>
+
+    <div class="changelog">
+        <strong>Changelog from v5.1 → v5.2 (C Implementation Alignment):</strong>
+        <ul>
+            <li><strong>§4.5B HKDF Key Derivation:</strong> HKDF-SHA256 now derives <strong>24 bytes</strong> (not 16): bytes 0–15 are the AES-128 session key; bytes 16–23 replace the randomly-generated <code>iv_base</code> from the init step. Both sides derive the same <code>iv_base</code> deterministically from the shared secret — no additional wire transmission of <code>iv_base</code> is needed.</li>
+            <li><strong>§4.5C Nonce Construction:</strong> Redesigned. The 12-byte GCM nonce is now <code>iv_base(8B) || seq_low32_be(4B)</code> — the HKDF-derived <code>iv_base</code> in bytes 0–7 and the low 32 bits of <code>SequenceNum</code> in big-endian in bytes 8–11. The previous 3-field scheme (<code>SessionID + PacketType + UniqueID</code>) has been replaced. Uniqueness is preserved: <code>seq</code> is monotonically increasing per session; 32-bit overflow cannot occur within the 1 TB file size limit (~810M packets &lt; 2<sup>32</sup>).</li>
+            <li><strong>§4.5E PUSH_ACCEPT payload:</strong> The <code>Port(2B)</code> prefix has been removed. The serve daemon uses a single shared UDP socket — no ephemeral data port is negotiated. Encrypted PUSH_ACCEPT now carries only <code>PubKey(32B)</code>; unencrypted PUSH_ACCEPT carries no payload.</li>
+            <li><strong>§4.5E PUSH_REQ payload:</strong> Standard PUSH_REQ payload now includes <code>FileHash(8B)</code> and <code>InitialRate(4B)</code> (matching SESSION_REQ layout) in addition to <code>FileSize(8B)</code> and <code>FileName</code>. The encrypted variant inserts <code>PubKey(32B)</code> after <code>InitialRate</code>.</li>
+            <li><strong>§11 Serve Daemon:</strong> Updated from single-lane to <strong>16 concurrent sessions</strong> (<code>HPUDP_MAX_SESSIONS</code>). Single-socket model: all sessions share one UDP socket, dispatched by <code>(src_addr, session_id)</code> tuple. No ephemeral per-session socket.</li>
+            <li><strong>§11C LIST_RESP:</strong> Each line is tab-separated <code>filename\tsize\n</code> (not just a filename). The size is the file's byte count as a decimal integer.</li>
+            <li><strong>§11D PUSH flow:</strong> Rewritten for single-socket architecture. PUSH_ACCEPT no longer carries a data port; the data flows to the same socket and port that received the PUSH_REQ.</li>
+            <li><strong>§12 Resumable Transfers:</strong> Complete redesign. The wire-level RESUME_REQ / RESUME_ACCEPT negotiation (v5.1) has been replaced by a transparent receiver-side checkpoint mechanism. The receiver saves a binary sidecar (<code>.hpudp-ckpt</code>) every heartbeat. On a matching SESSION_REQ (same file hash), the receiver restores its receive bitset and <code>HighestContiguous</code> from the sidecar; the sender needs no knowledge of the resume. Packet types <code>0x0B RESUME_REQ</code> and <code>0x0C RESUME_ACCEPT</code> are reserved but unused in the current implementation.</li>
+            <li><strong>Appendix A:</strong> GCM Nonce Size description and Key Derivation output updated to reflect the 24-byte HKDF and <code>iv_base</code>-based nonce.</li>
+        </ul>
+    </div>
 
     <div class="changelog">
         <strong>Changelog from v4.2 → v5.0 (End-to-End Encryption):</strong>
@@ -390,14 +405,18 @@
     <p>Both sides independently derive the same symmetric key:</p>
 
     <pre>shared_secret = X25519(my_private_key, their_public_key)     // 32 bytes
-session_key   = HKDF-SHA256(
+okm           = HKDF-SHA256(
                     ikm  = shared_secret,
                     salt = SessionID (4 bytes, big-endian),
                     info = "hp-udp-aes128-v5",
-                    len  = 16                                  // AES-128 key
-                )</pre>
+                    len  = 24                                  // 16-byte key + 8-byte iv_base
+                )
+session_key   = okm[0..15]                                    // AES-128 key
+iv_base       = okm[16..23]                                   // Nonce base (replaces random init)</pre>
 
-    <p>The <code>SessionID</code> salt ensures that even if the same ephemeral keypair were accidentally reused (implementation bug), different sessions would derive different keys. The <code>info</code> string binds the key to the protocol version and cipher suite, preventing cross-protocol key reuse.</p>
+    <p>The 24-byte HKDF output serves a dual purpose: bytes 0–15 are the AES-128-GCM session key, and bytes 16–23 become the shared <code>iv_base</code> used in nonce construction (§4.5C). Both sides derive the same <code>iv_base</code> deterministically — no additional exchange is needed. The random <code>iv_base</code> generated during key-pair initialisation is overwritten by the HKDF-derived value at the end of <code>hpudp_crypto_derive()</code>.</p>
+
+    <p>The <code>SessionID</code> salt ensures that even if the same ephemeral keypair were accidentally reused (implementation bug), different sessions would derive different keys and nonce bases. The <code>info</code> string binds the key to the protocol version and cipher suite, preventing cross-protocol key reuse.</p>
 
     <p>C implementations: OpenSSL <code>EVP_KDF</code> with <code>OSSL_KDF_NAME_HKDF</code>, or libsodium <code>crypto_kdf_hkdf_sha256_expand</code>. Go: <code>golang.org/x/crypto/hkdf</code>.</p>
 
@@ -416,7 +435,7 @@ session_key   = HKDF-SHA256(
 
     <h4>Nonce Construction (12 Bytes)</h4>
 
-    <p>AES-GCM requires a unique nonce for every packet encrypted under the same key. Nonce reuse completely breaks GCM's confidentiality and authenticity guarantees. The nonce is constructed deterministically from fields already present in the packet header:</p>
+    <p>AES-GCM requires a unique nonce for every packet encrypted under the same key. Nonce reuse completely breaks GCM's confidentiality and authenticity guarantees. The nonce is constructed deterministically from the HKDF-derived <code>iv_base</code> (§4.5B) and the packet's sequence number:</p>
 
     <table>
         <thead>
@@ -424,28 +443,23 @@ session_key   = HKDF-SHA256(
         </thead>
         <tbody>
             <tr>
-                <td>0–3</td>
-                <td><code>SessionID</code> (4 bytes)</td>
-                <td>Scopes nonce space to this transfer. Redundant with HKDF salt but provides defense-in-depth against implementation errors.</td>
+                <td>0–7</td>
+                <td><code>iv_base</code> (8 bytes)</td>
+                <td>Session-scoped nonce base derived from HKDF output (§4.5B). Identical on both sides; never transmitted. Binds nonce space to this session's key material.</td>
             </tr>
             <tr>
-                <td>4</td>
-                <td><code>PacketType</code> (1 byte)</td>
-                <td>Domain separator: <code>0x01</code> (DATA) vs <code>0x02</code> (PARITY). Prevents nonce collision between DATA and PARITY packets that may share the same <code>SequenceNum</code> value within a block.</td>
-            </tr>
-            <tr>
-                <td>5–11</td>
-                <td>Packet Unique ID (7 bytes, big-endian)</td>
-                <td><strong>DATA:</strong> lower 56 bits of <code>SequenceNum</code> (globally unique, strictly incrementing). <strong>PARITY:</strong> lower 56 bits of <code>(BlockGroup &lt;&lt; 8) | ParityIndex</code>, where <code>ParityIndex</code> is the zero-based <code>SequenceNum</code> field of the PARITY packet (0..m−1).</td>
+                <td>8–11</td>
+                <td>Low 32 bits of <code>SequenceNum</code> (big-endian, 4 bytes)</td>
+                <td>Unique per packet within the session. Combined with <code>iv_base</code>, produces a distinct 96-bit nonce for every packet. Applied as <code>htobe32(seq &amp; 0xFFFFFFFF)</code>.</td>
             </tr>
         </tbody>
     </table>
 
     <div class="lesson">
-        <strong>Nonce uniqueness proof:</strong> DATA nonces are unique because SequenceNum is strictly incrementing across the entire transfer and never reused. PARITY nonces are unique because BlockGroup is strictly incrementing and ParityIndex is unique within a block; the compound <code>(BlockGroup &lt;&lt; 8) | ParityIndex</code> is therefore unique across the transfer (up to 256 parity packets per block, which exceeds the maximum of 20). The PacketType byte at offset 4 prevents any DATA nonce from colliding with any PARITY nonce. 56 bits of unique ID supports 2<sup>56</sup> packets per session (~98 exabytes at 1368 bytes/packet), well beyond the 1 TB maximum file size.
+        <strong>Nonce uniqueness proof:</strong> <code>SequenceNum</code> is strictly incrementing and never reused within a session. The maximum file size is 1 TB; at 1352 bytes per encrypted payload, that is at most ~810 million packets — well below the 2<sup>32</sup> (≈4.29 billion) wrap point. Therefore the low 32 bits of <code>SequenceNum</code> are globally unique within any single session, and combined with the session-scoped <code>iv_base</code>, the 12-byte nonce is unique for every (session, packet) pair.
     </div>
 
-    <p>The nonce is <strong>not transmitted on the wire</strong>. Both sides compute it deterministically from the packet header fields. This saves 12 bytes per packet compared to an explicit nonce.</p>
+    <p>The nonce is <strong>not transmitted on the wire</strong>. Both sides compute it independently from <code>iv_base</code> (derived identically via HKDF) and the <code>SequenceNum</code> in the packet header. This saves 12 bytes per packet compared to an explicit nonce.</p>
 
     <h3>D. Encryption Placement in the Data Path</h3>
 
@@ -477,13 +491,13 @@ Receiver: receive → decrypt each shard → FEC decode (plaintext) → reassemb
             </tr>
             <tr>
                 <td><code>PUSH_REQ</code></td>
-                <td>FileSize(8B) + FileName(null-term)</td>
-                <td>FileSize(8B) + <strong>PubKey(32B)</strong> + FileName(null-term)</td>
+                <td>FileSize(8B) + Hash(8B) + InitialRate(4B) + FileName(null-term)</td>
+                <td>FileSize(8B) + Hash(8B) + InitialRate(4B) + <strong>PubKey(32B)</strong> + FileName(null-term)</td>
             </tr>
             <tr>
                 <td><code>PUSH_ACCEPT</code></td>
-                <td>Port(2B)</td>
-                <td>Port(2B) + <strong>PubKey(32B)</strong></td>
+                <td><em>(no payload)</em></td>
+                <td><strong>PubKey(32B)</strong></td>
             </tr>
             <tr>
                 <td><code>PULL_REQ</code></td>
@@ -938,8 +952,22 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <p><strong>Fix:</strong> Replace <code>for sw.IsFull(seqNum) { sleep }</code> with <code>if sw.IsFull(seqNum) { sleep; continue }</code>. The <code>continue</code> jumps back to the top of the outer <code>for seqNum &lt; totalChunks</code> loop, so every backpressure iteration still drains <code>nackPending</code> and retransmits pending sequences before sleeping. The retransmit of the lost first packet allows <code>HighestContiguous</code> to advance on the next heartbeat, which unblocks <code>IsFull</code> and resumes the main send loop normally.</p>
     <p><strong>Observed signature:</strong> Transfer ramps to full speed (100+ MB/s), freezes at approximately 6% of a 1 GB file, receiver reports inactivity timeout 5 seconds later. NACKs counter shows 0 during the freeze (the NACK retransmit loop never ran). The freeze point scales exactly with window size: <code>windowSlots × MaxPayload / fileSize</code>.</p>
 
+    <h3>L. Cooldown Spin-Lock During Teardown</h3>
+    <p><strong>Problem:</strong> The §8B NACK cooldown gate (<code>RTT × 1.25</code>) can trap the teardown retransmit loop in an infinite spin. After the sender retransmits a batch of NACKed sequences, every entry in the NACK set has a fresh <code>lastRetransmitTime</code>. The retransmit loop condition (<code>nackSet.count &gt; 0</code>) remains true because entries are only removed after successful retransmit, but the cooldown gate skips every entry with <code>continue</code>. Because the loop is unbounded (a <code>while</code>, not a <code>for</code> with an iteration cap), <code>continue</code> restarts the loop indefinitely. The clock variable <code>now</code> is only refreshed inside the batch-sleep path, which is never reached when <code>sent == 0</code>. The sender is permanently trapped in the retransmit function and never returns to the teardown main loop to check its deadline or read the next heartbeat.</p>
+    <p><strong>Fix:</strong> Track consecutive cooldown skips. When the skip count reaches <code>nackSet.count</code>, all entries are in cooldown — break out of the retransmit loop and return to the teardown main loop. The next heartbeat will either confirm the sequences were received (removing them from the set) or re-NACK them (at which point their cooldown timestamps will have elapsed). This is the same class of bug as Lesson K: a tight inner loop that starves the outer control loop because its exit condition cannot be reached from within.</p>
+    <p><strong>Observed signature:</strong> Sender enters teardown, processes 1–2 heartbeats, retransmits NACKed packets, then hangs indefinitely. The receiver reports the session complete (all data received), but the sender process never exits. CPU usage spikes to 100% on one core. Ctrl-C is required to terminate.</p>
+
+    <h3>M. Receiver-Side Self-Completion</h3>
+    <p><strong>Problem:</strong> §8A defines a two-phase teardown where the sender sends <code>TRANSFER_COMPLETE</code> after the receiver's heartbeats confirm all data received. In the serve daemon architecture (§11), the sender's linger timeout fires a single <code>TRANSFER_COMPLETE</code> and immediately exits. Under WAN conditions (50ms RTT, 1–5% loss via <code>tc netem</code>), this single fire-and-forget control packet is frequently dropped. The receiver has all data (<code>HighestContiguous + 1 == TotalChunks</code>, <code>NACKCount == 0</code>) but remains stuck in the DATA state waiting for a <code>TRANSFER_COMPLETE</code> that will never arrive, eventually hitting the 5-second inactivity timeout.</p>
+    <p><strong>Fix:</strong> The receiver must autonomously detect transfer completion. When constructing a heartbeat with <code>NACKCount == 0</code> and <code>HighestContiguous + 1 &gt;= TotalChunks</code>, the receiver self-initiates teardown: it flushes and fsyncs the output file, sends <code>ACK_CLOSE</code>, and transitions to the linger state. This makes the receiver resilient to lost control packets and removes the dependency on a single <code>TRANSFER_COMPLETE</code> arriving reliably. The sender's <code>TRANSFER_COMPLETE</code> still accelerates the handshake when it does arrive, but is no longer required for correctness.</p>
+    <p><strong>Observed signature:</strong> Transfer runs at full speed, sender exits normally, but the daemon session hangs for 5 seconds and then reports <code>timed out</code>. The daemon's debug log shows <code>pkts == TotalChunks</code> and <code>HighestContiguous + 1 == TotalChunks</code> — all data is present but the session never transitions to teardown.</p>
+
+    <h3>N. Serve Daemon Must Handle PARITY Packets</h3>
+    <p><strong>Problem:</strong> §11 specifies that the serve daemon runs the "normal receiver" flow for push transfers, but does not explicitly require PARITY packet handling. An implementation that dispatches DATA but ignores PARITY (e.g., <code>case PARITY: break</code>) will function on lossless links but degrade severely under WAN conditions. Without FEC recovery, every lost DATA packet requires a full NACK → retransmit round trip (<code>RTT × 1.25</code> cooldown + propagation). At 1–5% loss with 50ms RTT, this converts what should be a transparent FEC correction into a NACK storm that slows teardown convergence and can interact with Lesson L to cause hangs.</p>
+    <p><strong>Fix:</strong> The serve daemon's packet dispatch must handle <code>PARITY</code> packets identically to the standalone receiver: maintain a per-session FEC block pool, track parity shard arrival, and attempt Reed-Solomon recovery after each new parity shard. Recovered data shards are written to the mmap, marked in the receive bitset, and advance <code>HighestContiguous</code> — exactly as if they had arrived as DATA packets. PARITY reception should also update the inactivity timer to prevent timeout during FEC-dominated tail phases where the only arriving packets are parity shards.</p>
+
     <h2>11. Serve Daemon — Bidirectional File Hub</h2>
-    <p>The serve daemon is a persistent single-lane UDP server that manages a file manifest and services both pull requests (clients fetch files) and push requests (clients deposit files). It listens on a single control port and handles one transfer at a time — concurrent requests receive <code>SERVER_BUSY</code> and may retry.</p>
+    <p>The serve daemon is a persistent multi-session UDP server that manages a file directory and services both pull requests (clients fetch files) and push requests (clients deposit files). It listens on a <strong>single UDP socket</strong> and dispatches packets by <code>(src_addr, session_id)</code> tuple. Up to <strong><code>HPUDP_MAX_SESSIONS = 16</code> concurrent transfers</strong> are supported. Additional requests beyond that limit receive <code>SERVER_BUSY (0x03)</code> and may retry. <code>LIST_REQ</code> is always answered regardless of the current session count.</p>
 
     <h3>A. SESSION_REJECT Reason Codes</h3>
     <p>All <code>SESSION_REJECT</code> packets carry a single reason-code byte in the payload:</p>
@@ -973,7 +1001,7 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <h3>C. LIST_REQ / LIST_RESP — Catalog Query</h3>
     <p><code>LIST_REQ (0x0D)</code> allows a client to query the serve daemon's file manifest without initiating a transfer. The serve daemon responds with <code>LIST_RESP (0x0E)</code> immediately, regardless of whether a transfer is currently in progress (<code>SERVER_BUSY</code> does not apply to listing).</p>
     <p><strong>Wire format — LIST_REQ:</strong> Packet type <code>0x0D</code>. No payload. The client generates a random <code>SessionID</code> used solely to match the response.</p>
-    <p><strong>Wire format — LIST_RESP:</strong> Packet type <code>0x0E</code>. Payload is the available filenames as a newline-delimited UTF-8 string (no trailing newline). Empty payload means no files are available. The list is truncated to fit within a single MTU payload (<code>MaxPayload = 1368</code> bytes) if the manifest is very large.</p>
+    <p><strong>Wire format — LIST_RESP:</strong> Packet type <code>0x0E</code>. Payload is a UTF-8 string where each entry is a tab-separated <code>filename\tsize\n</code> line (filename, a tab character, the file's byte count as a decimal integer, and a newline). Empty payload means no files are available. The list is truncated to fit within a single MTU payload (<code>MaxPayload = 1368</code> bytes) if the directory is very large. Example: <code>backup.tar.gz\t524288000\nreport.pdf\t2097152\n</code>.</p>
     <p><strong>Flow:</strong></p>
     <ol>
         <li><strong>Client</strong> generates a random <code>SessionID</code>, binds a local UDP socket, and sends <code>LIST_REQ</code> to the server's control port.</li>
@@ -984,80 +1012,58 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <h3>D. PUSH_REQ / PUSH_ACCEPT — Client-Initiated Push</h3>
     <p>The push flow allows a client to deposit a file into the serve daemon's directory. Three security invariants are always enforced:</p>
     <ol>
-        <li><strong>Base-name-only rule:</strong> The filename from the <code>PUSH_REQ</code> payload is sanitized to its base name — the substring after the last <code>/</code> or <code>\</code> separator (Go: <code>filepath.Base()</code>; C: manual reverse scan for both separators). Path traversal sequences such as <code>../../etc/passwd</code> or <code>/absolute/path</code> are reduced to just the final filename component before any further processing.</li>
+        <li><strong>Base-name-only rule:</strong> The filename from the <code>PUSH_REQ</code> payload is sanitized to its base name — the substring after the last <code>/</code> or <code>\</code> separator (C: manual reverse scan for both separators). Path traversal sequences such as <code>../../etc/passwd</code> or <code>/absolute/path</code> are reduced to just the final filename component before any further processing.</li>
         <li><strong>No-overwrite rule:</strong> If a file with the sanitized name already exists in the serve directory, the request is rejected with reason code <code>FILE_EXISTS (0x05)</code>.</li>
-        <li><strong>Post-hash manifest promotion:</strong> The incoming file is written to <code>filename.tmp</code> during the transfer. Only after a successful <code>TRANSFER_COMPLETE</code> (xxHash64 verified) is the <code>.tmp</code> renamed to its final path and added to the live manifest. A failed or interrupted transfer leaves no partial file in the manifest.</li>
+        <li><strong>Post-hash atomic rename:</strong> The incoming file is written to <code>filename.tmp</code> during the transfer. Only after a successful <code>TRANSFER_COMPLETE</code> (xxHash64 verified) is the <code>.tmp</code> renamed to its final path. A failed or interrupted transfer leaves no partial file in the directory.</li>
     </ol>
-    <p><strong>PUSH_REQ wire format</strong> (type <code>0x08</code>): 8-byte big-endian <code>FileSize</code> followed by a null-terminated filename. Total payload: 9 bytes minimum.</p>
-    <p><strong>PUSH_ACCEPT wire format</strong> (type <code>0x09</code>): 2-byte big-endian <code>Port</code> — the ephemeral UDP port the server has bound for the incoming data transfer.</p>
+    <p><strong>PUSH_REQ wire format</strong> (type <code>0x08</code>): <code>FileSize(8B, big-endian)</code> + <code>FileHash(8B, big-endian)</code> + <code>InitialRate(4B, big-endian)</code> + optional <code>PubKey(32B)</code> (encrypted mode only) + null-terminated filename. The layout mirrors SESSION_REQ (§4C Step 1).</p>
+    <p><strong>PUSH_ACCEPT wire format</strong> (type <code>0x09</code>): No payload in unencrypted mode. In encrypted mode, a single <code>PubKey(32B)</code> — the server's ephemeral X25519 public key for completing the key exchange.</p>
     <p><strong>Flow:</strong></p>
     <ol>
-        <li><strong>Client</strong> generates a <code>SessionID</code>, sends <code>PUSH_REQ</code> to the control port containing the filename and declared file size.</li>
-        <li><strong>Server</strong> validates (not busy, base-name safe, no existing file), binds an ephemeral UDP data socket on port 0 (Go: <code>net.ListenUDP(":0")</code>; C: <code>bind()</code> with <code>sin_port = 0</code>, then <code>getsockname()</code> to retrieve the assigned port), and replies with <code>PUSH_ACCEPT</code> containing the assigned data port.</li>
-        <li><strong>Client</strong> extracts the data port, constructs <code>server-host:data-port</code>, and starts a normal HP-UDP sender using the same <code>SessionID</code> from step 1.</li>
-        <li><strong>Server</strong> runs a normal HP-UDP receiver on the data socket writing to <code>filename.tmp</code>. On success: atomic rename (<code>rename()</code>) from tmp to final path + manifest promotion under a write-lock. On failure: tmp is deleted and the slot is cleared.</li>
+        <li><strong>Client</strong> generates a <code>SessionID</code>, sends <code>PUSH_REQ</code> to the daemon port containing the file metadata and filename. If encrypted, includes the client's X25519 public key in the payload (§4.5E).</li>
+        <li><strong>Server</strong> validates (not over session limit, base-name safe, file does not already exist). If encrypted, generates its own X25519 keypair and derives the shared session key. Sends <code>PUSH_ACCEPT</code> (including its pub key in encrypted mode). Allocates a session slot and begins receiving DATA packets on the same shared socket.</li>
+        <li><strong>Client</strong> receives <code>PUSH_ACCEPT</code>. If encrypted, calls <code>hpudp_crypto_derive()</code> with the server's pub key. Begins the calibration burst and data transmission to the same daemon port using the same <code>SessionID</code>.</li>
+        <li><strong>Server</strong> receives DATA/PARITY packets, dispatches them by <code>(src_addr, session_id)</code> to the allocated session slot, writes to <code>filename.tmp</code> via mmap. On <code>TRANSFER_COMPLETE</code>: verifies hash, atomically renames <code>filename.tmp</code> to final path. On failure: tmp is deleted and the slot is cleared.</li>
     </ol>
 
     <h3>D. Manifest Lifecycle</h3>
     <p>The manifest is a filename-to-absolute-path map built at daemon startup by a non-recursive directory scan. Symlinks and directories are excluded. Files added to the directory after startup are invisible until the daemon is restarted — this is an intentional security boundary. Successful push transfers atomically add their promoted file to the in-memory manifest under a write-lock (Go: <code>sync.RWMutex</code>; C: <code>pthread_rwlock_t</code>). PULL_REQ handlers acquire a read-lock when consulting the manifest.</p>
 
     <h2>12. Resumable Transfers</h2>
-    <p>A transfer interrupted mid-flight (network loss, client Ctrl+C, daemon restart) can be resumed from the last confirmed checkpoint rather than restarting from byte zero. The mechanism uses a <em>checkpoint sidecar file</em> written periodically by the receiver and a one-RTT <strong>RESUME_REQ / RESUME_ACCEPT</strong> negotiation inserted into the existing session setup flow.</p>
+    <p>A transfer interrupted mid-flight (network loss, client Ctrl+C, daemon restart) can be resumed transparently without any wire-level negotiation. The mechanism is entirely receiver-side: a binary checkpoint sidecar written periodically by the receiver is loaded automatically when a matching new session arrives.</p>
 
     <h3>A. Checkpoint Sidecar</h3>
-    <p>While receiving, the receiver writes a checkpoint sidecar (filename: <code>&lt;output&gt;.hpuft-resume</code>) every 5 seconds or every 1% of total file progress, whichever comes first. The sidecar records:</p>
+    <p>While receiving, the receiver writes a checkpoint sidecar (filename: <code>&lt;output&gt;.hpudp-ckpt</code>) on every heartbeat. The sidecar is a binary file with the following layout. <strong>All fields are little-endian</strong> — this is a local file format, not a wire format.</p>
     <table>
-        <thead><tr><th>Field</th><th>Size</th><th>Description</th></tr></thead>
+        <thead><tr><th>Offset</th><th>Size</th><th>Field</th><th>Description</th></tr></thead>
         <tbody>
-            <tr><td><code>HighestContiguous</code></td><td>8 bytes</td><td>Highest sequence number N such that all sequences 0…N have been received and flushed to the .tmp file.</td></tr>
-            <tr><td><code>PartialHash</code></td><td>8 bytes</td><td>xxHash64 streaming state of the bytes written so far (bytes 0 through <code>HighestContiguous × ChunkSize</code>).</td></tr>
-            <tr><td><code>FileSize</code></td><td>8 bytes</td><td>Total declared file size from the original SESSION_REQ.</td></tr>
-            <tr><td><code>FullHash</code></td><td>8 bytes</td><td>xxHash64 of the complete file, as declared in SESSION_REQ.</td></tr>
-            <tr><td><code>ChunkSize</code></td><td>4 bytes</td><td>Payload bytes per DATA packet for this transfer.</td></tr>
-            <tr><td><code>FileName</code></td><td>variable</td><td>Null-terminated UTF-8 filename.</td></tr>
+            <tr><td>0</td><td>4 bytes</td><td><code>magic</code></td><td>Always <code>0x48505543</code> ("HPUC"). Identifies the file as a valid checkpoint.</td></tr>
+            <tr><td>4</td><td>4 bytes</td><td><code>version</code></td><td>Always <code>1</code> in the current implementation.</td></tr>
+            <tr><td>8</td><td>8 bytes</td><td><code>file_size</code></td><td>Total declared file size from the original SESSION_REQ.</td></tr>
+            <tr><td>16</td><td>8 bytes</td><td><code>file_hash</code></td><td>xxHash64 of the complete file, as declared in SESSION_REQ. Used to match the checkpoint to a resumed session.</td></tr>
+            <tr><td>24</td><td>8 bytes</td><td><code>total_chunks</code></td><td><code>ceil(file_size / MaxPayload)</code> — total expected DATA packets.</td></tr>
+            <tr><td>32</td><td>8 bytes</td><td><code>highest_contiguous</code></td><td>Highest sequence number N such that all sequences 0…N have been received.</td></tr>
+            <tr><td>40</td><td>variable</td><td><code>recv_bits</code></td><td>Receive bitset: <code>ceil(total_chunks / 8)</code> bytes. Bit <code>i</code> is set if sequence <code>i</code> has been received. Allows the receiver to skip already-received out-of-order packets on resume.</td></tr>
         </tbody>
     </table>
-    <p>The sidecar is written atomically (write to <code>.hpuft-resume.tmp</code>, then rename) to prevent partial reads. It is deleted on successful transfer completion or on hash mismatch.</p>
+    <p>The sidecar is written atomically (write to <code>&lt;output&gt;.hpudp-ckpt.tmp</code>, then rename) to prevent partial reads. It is deleted on successful transfer completion.</p>
 
-    <h3>B. Resume Negotiation Protocol</h3>
-    <p>Resume negotiation is inserted between PULL_REQ acceptance and the start of data transmission:</p>
+    <h3>B. Transparent Resume Flow</h3>
+    <p>Resume is fully transparent to the sender — the sender always initiates with a normal <code>SESSION_REQ</code> from sequence 0. The <code>hpudp resume</code> command is identical to <code>hpudp send</code>; the negotiation happens at the receiver.</p>
     <ol>
-        <li><strong>Sender</strong> sends <code>SESSION_REQ</code> as normal (including <code>FullHash</code> and <code>FileSize</code>).</li>
-        <li><strong>Receiver</strong> checks for a matching checkpoint sidecar. A sidecar matches if its <code>FileName</code>, <code>FullHash</code>, and <code>FileSize</code> all equal the values in the incoming <code>SESSION_REQ</code>. If no sidecar is found, the receiver proceeds with a fresh transfer.</li>
-        <li><strong>Receiver</strong> re-hashes the existing <code>.tmp</code> file from byte 0 to the checkpoint offset to re-seed its streaming hasher, then sends <code>RESUME_REQ (0x0B)</code>.</li>
-        <li><strong>Sender</strong> holds a 1-second negotiation window after sending <code>SESSION_REQ</code>. During this window it listens for <code>RESUME_REQ</code> before beginning calibration and data transmission. A Heartbeat from the receiver breaks the window early (indicating a fresh transfer).</li>
-        <li><strong>Sender</strong> validates the <code>RESUME_REQ</code>: it checks <code>FullHash</code> and <code>FileSize</code>, then independently computes <code>PartialHash</code> over the first <code>ResumeOffset</code> bytes of its own file copy. If either hash mismatches, it sends <code>SESSION_REJECT</code> with reason <code>RESUME_HASH_MISMATCH (0x07)</code> and the receiver falls back to a fresh transfer.</li>
-        <li>On success, the sender sends <code>RESUME_ACCEPT (0x0C)</code> containing the confirmed <code>ResumeSequenceNum</code>, seeks the file to <code>ResumeSequenceNum × ChunkSize</code>, and begins transmission from that sequence number.</li>
+        <li><strong>Receiver</strong> receives <code>SESSION_REQ</code>. It checks for a sidecar at <code>&lt;output_path&gt;.hpudp-ckpt</code>. A sidecar matches if its <code>file_hash</code> equals the hash in the incoming SESSION_REQ. If no sidecar is found, the receiver proceeds with a fresh transfer.</li>
+        <li><strong>Receiver</strong> loads the sidecar: restores the receive bitset and <code>highest_contiguous</code>. The mmap file already contains the previously-received data at the correct offsets.</li>
+        <li><strong>Sender</strong> transmits from seq 0 as normal. The receiver skips (discards) packets whose bit is already set in <code>recv_bits</code>. New packets are written normally.</li>
+        <li>On the first heartbeat, the receiver reports the restored <code>HighestContiguous</code>. The sender's sliding window advances past all already-acknowledged sequences, freeing ring buffer slots.</li>
+        <li>Transfer completes and hash is verified as normal. The sidecar is deleted on success.</li>
     </ol>
 
-    <h3>C. FEC Block Alignment</h3>
-    <p>The sender aligns the resume sequence number to a FEC block boundary before seeking:</p>
-    <pre>resumeSeqNum = (resumeSeqNum / fecBlockSize) * fecBlockSize</pre>
-    <p>This ensures the FEC encoder always starts at shard 0 of a fresh block. Without alignment, a resume starting mid-block would present the encoder with empty shards for earlier positions in the block, causing a bounds panic. At most <code>fecBlockSize − 1</code> duplicate packets are re-sent as a result of the alignment rollback (≤ 99 packets with the default block size of 100).</p>
+    <div class="lesson">
+        <strong>Design Rationale:</strong> Receiver-side transparent resume is simpler and more robust than wire-level RESUME_REQ / RESUME_ACCEPT negotiation. The sender needs no changes. The receiver handles hash validation locally via the stored <code>file_hash</code>. There is no cross-machine hash-of-partial-data coordination that could mismatch due to FEC recovery reordering partial shard data.
+    </div>
 
-    <h3>D. RESUME_REQ Wire Format</h3>
-    <p>Packet type <code>0x0B</code>. The payload carries enough information for the sender to independently verify the receiver's state before committing to a resume:</p>
-    <table>
-        <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
-        <tbody>
-            <tr><td>0</td><td>8 bytes</td><td><code>FullHash</code> — xxHash64 of the complete file (must match sender's copy)</td></tr>
-            <tr><td>8</td><td>8 bytes</td><td><code>FileSize</code> — total file size in bytes</td></tr>
-            <tr><td>16</td><td>8 bytes</td><td><code>ResumeOffset</code> — byte offset of the checkpoint in the .tmp file</td></tr>
-            <tr><td>24</td><td>8 bytes</td><td><code>PartialHash</code> — xxHash64 of bytes 0…ResumeOffset</td></tr>
-            <tr><td>32</td><td>32 bytes</td><td><code>PubKey</code> (encrypted transfers only)</td></tr>
-            <tr><td>32/64</td><td>variable</td><td>Null-terminated UTF-8 filename</td></tr>
-        </tbody>
-    </table>
-
-    <h3>E. RESUME_ACCEPT Wire Format</h3>
-    <p>Packet type <code>0x0C</code>. Sent by the sender to confirm a resume and communicate the aligned starting sequence number:</p>
-    <table>
-        <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
-        <tbody>
-            <tr><td>0</td><td>8 bytes</td><td><code>ResumeSequenceNum</code> — FEC-block-aligned sequence number where transmission will begin</td></tr>
-            <tr><td>8</td><td>32 bytes</td><td><code>PubKey</code> (encrypted transfers only)</td></tr>
-        </tbody>
-    </table>
+    <h3>C. Packet Types 0x0B / 0x0C — Reserved</h3>
+    <p>Packet types <code>0x0B RESUME_REQ</code> and <code>0x0C RESUME_ACCEPT</code> are defined in the protocol header and assigned their type codes, but are <strong>not used in the current implementation</strong>. They are reserved for a future wire-level resume negotiation protocol (e.g., for scenarios where the sender and receiver are on different machines and the receiver wants to skip already-received bytes at the wire level to save bandwidth). Receivers must silently ignore packets with these type codes.</p>
 
     <h2>Appendix A: Protocol Constants (Defaults)</h2>
     <table>
@@ -1107,9 +1113,9 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
             <tr><td>Sliding Window Slots</td><td>65,536 (2<sup>16</sup>, ~89 MB peak). Go prototype uses 50,000; C implementations should use power-of-2 for bitmask index wrapping.</td><td>Yes</td></tr>
             <tr><td>Encryption Cipher</td><td>AES-128-GCM (128-bit key, 128-bit auth tag, 96-bit nonce)</td><td>No</td></tr>
             <tr><td>GCM Tag Size</td><td>16 bytes</td><td>No</td></tr>
-            <tr><td>GCM Nonce Size</td><td>12 bytes (constructed from SessionID + PacketType + UniqueID; not transmitted)</td><td>No</td></tr>
+            <tr><td>GCM Nonce Size</td><td>12 bytes: <code>iv_base(8B) || seq_low32_be(4B)</code>. <code>iv_base</code> is derived from HKDF output bytes 16–23; <code>seq_low32_be</code> is the low 32 bits of <code>SequenceNum</code> in big-endian. Not transmitted.</td><td>No</td></tr>
             <tr><td>Key Exchange</td><td>X25519 ephemeral (32-byte public key per side)</td><td>No</td></tr>
-            <tr><td>Key Derivation</td><td>HKDF-SHA256, salt = SessionID, info = "hp-udp-aes128-v5"</td><td>No</td></tr>
+            <tr><td>Key Derivation</td><td>HKDF-SHA256, salt = SessionID (4B big-endian), info = "hp-udp-aes128-v5", output = 24 bytes (bytes 0–15: AES-128 session key; bytes 16–23: iv_base)</td><td>No</td></tr>
         </tbody>
     </table>
 
@@ -1117,6 +1123,7 @@ Phase 2:  if rate > peakDeliveryRate × 1.5: rate = peakDeliveryRate × 1.5</pre
     <h2>Appendix B: Revision Log</h2>
     <div class="changelog">
         <ul>
+            <li><strong>v5.2</strong> — C implementation alignment: HKDF output extended to 24 bytes (adds HKDF-derived <code>iv_base</code> for nonce construction); GCM nonce redesigned to <code>iv_base(8B) || seq_low32_be(4B)</code> replacing the 3-field <code>SessionID+PacketType+UniqueID</code> scheme; PUSH_ACCEPT payload simplified (no ephemeral port — daemon is single-socket); PUSH_REQ payload aligned with SESSION_REQ (adds <code>FileHash</code> and <code>InitialRate</code>); serve daemon upgraded to 16 concurrent sessions; LIST_RESP format updated to tab-separated <code>filename\tsize\n</code> lines; §12 Resume rewritten as transparent receiver-side checkpoint mechanism (no wire RESUME_REQ/RESUME_ACCEPT — types 0x0B/0x0C reserved); checkpoint sidecar renamed <code>.hpudp-ckpt</code> with binary format (magic + version + bitset).</li>
             <li><strong>v5.1</strong> — Resumable transfers (§12): checkpoint sidecar (<code>.hpuft-resume</code>), <code>RESUME_REQ (0x0B)</code> / <code>RESUME_ACCEPT (0x0C)</code> packet types, FEC block-boundary alignment, PartialHash cross-validation; graceful client disconnect: <code>CLIENT_DISCONNECT</code> reject reason <code>(0x08)</code>, sender hard-abort on 3s heartbeat staleness (<code>SenderHeartbeatTimeout</code>); catalog query: <code>LIST_REQ (0x0D)</code> / <code>LIST_RESP (0x0E)</code>, served regardless of busy state; <code>RESUME_HASH_MISMATCH (0x07)</code> reject code.</li>
         <li><strong>v5.0</strong> — End-to-end encryption: ephemeral X25519 key exchange + AES-128-GCM per-packet encryption (§4.5); <code>SESSION_ACCEPT</code> (0x0A) packet type; <code>Encrypted</code> flag (0x04); 1-RTT handshake when encrypted (0-RTT preserved for unencrypted); deterministic nonce from header fields; encrypt-after-FEC data path; extended payloads for SESSION_REQ, PUSH_REQ, PUSH_ACCEPT, PULL_REQ; <code>ENCRYPTION_UNSUPPORTED</code> reject code; encrypted MaxPayload 1352 bytes; backward compatible with v4.x unencrypted transfers.</li>
             <li><strong>v4.2</strong> — C implementation readiness: universal big-endian byte order declaration covering all payload fields (not just header); language-neutral wording throughout (monotonic clock, <code>clock_nanosleep</code>, <code>pthread_rwlock_t</code>, manual basename scan, ephemeral <code>bind()</code>+<code>getsockname()</code>); expanded deficit-accumulator C guidance (<code>TIMER_ABSTIME</code>, <code>SCHED_FIFO</code>); architecture-neutral teardown socket ownership (epoll single-thread vs goroutine); power-of-2 sliding window slot count (65,536) for bitmask index wrapping; <code>io_uring</code> receiver disk I/O note.</li>

@@ -74,18 +74,15 @@ func NewDiskWriter(buf *ReceiveBuffer, outputPath string, fileSize uint64, chunk
 }
 
 // SetCheckpointConfig enables periodic checkpoint writing during Flush.
-// fullHash is the expected hash of the complete file (from SESSION_REQ).
-// fileName is the original file name.
-func (dw *DiskWriter) SetCheckpointConfig(outputPath string, fullHash uint64, fileName string, chunkSize int) {
+// fileHash is the expected xxHash64 of the complete file (from SESSION_REQ).
+func (dw *DiskWriter) SetCheckpointConfig(outputPath string, fileHash uint64, _ string, _ int) {
 	dw.mu.Lock()
 	defer dw.mu.Unlock()
 	dw.checkpointPath = CheckpointPath(outputPath)
 	dw.lastCheckpointAt = time.Now()
 	dw.checkpointData = &CheckpointData{
-		FileSize:  dw.fileSize,
-		FullHash:  fullHash,
-		ChunkSize: uint32(chunkSize),
-		FileName:  fileName,
+		FileSize: dw.fileSize,
+		FileHash: fileHash,
 	}
 }
 
@@ -186,8 +183,14 @@ func (dw *DiskWriter) Flush() (int, error) {
 		pct := float64(dw.bytesWritten) / float64(dw.fileSize) * 100
 		elapsed := time.Since(dw.lastCheckpointAt)
 		if elapsed >= 5*time.Second || pct >= dw.lastCheckpointPct+1.0 {
-			dw.checkpointData.HighestContiguous = dw.buf.ReadCursor() + dw.buf.BaseSeqNum() - 1
-			dw.checkpointData.PartialHash = dw.hasher.Sum64()
+			hc := dw.buf.ReadCursor() + dw.buf.BaseSeqNum()
+			if hc > 0 {
+				hc--
+			}
+			totalChunks := (dw.fileSize + uint64(dw.chunkSize) - 1) / uint64(dw.chunkSize)
+			dw.checkpointData.TotalChunks = totalChunks
+			dw.checkpointData.HighestContiguous = hc
+			dw.checkpointData.RecvBits = dw.buf.ExportBitset(totalChunks)
 			// Write outside the lock would be nicer but checkpoint I/O is fast.
 			_ = WriteCheckpoint(dw.checkpointPath, dw.checkpointData)
 			dw.lastCheckpointAt = time.Now()
