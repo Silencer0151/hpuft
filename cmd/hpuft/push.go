@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"hpuft/protocol"
+	"hpuft/receiver"
 	"hpuft/sender"
 	"log"
 	"net"
@@ -41,6 +42,12 @@ func runPush(args []string) {
 
 	fileName := filepath.Base(*filePath)
 
+	fileHash, err := receiver.HashFile(*filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[push] hash file: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Fprintf(os.Stdout, "[push] Target: %s (%s)\n", fileName, humanBytes(fileInfo.Size()))
 	fmt.Fprintf(os.Stdout, "[push] Pushing to %s...\n", *serveAddr)
 
@@ -74,6 +81,7 @@ func runPush(args []string) {
 	// Build PUSH_REQ payload.
 	pushReqPayload := &protocol.PushReqPayload{
 		FileSize:  uint64(fileInfo.Size()),
+		FileHash:  fileHash,
 		FileName:  fileName,
 		Encrypted: *encrypt,
 	}
@@ -110,6 +118,7 @@ func runPush(args []string) {
 	localConn.SetReadDeadline(time.Now().Add(15 * time.Second))
 
 	var pushEncKey *[16]byte
+	var pushIVBase *[8]byte
 	accepted := false
 	for {
 		n, _, err := localConn.ReadFromUDP(rawBuf)
@@ -146,12 +155,13 @@ func runPush(args []string) {
 				os.Exit(1)
 			}
 			if *encrypt && ephemPriv != nil {
-				key, err := protocol.DeriveSessionKey(ephemPriv, accept.PubKey[:], sessionID)
+				key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, accept.PubKey[:], sessionID)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[push] derive session key: %v\n", err)
 					os.Exit(1)
 				}
 				pushEncKey = &key
+				pushIVBase = &derivedIVBase
 			}
 			accepted = true
 		}
@@ -175,6 +185,7 @@ func runPush(args []string) {
 	if *encrypt {
 		cfg.Encrypt = true
 		cfg.EncKey = pushEncKey
+		cfg.IVBase = pushIVBase
 	}
 
 	s := sender.New(cfg)

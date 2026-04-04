@@ -190,25 +190,31 @@ func UnmarshalPullReq(data []byte, encrypted bool) (PullReqPayload, error) {
 //
 //	Offset  Size      Field
 //	0       8 bytes   FileSize
-//	8       variable  FileName (null-terminated)
+//	8       8 bytes   FileHash (xxHash64 of full file)
+//	16      4 bytes   InitialRate (bytes/sec; 0 = calibration)
+//	20      variable  FileName (null-terminated)
 //
 // Wire layout (encrypted):
 //
 //	Offset  Size      Field
 //	0       8 bytes   FileSize
-//	8       32 bytes  PubKey (X25519 ephemeral public key)
-//	40      variable  FileName (null-terminated)
+//	8       8 bytes   FileHash
+//	16      4 bytes   InitialRate
+//	20      32 bytes  PubKey (X25519 ephemeral public key)
+//	52      variable  FileName (null-terminated)
 const (
-	PushReqFixedSize    = 8  // FileSize only
-	PushReqEncFixedSize = 40 // FileSize + PubKey
+	PushReqFixedSize    = 20 // FileSize + FileHash + InitialRate
+	PushReqEncFixedSize = 52 // PushReqFixedSize + PubKey
 )
 
 // PushReqPayload is sent by the push client to the serve daemon.
 type PushReqPayload struct {
-	FileSize  uint64
-	PubKey    [32]byte // only on wire when Encrypted=true
-	Encrypted bool
-	FileName  string
+	FileSize    uint64
+	FileHash    uint64   // xxHash64 of the full file
+	InitialRate uint32   // bytes/sec; 0 = use calibration
+	PubKey      [32]byte // only on wire when Encrypted=true
+	Encrypted   bool
+	FileName    string
 }
 
 // MarshalPushReq serializes a PushReqPayload into bytes.
@@ -218,12 +224,16 @@ func MarshalPushReq(p *PushReqPayload) []byte {
 	if p.Encrypted {
 		buf = make([]byte, PushReqEncFixedSize+len(nameBytes)+1)
 		binary.BigEndian.PutUint64(buf[0:8], p.FileSize)
-		copy(buf[8:40], p.PubKey[:])
-		copy(buf[40:], nameBytes)
+		binary.BigEndian.PutUint64(buf[8:16], p.FileHash)
+		binary.BigEndian.PutUint32(buf[16:20], p.InitialRate)
+		copy(buf[20:52], p.PubKey[:])
+		copy(buf[52:], nameBytes)
 	} else {
 		buf = make([]byte, PushReqFixedSize+len(nameBytes)+1)
 		binary.BigEndian.PutUint64(buf[0:8], p.FileSize)
-		copy(buf[8:], nameBytes)
+		binary.BigEndian.PutUint64(buf[8:16], p.FileHash)
+		binary.BigEndian.PutUint32(buf[16:20], p.InitialRate)
+		copy(buf[20:], nameBytes)
 	}
 	buf[len(buf)-1] = 0
 	return buf
@@ -240,15 +250,17 @@ func UnmarshalPushReq(data []byte, encrypted bool) (PushReqPayload, error) {
 			ErrPayloadTooShort, minSize, len(data))
 	}
 	p := PushReqPayload{
-		FileSize:  binary.BigEndian.Uint64(data[0:8]),
-		Encrypted: encrypted,
+		FileSize:    binary.BigEndian.Uint64(data[0:8]),
+		FileHash:    binary.BigEndian.Uint64(data[8:16]),
+		InitialRate: binary.BigEndian.Uint32(data[16:20]),
+		Encrypted:   encrypted,
 	}
 	var nameData []byte
 	if encrypted {
-		copy(p.PubKey[:], data[8:40])
-		nameData = data[40:]
+		copy(p.PubKey[:], data[20:52])
+		nameData = data[52:]
 	} else {
-		nameData = data[8:]
+		nameData = data[20:]
 	}
 	for i, b := range nameData {
 		if b == 0 {
@@ -264,22 +276,19 @@ func UnmarshalPushReq(data []byte, encrypted bool) (PushReqPayload, error) {
 //
 // Wire layout (unencrypted):
 //
-//	Offset  Size    Field
-//	0       2 bytes Port (ephemeral data port serve is listening on)
+//	No payload. The server uses a single shared socket; data flows on the
+//	same address:port that received the PUSH_REQ.
 //
 // Wire layout (encrypted):
 //
-//	Offset  Size    Field
-//	0       2 bytes Port
-//	2       32 bytes PubKey (receiver's X25519 ephemeral public key)
+//	Offset  Size     Field
+//	0       32 bytes PubKey (receiver's X25519 ephemeral public key)
 const (
-	PushAcceptFixedSize    = 2  // Port only
-	PushAcceptEncFixedSize = 34 // Port + PubKey
+	PushAcceptEncFixedSize = 32 // PubKey only
 )
 
 // PushAcceptPayload is sent by serve to accept an incoming push.
 type PushAcceptPayload struct {
-	Port      uint16
 	PubKey    [32]byte // only on wire when Encrypted=true
 	Encrypted bool
 }
@@ -288,33 +297,25 @@ type PushAcceptPayload struct {
 func MarshalPushAccept(p *PushAcceptPayload) []byte {
 	if p.Encrypted {
 		buf := make([]byte, PushAcceptEncFixedSize)
-		binary.BigEndian.PutUint16(buf[0:2], p.Port)
-		copy(buf[2:34], p.PubKey[:])
+		copy(buf[0:32], p.PubKey[:])
 		return buf
 	}
-	buf := make([]byte, PushAcceptFixedSize)
-	binary.BigEndian.PutUint16(buf[0:2], p.Port)
-	return buf
+	return []byte{} // no payload in unencrypted mode
 }
 
 // UnmarshalPushAccept parses a PushAcceptPayload from bytes.
 func UnmarshalPushAccept(data []byte, encrypted bool) (PushAcceptPayload, error) {
-	minSize := PushAcceptFixedSize
 	if encrypted {
-		minSize = PushAcceptEncFixedSize
+		if len(data) < PushAcceptEncFixedSize {
+			return PushAcceptPayload{}, fmt.Errorf("%w: need at least %d bytes, got %d",
+				ErrPayloadTooShort, PushAcceptEncFixedSize, len(data))
+		}
+		var p PushAcceptPayload
+		p.Encrypted = true
+		copy(p.PubKey[:], data[0:32])
+		return p, nil
 	}
-	if len(data) < minSize {
-		return PushAcceptPayload{}, fmt.Errorf("%w: need at least %d bytes, got %d",
-			ErrPayloadTooShort, minSize, len(data))
-	}
-	p := PushAcceptPayload{
-		Port:      binary.BigEndian.Uint16(data[0:2]),
-		Encrypted: encrypted,
-	}
-	if encrypted {
-		copy(p.PubKey[:], data[2:34])
-	}
-	return p, nil
+	return PushAcceptPayload{}, nil // unencrypted: no payload
 }
 
 // --- PULL_ACCEPT Payload ---
@@ -503,49 +504,92 @@ func UnmarshalResumeAccept(data []byte, encrypted bool) (ResumeAcceptPayload, er
 //
 // LIST_REQ has no payload (header only).
 //
-// LIST_RESP wire layout:
+// LIST_RESP wire layout (v5.2):
 //
-//	Payload: newline-separated filenames, no trailing newline.
-//	         Truncated to MaxPayload if the list is very large.
+//	Each line: filename\tsize\n
+//	size is the file's byte count as a decimal integer string.
+//	Truncated to MaxPayload if the list is very large.
 
-// MarshalListResp serializes a slice of filenames into a LIST_RESP payload.
-func MarshalListResp(names []string) []byte {
-	if len(names) == 0 {
+// ListEntry holds a filename and its size for LIST_RESP.
+type ListEntry struct {
+	Name string
+	Size uint64
+}
+
+// MarshalListResp serializes a slice of ListEntry into a LIST_RESP payload.
+func MarshalListResp(entries []ListEntry) []byte {
+	if len(entries) == 0 {
 		return []byte{}
 	}
 	var b []byte
-	for i, name := range names {
-		if i > 0 {
-			b = append(b, '\n')
-		}
-		b = append(b, name...)
-		if len(b) >= MaxPayload {
-			b = b[:MaxPayload]
+	for _, e := range entries {
+		line := e.Name + "\t" + uint64ToDecimal(e.Size) + "\n"
+		if len(b)+len(line) > MaxPayload {
 			break
 		}
+		b = append(b, line...)
 	}
 	return b
 }
 
-// UnmarshalListResp parses a LIST_RESP payload into a slice of filenames.
-func UnmarshalListResp(data []byte) []string {
+// uint64ToDecimal converts a uint64 to its decimal string representation
+// without using fmt to avoid an import dependency in this package.
+func uint64ToDecimal(n uint64) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}
+
+// UnmarshalListResp parses a LIST_RESP payload into a slice of ListEntry.
+// Each line is expected to be "filename\tsize\n".
+func UnmarshalListResp(data []byte) []ListEntry {
 	if len(data) == 0 {
 		return nil
 	}
-	var names []string
+	var entries []ListEntry
 	start := 0
-	for i, b := range data {
-		if b == '\n' {
+	for i := 0; i <= len(data); i++ {
+		if i == len(data) || data[i] == '\n' {
 			if i > start {
-				names = append(names, string(data[start:i]))
+				line := string(data[start:i])
+				// Split on tab: field 0 = name, field 1 = size
+				tabIdx := -1
+				for j := 0; j < len(line); j++ {
+					if line[j] == '\t' {
+						tabIdx = j
+						break
+					}
+				}
+				if tabIdx >= 0 {
+					name := line[:tabIdx]
+					size := decimalToUint64(line[tabIdx+1:])
+					entries = append(entries, ListEntry{Name: name, Size: size})
+				}
 			}
 			start = i + 1
 		}
 	}
-	if start < len(data) {
-		names = append(names, string(data[start:]))
+	return entries
+}
+
+// decimalToUint64 parses a decimal string to uint64, returning 0 on error.
+func decimalToUint64(s string) uint64 {
+	var n uint64
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + uint64(c-'0')
 	}
-	return names
+	return n
 }
 
 // UnmarshalHeartbeat parses a HeartbeatPayload from bytes.

@@ -32,8 +32,8 @@ func GenerateEphemeralKey() (*ecdh.PrivateKey, error) {
 }
 
 // DeriveSessionKey performs X25519 ECDH + HKDF-SHA256 to produce a 16-byte
-// AES-128 session key. sessionID is used as the HKDF salt so that the same
-// keypair yields a distinct key for every session.
+// AES-128 session key and an 8-byte iv_base. sessionID is used as the HKDF
+// salt so that the same keypair yields a distinct key for every session.
 //
 // HKDF parameters:
 //
@@ -41,27 +41,29 @@ func GenerateEphemeralKey() (*ecdh.PrivateKey, error) {
 //	ikm   = X25519 shared secret (32 bytes)
 //	salt  = sessionID (4 bytes big-endian)
 //	info  = "hp-udp-aes128-v5"
-//	L     = 16 bytes
-func DeriveSessionKey(priv *ecdh.PrivateKey, theirPubBytes []byte, sessionID uint32) ([16]byte, error) {
+//	L     = 24 bytes  (bytes 0-15 = AES-128 key, bytes 16-23 = iv_base)
+func DeriveSessionKey(priv *ecdh.PrivateKey, theirPubBytes []byte, sessionID uint32) ([16]byte, [8]byte, error) {
 	peerPub, err := ecdh.X25519().NewPublicKey(theirPubBytes)
 	if err != nil {
-		return [16]byte{}, fmt.Errorf("bad peer public key: %w", err)
+		return [16]byte{}, [8]byte{}, fmt.Errorf("bad peer public key: %w", err)
 	}
 	shared, err := priv.ECDH(peerPub)
 	if err != nil {
-		return [16]byte{}, fmt.Errorf("ecdh: %w", err)
+		return [16]byte{}, [8]byte{}, fmt.Errorf("ecdh: %w", err)
 	}
 
 	var salt [4]byte
 	binary.BigEndian.PutUint32(salt[:], sessionID)
 
-	keyBytes, err := hkdf.Key(sha256.New, shared, salt[:], "hp-udp-aes128-v5", 16)
+	okm, err := hkdf.Key(sha256.New, shared, salt[:], "hp-udp-aes128-v5", 24)
 	if err != nil {
-		return [16]byte{}, fmt.Errorf("hkdf: %w", err)
+		return [16]byte{}, [8]byte{}, fmt.Errorf("hkdf: %w", err)
 	}
 	var key [16]byte
-	copy(key[:], keyBytes)
-	return key, nil
+	var ivBase [8]byte
+	copy(key[:], okm[:16])
+	copy(ivBase[:], okm[16:24])
+	return key, ivBase, nil
 }
 
 // NewSessionCipher creates an AES-128-GCM AEAD from a derived session key.
@@ -75,28 +77,14 @@ func NewSessionCipher(key [16]byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// BuildNonce constructs the 12-byte packet nonce per spec §4.5.
+// BuildNonce constructs the 12-byte packet nonce per spec §4.5C.
 //
-//	Bytes 0–3:  SessionID (domain: session)
-//	Byte  4:    PacketType (0x01 = DATA, 0x02 = PARITY — domain separator)
-//	Bytes 5–11: 7-byte unique ID
-//	            DATA:   lower 56 bits of SequenceNum
-//	            PARITY: lower 56 bits of (BlockGroup<<8 | SequenceNum)
-func BuildNonce(sessionID uint32, pktType PacketType, seq, blockGroup uint64) [12]byte {
+//	Bytes 0–7:  iv_base (8 bytes, HKDF-derived, session-scoped)
+//	Bytes 8–11: low 32 bits of SequenceNum, big-endian
+func BuildNonce(ivBase [8]byte, seq uint64) [12]byte {
 	var nonce [12]byte
-	binary.BigEndian.PutUint32(nonce[0:4], sessionID)
-	nonce[4] = byte(pktType)
-
-	var uniqueID uint64
-	if pktType == PacketData {
-		uniqueID = seq & 0x00FFFFFFFFFFFFFF
-	} else {
-		// PARITY: combine block group and parity index (stored in SequenceNum)
-		uniqueID = (blockGroup<<8 | seq) & 0x00FFFFFFFFFFFFFF
-	}
-	var tmp [8]byte
-	binary.BigEndian.PutUint64(tmp[:], uniqueID)
-	copy(nonce[5:12], tmp[1:]) // 7 bytes (skip the high zero byte)
+	copy(nonce[:8], ivBase[:])
+	binary.BigEndian.PutUint32(nonce[8:], uint32(seq))
 	return nonce
 }
 
