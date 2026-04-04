@@ -305,6 +305,30 @@ func (rb *ReceiveBuffer) BaseSeqNum() uint64 {
 	return rb.baseSeqNum
 }
 
+// ExportBitset returns a packed bit array representing which absolute sequence
+// numbers have been received, covering [0, totalChunks). Used by the checkpoint
+// writer to serialize the receive state per the v5.2 sidecar format.
+func (rb *ReceiveBuffer) ExportBitset(totalChunks uint64) []byte {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	bits := make([]byte, (totalChunks+7)/8)
+	// All sequences below baseSeqNum are considered received (already on disk).
+	for i := uint64(0); i < rb.baseSeqNum && i < totalChunks; i++ {
+		bits[i/8] |= 1 << (i % 8)
+	}
+	// Sequences in our allocation.
+	for slot := uint64(0); slot < rb.totalChunks; slot++ {
+		absSeq := slot + rb.baseSeqNum
+		if absSeq >= totalChunks {
+			break
+		}
+		if rb.present[slot] {
+			bits[absSeq/8] |= 1 << (absSeq % 8)
+		}
+	}
+	return bits
+}
+
 // Close marks the buffer as closed. Further Insert calls will return ErrBufferClosed.
 func (rb *ReceiveBuffer) Close() {
 	rb.mu.Lock()

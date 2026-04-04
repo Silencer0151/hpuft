@@ -67,6 +67,10 @@ type Config struct {
 
 	// EncKey, if non-nil, is a pre-derived 16-byte AES-128 session key.
 	EncKey *[16]byte
+
+	// IVBase, if non-nil, is the 8-byte iv_base derived alongside EncKey via
+	// HKDF. Must be set whenever EncKey is set. Used to construct GCM nonces.
+	IVBase *[8]byte
 }
 
 // ReceiverProgress is a snapshot of live transfer metrics for the progress bar.
@@ -257,6 +261,7 @@ func (r *Receiver) Run() error {
 
 	// --- Encryption setup ---
 	var aead cipher.AEAD
+	var ivBase [8]byte
 	if r.cfg.Encrypt {
 		if r.cfg.EncKey != nil {
 			// Pre-derived key: push flow (PUSH_REQ/PUSH_ACCEPT) or get flow.
@@ -265,6 +270,9 @@ func (r *Receiver) Run() error {
 				return fmt.Errorf("init session cipher: %w", err)
 			}
 			aead = c
+			if r.cfg.IVBase != nil {
+				ivBase = *r.cfg.IVBase
+			}
 		} else if reqPayload.Encrypted {
 			// Direct recv mode: sender embedded its PubKey in SESSION_REQ.
 			// Generate our ephemeral key, derive session key, send SESSION_ACCEPT.
@@ -272,7 +280,7 @@ func (r *Receiver) Run() error {
 			if err != nil {
 				return fmt.Errorf("generate ephemeral key: %w", err)
 			}
-			key, err := protocol.DeriveSessionKey(ephemPriv, reqPayload.PubKey[:], sessionID)
+			key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, reqPayload.PubKey[:], sessionID)
 			if err != nil {
 				return fmt.Errorf("derive session key: %w", err)
 			}
@@ -281,6 +289,7 @@ func (r *Receiver) Run() error {
 				return fmt.Errorf("init cipher: %w", err)
 			}
 			aead = c
+			ivBase = derivedIVBase
 
 			// Send SESSION_ACCEPT with our public key.
 			pubKeyBytes := ephemPriv.PublicKey().Bytes()
@@ -325,9 +334,12 @@ func (r *Receiver) Run() error {
 		outputPath = filepath.Join(r.cfg.OutputDir, filepath.Base(reqPayload.FileName))
 	}
 
-	// --- Resume detection ---
-	// Check for a checkpoint sidecar matching this file. If found, attempt
-	// to resume from the last checkpoint instead of starting fresh.
+	// --- Resume detection (v5.2: transparent, receiver-side only) ---
+	// Check for a .hpudp-ckpt sidecar matching this file. If found, restore
+	// the receive state silently — no wire negotiation. The sender always
+	// starts from SESSION_REQ / seq=0; the receiver's sliding window reports
+	// HighestContiguous in the first heartbeat so the sender advances past
+	// already-received data.
 	var resumeSeqNum uint64
 	var resumeOffset uint64
 	resumed := false
@@ -336,126 +348,30 @@ func (r *Receiver) Run() error {
 	if r.cfg.OutputPath != "" {
 		// serve/push mode: check using the explicit output path
 		cp2, err2 := ReadCheckpoint(CheckpointPath(r.cfg.OutputPath))
-		if err2 == nil && cp2.FileSize == reqPayload.FileSize && cp2.FullHash == reqPayload.Checksum {
+		if err2 == nil && cp2.FileSize == reqPayload.FileSize && cp2.FileHash == reqPayload.Checksum {
 			cp = cp2
 			cpTmpPath = r.cfg.OutputPath
 		}
 	}
 
 	if cp != nil && cpTmpPath != "" {
-		// Verify the .tmp file on disk and adjust if truncated.
-		tmpInfo, err := os.Stat(cpTmpPath)
-		if err == nil {
-			cpResumeOffset := (cp.HighestContiguous + 1) * uint64(cp.ChunkSize)
-			if uint64(tmpInfo.Size()) < cpResumeOffset {
-				// Truncated: adjust down to actual file size, rounded to chunk boundary.
-				cpResumeOffset = uint64(tmpInfo.Size()) / uint64(cp.ChunkSize) * uint64(cp.ChunkSize)
+		// Verify the .tmp file still exists and is large enough.
+		tmpInfo, statErr := os.Stat(cpTmpPath)
+		if statErr == nil && tmpInfo.Size() > 0 {
+			resumeSeqNum = cp.HighestContiguous + 1
+			resumeOffset = resumeSeqNum * uint64(chunkSize)
+			// Clamp to actual on-disk size in case of truncation.
+			if uint64(tmpInfo.Size()) < resumeOffset {
+				resumeSeqNum = uint64(tmpInfo.Size()) / uint64(chunkSize)
+				resumeOffset = resumeSeqNum * uint64(chunkSize)
 			}
-
-			if cpResumeOffset > 0 {
-				// Recompute partial hash from the actual .tmp file data.
-				partialHash, hashErr := HashFileRange(cpTmpPath, int64(cpResumeOffset))
-				if hashErr == nil {
-					resumeOffset = cpResumeOffset
-					resumeSeqNum = cpResumeOffset / uint64(chunkSize)
-
-					// Build and send RESUME_REQ.
-					resumePayload := protocol.ResumeReqPayload{
-						FullHash:     reqPayload.Checksum,
-						FileSize:     reqPayload.FileSize,
-						ResumeOffset: resumeOffset,
-						PartialHash:  partialHash,
-						FileName:     filepath.Base(reqPayload.FileName),
-						Encrypted:    reqPayload.Encrypted,
-					}
-					if reqPayload.Encrypted && aead == nil {
-						// Direct recv encrypted: our public key was already sent in SESSION_ACCEPT.
-						// Don't include PubKey in RESUME_REQ since key exchange already happened.
-						resumePayload.Encrypted = false
-					}
-					resumePkt := protocol.Packet{
-						Header: protocol.Header{
-							Type:      protocol.PacketResumeReq,
-							SessionID: sessionID,
-						},
-						Payload: protocol.MarshalResumeReq(&resumePayload),
-					}
-					resumeRaw, _ := protocol.MarshalPacket(&resumePkt)
-
-					dbgLog.Printf("[receiver] found checkpoint: HC=%d offset=%d, sending RESUME_REQ",
-						cp.HighestContiguous, resumeOffset)
-
-					// Send RESUME_REQ and wait for RESUME_ACCEPT or SESSION_REJECT.
-					r.conn.WriteToUDP(resumeRaw, senderAddr)
-
-					// Wait up to 10 seconds for a response.
-					resumeAccepted := false
-					resumeDeadline := time.Now().Add(10 * time.Second)
-					for time.Now().Before(resumeDeadline) {
-						var respRaw []byte
-						if r.cfg.RecvChan != nil {
-							select {
-							case raw, ok := <-r.cfg.RecvChan:
-								if !ok {
-									break
-								}
-								respRaw = raw
-							case <-time.After(500 * time.Millisecond):
-								// Retransmit RESUME_REQ
-								r.conn.WriteToUDP(resumeRaw, senderAddr)
-								continue
-							}
-						} else {
-							r.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-							n, _, readErr := r.conn.ReadFromUDP(rawBuf)
-							if readErr != nil {
-								if os.IsTimeout(readErr) {
-									// Retransmit RESUME_REQ
-									r.conn.WriteToUDP(resumeRaw, senderAddr)
-									continue
-								}
-								break
-							}
-							respRaw = rawBuf[:n]
-						}
-
-						pkt, pktErr := protocol.UnmarshalPacket(respRaw)
-						if pktErr != nil || pkt.Header.SessionID != sessionID {
-							continue
-						}
-						if pkt.Header.Type == protocol.PacketResumeAccept {
-							ra, raErr := protocol.UnmarshalResumeAccept(pkt.Payload, false)
-							if raErr == nil {
-								resumeSeqNum = ra.ResumeSequenceNum
-								resumeOffset = resumeSeqNum * uint64(chunkSize)
-								resumeAccepted = true
-								dbgLog.Printf("[receiver] RESUME_ACCEPT: starting from seq=%d (offset=%d)",
-									resumeSeqNum, resumeOffset)
-								break
-							}
-						}
-						if pkt.Header.Type == protocol.PacketSessionReject {
-							dbgLog.Printf("[receiver] sender rejected resume, falling back to fresh transfer")
-							break
-						}
-					}
-					if resumeAccepted {
-						resumed = true
-						outputPath = cpTmpPath
-					} else {
-						// Resume failed, fall back to fresh transfer.
-						resumeSeqNum = 0
-						resumeOffset = 0
-						DeleteCheckpoint(cpTmpPath)
-					}
-				}
+			if resumeSeqNum > 0 {
+				resumed = true
+				outputPath = cpTmpPath
+				dbgLog.Printf("[receiver] checkpoint found: resuming from seq=%d offset=%d (%s)",
+					resumeSeqNum, resumeOffset, cpTmpPath)
 			}
 		}
-	}
-
-	// Clear the read deadline that may have been set during resume negotiation.
-	if r.cfg.RecvChan == nil {
-		r.conn.SetReadDeadline(time.Time{})
 	}
 
 	var recvBuf *ReceiveBuffer
@@ -530,7 +446,7 @@ func (r *Receiver) Run() error {
 					return fmt.Errorf("channel closed during transfer")
 				}
 				lastPacketTime = time.Now()
-				pkt, pktErr = decryptAndParse(raw, aead, sessionID)
+				pkt, pktErr = decryptAndParse(raw, aead, ivBase)
 			case <-time.After(50 * time.Millisecond):
 				if time.Since(lastPacketTime) > inactivityTimeout {
 					hbGen.Stop()
@@ -554,7 +470,7 @@ func (r *Receiver) Run() error {
 				return fmt.Errorf("read: %w", err)
 			}
 			lastPacketTime = time.Now()
-			pkt, pktErr = decryptAndParse(rawBuf[:n], aead, sessionID)
+			pkt, pktErr = decryptAndParse(rawBuf[:n], aead, ivBase)
 		}
 
 		if pktErr != nil {
@@ -790,7 +706,7 @@ teardownLoop:
 
 // decryptAndParse parses a raw packet, decrypting the payload if the
 // Encrypted flag is set and aead is non-nil (DATA and PARITY only).
-func decryptAndParse(raw []byte, aead cipher.AEAD, sessionID uint32) (protocol.Packet, error) {
+func decryptAndParse(raw []byte, aead cipher.AEAD, ivBase [8]byte) (protocol.Packet, error) {
 	if len(raw) < protocol.HeaderSize {
 		return protocol.Packet{}, protocol.ErrPacketTooSmall
 	}
@@ -807,7 +723,7 @@ func decryptAndParse(raw []byte, aead cipher.AEAD, sessionID uint32) (protocol.P
 		if len(raw) < needed {
 			return protocol.Packet{}, fmt.Errorf("encrypted packet too short: %d < %d", len(raw), needed)
 		}
-		nonce := protocol.BuildNonce(sessionID, hdr.Type, hdr.SequenceNum, hdr.BlockGroup)
+		nonce := protocol.BuildNonce(ivBase, hdr.SequenceNum)
 		pt, err := protocol.DecryptPacket(aead, raw[:needed], nonce)
 		if err != nil {
 			return protocol.Packet{}, err

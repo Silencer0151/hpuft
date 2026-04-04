@@ -15,6 +15,12 @@ import (
 	"time"
 )
 
+// manifestEntry holds the absolute path and size of a file in the manifest.
+type manifestEntry struct {
+	path string
+	size int64
+}
+
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	listenAddr := fs.String("listen", ":9001", "address to listen on for PULL_REQ / PUSH_REQ")
@@ -28,7 +34,7 @@ func runServe(args []string) {
 	log.SetOutput(os.Stderr)
 
 	var manifestMu sync.RWMutex
-	manifest := buildManifest(*dir)
+	manifest := buildManifest(*dir) // map[name]manifestEntry
 
 	addr, err := net.ResolveUDPAddr("udp", *listenAddr)
 	if err != nil {
@@ -119,7 +125,7 @@ func runServe(args []string) {
 }
 
 func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
-	manifest map[string]string, manifestMu *sync.RWMutex,
+	manifest map[string]manifestEntry, manifestMu *sync.RWMutex,
 	busy *int32, busyClient *string,
 	activeMu *sync.Mutex, activeChan *chan []byte, debug bool) {
 
@@ -139,7 +145,7 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 
 	// --- Manifest check (allowlist) ---
 	manifestMu.RLock()
-	filePath, ok := manifest[req.FileName]
+	entry, ok := manifest[req.FileName]
 	manifestMu.RUnlock()
 	if !ok {
 		sendReject(conn, clientAddr, pkt.Header.SessionID, protocol.RejectFileNotFound)
@@ -147,6 +153,7 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		log.Printf("[serve] REJECTED %s: PULL_REQ for %q (Not in manifest)", clientAddr, req.FileName)
 		return
 	}
+	filePath := entry.path
 
 	// Create the forwarding channel before the goroutine starts.
 	// The main loop won't forward packets until busy==1, which was set above
@@ -206,7 +213,7 @@ func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 }
 
 func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
-	dir string, manifest map[string]string, manifestMu *sync.RWMutex,
+	dir string, manifest map[string]manifestEntry, manifestMu *sync.RWMutex,
 	busy *int32, busyClient *string,
 	activeMu *sync.Mutex, activeChan *chan []byte,
 	activeChanDrops *atomic.Int64, debug bool) {
@@ -243,14 +250,14 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 	}
 
 	// --- Reply PUSH_ACCEPT ---
-	// Data flows over the control socket, so the "port" is just the control
-	// port the client already knows. The push client uses its existing socket.
-	controlPort := uint16(conn.LocalAddr().(*net.UDPAddr).Port)
+	// v5.2: single-socket model — no port field in PUSH_ACCEPT.
+	// Data flows on the same address:port that received the PUSH_REQ.
 
 	// If the push client wants encryption, generate our ephemeral key and
 	// derive the session key; include our public key in PUSH_ACCEPT.
 	var pushEncKey *[16]byte
-	acceptPayload := &protocol.PushAcceptPayload{Port: controlPort}
+	var pushIVBase *[8]byte
+	acceptPayload := &protocol.PushAcceptPayload{}
 	acceptHdrFlags := protocol.Flag(0)
 
 	if req.Encrypted {
@@ -260,13 +267,14 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 			atomic.StoreInt32(busy, 0)
 			return
 		}
-		key, err := protocol.DeriveSessionKey(ephemPriv, req.PubKey[:], pkt.Header.SessionID)
+		key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, req.PubKey[:], pkt.Header.SessionID)
 		if err != nil {
 			log.Printf("[serve] derive key for PUSH: %v", err)
 			atomic.StoreInt32(busy, 0)
 			return
 		}
 		pushEncKey = &key
+		pushIVBase = &derivedIVBase
 		copy(acceptPayload.PubKey[:], ephemPriv.PublicKey().Bytes())
 		acceptPayload.Encrypted = true
 		acceptHdrFlags |= protocol.FlagEncrypted
@@ -295,7 +303,7 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 
 	log.Printf("[serve] ACCEPTED %s: PUSH_REQ for %q", clientAddr, safeName)
 
-	go func(safeName, finalPath string, sessionID uint32, clientAddr *net.UDPAddr, encKey *[16]byte, isEncrypted bool) {
+	go func(safeName, finalPath string, sessionID uint32, clientAddr *net.UDPAddr, encKey *[16]byte, ivBase *[8]byte, isEncrypted bool) {
 		// Log activeChan drop count every second for diagnostics.
 		dropDone := make(chan struct{})
 		defer func() {
@@ -331,6 +339,7 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		cfg.OutputPath = tmpPath
 		cfg.Encrypt = isEncrypted
 		cfg.EncKey = encKey
+		cfg.IVBase = ivBase
 		cfg.Debug = debug
 
 		r, err := receiver.New(cfg)
@@ -358,24 +367,29 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 
 		// Add to manifest
 		absPath, _ := filepath.Abs(finalPath)
+		fi, _ := os.Stat(absPath)
+		var addedSize int64
+		if fi != nil {
+			addedSize = fi.Size()
+		}
 		manifestMu.Lock()
-		manifest[safeName] = absPath
+		manifest[safeName] = manifestEntry{path: absPath, size: addedSize}
 		manifestMu.Unlock()
 
 		p := r.Progress()
 		mbps := float64(p.TotalBytes) / elapsed.Seconds() / 1e6
 		log.Printf("[serve] PUSH COMPLETE: %q from %s in %s (%.1f MB/s) — added to manifest",
 			safeName, clientAddr, elapsed.Round(time.Millisecond), mbps)
-	}(safeName, finalPath, pkt.Header.SessionID, clientAddr, pushEncKey, req.Encrypted)
+	}(safeName, finalPath, pkt.Header.SessionID, clientAddr, pushEncKey, pushIVBase, req.Encrypted)
 }
 
 func handleListReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
-	manifest map[string]string, manifestMu *sync.RWMutex) {
+	manifest map[string]manifestEntry, manifestMu *sync.RWMutex) {
 
 	manifestMu.RLock()
-	names := make([]string, 0, len(manifest))
-	for name := range manifest {
-		names = append(names, name)
+	entries := make([]protocol.ListEntry, 0, len(manifest))
+	for name, e := range manifest {
+		entries = append(entries, protocol.ListEntry{Name: name, Size: uint64(e.size)})
 	}
 	manifestMu.RUnlock()
 
@@ -384,7 +398,7 @@ func handleListReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 			Type:      protocol.PacketListResp,
 			SessionID: pkt.Header.SessionID,
 		},
-		Payload: protocol.MarshalListResp(names),
+		Payload: protocol.MarshalListResp(entries),
 	}
 	raw, err := protocol.MarshalPacket(&respPkt)
 	if err != nil {
@@ -394,11 +408,10 @@ func handleListReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 }
 
 // buildManifest scans dir (non-recursively) and returns an allowlist map of
-// filename → absolute path. Only regular files are included; directories and
-// symlinks are skipped. The map is built once at startup so requests for files
-// added after launch are not served (intentional security boundary).
-func buildManifest(dir string) map[string]string {
-	manifest := make(map[string]string)
+// filename → manifestEntry{path, size}. Only regular files are included;
+// directories and symlinks are skipped.
+func buildManifest(dir string) map[string]manifestEntry {
+	manifest := make(map[string]manifestEntry)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -415,7 +428,12 @@ func buildManifest(dir string) map[string]string {
 			log.Printf("[serve] skipping %q: %v", name, err)
 			continue
 		}
-		manifest[name] = abs
+		info, err := entry.Info()
+		if err != nil {
+			log.Printf("[serve] skipping %q: %v", name, err)
+			continue
+		}
+		manifest[name] = manifestEntry{path: abs, size: info.Size()}
 	}
 
 	return manifest
