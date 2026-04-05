@@ -88,6 +88,14 @@ func (hg *HeartbeatGenerator) Stop() {
 	<-hg.done
 }
 
+// SendFinal sends one heartbeat immediately and synchronously.
+// Call this before Stop() to guarantee the peer receives at least one
+// heartbeat reflecting the final receive state — critical for small
+// transfers that complete before the first periodic tick fires.
+func (hg *HeartbeatGenerator) SendFinal() {
+	hg.sendHeartbeat()
+}
+
 // RecordPacket should be called for every DATA packet received.
 // Updates the metrics window for the next heartbeat.
 func (hg *HeartbeatGenerator) RecordPacket(payloadLen int) {
@@ -116,6 +124,17 @@ func (hg *HeartbeatGenerator) RecordCalibrationPacket(ns int64) {
 // (not recoverable by FEC). Updates loss metrics.
 func (hg *HeartbeatGenerator) RecordLoss(count int) {
 	hg.packetsLostWindow.Add(int64(count))
+}
+
+// UpdatePeerAddr updates the destination address for outgoing heartbeats.
+// Called in pull mode when the first DATA packet arrives from the C sender's
+// ephemeral socket (which differs from the control-port address used in
+// SESSION_REQ). Heartbeats must reach the sender's data socket, not the
+// serve daemon's control port.
+func (hg *HeartbeatGenerator) UpdatePeerAddr(addr *net.UDPAddr) {
+	hg.mu.Lock()
+	hg.peerAddr = addr
+	hg.mu.Unlock()
 }
 
 func (hg *HeartbeatGenerator) loop() {
