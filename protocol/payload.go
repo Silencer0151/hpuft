@@ -92,15 +92,15 @@ func UnmarshalSessionReq(data []byte, encrypted bool) (SessionReqPayload, error)
 
 // --- HEARTBEAT Payload ---
 //
-// Wire layout:
+// Wire layout (matches C hpudp_heartbeat_pack in header.c):
 //   Offset  Size      Field
 //   0       4 bytes   NetworkDeliveryRate
 //   4       4 bytes   StorageFlushRate
 //   8       2 bytes   LossRate (basis points)
-//   10      8 bytes   HighestContiguous
-//   18      2 bytes   NACKCount
-//   20      8 bytes   EchoTimestampNs  (sender's last-data-send time, echoed for RTT)
-//   28      8 bytes   DispersionNs     (calibration burst arrival spread in nanoseconds)
+//   10      8 bytes   EchoTimestampNs  (sender's last-data-send time, echoed for RTT)
+//   18      8 bytes   DispersionNs     (calibration burst arrival spread in nanoseconds)
+//   26      8 bytes   HighestContiguous
+//   34      2 bytes   NACKCount
 //   36      8*N bytes NACKArray
 
 const HeartbeatFixedSize = 36 // bytes before the NACK array
@@ -112,10 +112,10 @@ func MarshalHeartbeat(p *HeartbeatPayload) []byte {
 	binary.BigEndian.PutUint32(buf[0:4], p.NetworkDeliveryRate)
 	binary.BigEndian.PutUint32(buf[4:8], p.StorageFlushRate)
 	binary.BigEndian.PutUint16(buf[8:10], p.LossRate)
-	binary.BigEndian.PutUint64(buf[10:18], p.HighestContiguous)
-	binary.BigEndian.PutUint16(buf[18:20], uint16(len(p.NACKs)))
-	binary.BigEndian.PutUint64(buf[20:28], p.EchoTimestampNs)
-	binary.BigEndian.PutUint64(buf[28:36], p.DispersionNs)
+	binary.BigEndian.PutUint64(buf[10:18], p.EchoTimestampNs)
+	binary.BigEndian.PutUint64(buf[18:26], p.DispersionNs)
+	binary.BigEndian.PutUint64(buf[26:34], p.HighestContiguous)
+	binary.BigEndian.PutUint16(buf[34:36], uint16(len(p.NACKs)))
 
 	for i, seq := range p.NACKs {
 		binary.BigEndian.PutUint64(buf[36+8*i:44+8*i], seq)
@@ -603,10 +603,10 @@ func UnmarshalHeartbeat(data []byte) (HeartbeatPayload, error) {
 		NetworkDeliveryRate: binary.BigEndian.Uint32(data[0:4]),
 		StorageFlushRate:    binary.BigEndian.Uint32(data[4:8]),
 		LossRate:            binary.BigEndian.Uint16(data[8:10]),
-		HighestContiguous:   binary.BigEndian.Uint64(data[10:18]),
-		NACKCount:           binary.BigEndian.Uint16(data[18:20]),
-		EchoTimestampNs:     binary.BigEndian.Uint64(data[20:28]),
-		DispersionNs:        binary.BigEndian.Uint64(data[28:36]),
+		EchoTimestampNs:     binary.BigEndian.Uint64(data[10:18]),
+		DispersionNs:        binary.BigEndian.Uint64(data[18:26]),
+		HighestContiguous:   binary.BigEndian.Uint64(data[26:34]),
+		NACKCount:           binary.BigEndian.Uint16(data[34:36]),
 	}
 
 	nackCount := int(p.NACKCount)

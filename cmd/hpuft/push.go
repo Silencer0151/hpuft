@@ -181,6 +181,7 @@ func runPush(args []string) {
 	cfg.SessionID = sessionID
 	cfg.MuxConn = localConn
 	cfg.MuxAddr = rAddr
+	cfg.PushFlow = true // session already established via PUSH_REQ/PUSH_ACCEPT
 	cfg.Debug = *debug
 	if *encrypt {
 		cfg.Encrypt = true

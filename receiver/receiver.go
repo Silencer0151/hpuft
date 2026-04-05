@@ -457,7 +457,7 @@ func (r *Receiver) Run() error {
 			}
 		} else {
 			r.conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
-			n, _, err := r.conn.ReadFromUDP(rawBuf)
+			n, pktSrcAddr, err := r.conn.ReadFromUDP(rawBuf)
 			if err != nil {
 				if os.IsTimeout(err) {
 					if time.Since(lastPacketTime) > inactivityTimeout {
@@ -471,6 +471,18 @@ func (r *Receiver) Run() error {
 			}
 			lastPacketTime = time.Now()
 			pkt, pktErr = decryptAndParse(rawBuf[:n], aead, ivBase)
+			// In pull mode the C server spawns a new sender thread on a fresh
+			// ephemeral socket. Update the heartbeat destination to that socket's
+			// source address so the C sender actually receives our heartbeats.
+			if pktErr == nil && pktSrcAddr != nil &&
+				(pkt.Header.Type == protocol.PacketData || pkt.Header.Type == protocol.PacketParity) {
+				cur := r.senderAddr.Load()
+				if cur == nil || cur.Port != pktSrcAddr.Port || cur.IP.String() != pktSrcAddr.IP.String() {
+					r.senderAddr.Store(pktSrcAddr)
+					hbGen.UpdatePeerAddr(pktSrcAddr)
+					senderAddr = pktSrcAddr
+				}
+			}
 		}
 
 		if pktErr != nil {
@@ -588,6 +600,10 @@ func (r *Receiver) Run() error {
 	_ = eofReceived
 
 	// --- Phase 5: Stop heartbeat and finalize ---
+	// Send one final heartbeat before stopping so the peer always sees at
+	// least hb_count=1. For small files (<= 1 chunk) the receive loop may
+	// complete before the first 100ms periodic tick fires.
+	hbGen.SendFinal()
 	hbGen.Stop()
 
 	dbgLog.Printf("[receiver] all %d chunks received, finalizing...", recvBuf.Stats().TotalChunks)
@@ -719,7 +735,17 @@ func decryptAndParse(raw []byte, aead cipher.AEAD, ivBase [8]byte) (protocol.Pac
 	isEncrypted := hdr.Flags&protocol.FlagEncrypted != 0
 
 	if isEncrypted && aead != nil && isDataOrParity {
-		needed := protocol.HeaderSize + int(hdr.PayloadLen) + protocol.GCMTagSize
+		// Two PayloadLen conventions exist:
+		//   Go senders (EncryptPacket): PayloadLen = plaintext + GCMTagSize
+		//     → wire len = HeaderSize + PayloadLen (tag is within PayloadLen)
+		//   C senders:                  PayloadLen = plaintext only
+		//     → wire len = HeaderSize + PayloadLen + GCMTagSize (tag appended after)
+		// Auto-detect by checking if the actual packet is GCMTagSize bytes longer
+		// than HeaderSize+PayloadLen; if so, the sender is using the C convention.
+		needed := protocol.HeaderSize + int(hdr.PayloadLen)
+		if len(raw) == needed+protocol.GCMTagSize {
+			needed += protocol.GCMTagSize
+		}
 		if len(raw) < needed {
 			return protocol.Packet{}, fmt.Errorf("encrypted packet too short: %d < %d", len(raw), needed)
 		}

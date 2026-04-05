@@ -151,15 +151,15 @@ func TestHeartbeatTooShort(t *testing.T) {
 
 func TestHeartbeatTruncatedNACKs(t *testing.T) {
 	// Create a heartbeat claiming 5 NACKs but only providing data for 2.
-	// NACKCount is at wire offset 18-19 (unchanged by v3.1 layout).
+	// NACKCount is at wire offset 34-35 (per C hpudp_heartbeat_pack layout).
 	p := HeartbeatPayload{
 		NACKCount: 5,
 		NACKs:     []uint64{1, 2}, // only 2 → marshal produces HeartbeatFixedSize+16 bytes
 	}
 	data := MarshalHeartbeat(&p)
 	// Lie about NACKCount: claim 5 when only 2 are present.
-	data[18] = 0
-	data[19] = 5
+	data[34] = 0
+	data[35] = 5
 
 	_, err := UnmarshalHeartbeat(data)
 	if err == nil {

@@ -90,13 +90,22 @@ func BuildNonce(ivBase [8]byte, seq uint64) [12]byte {
 
 // EncryptPacket encrypts the DATA or PARITY payload of a pre-assembled wire
 // packet. raw must be [header(32)][plaintext(N)]; the returned slice is
-// [header(32)][ciphertext(N)][tag(16)]. The 32-byte header is used as AAD.
+// [header(32)][ciphertext(N)][tag(16)].
+//
+// PayloadLen in the output header is set to N+GCMTagSize so the receiver can
+// locate the full ciphertext+tag region using the header alone. The AAD is the
+// updated 32-byte header (with the corrected PayloadLen), so both sides derive
+// the same AAD without any out-of-band knowledge.
 func EncryptPacket(aead cipher.AEAD, raw []byte, nonce [12]byte) []byte {
-	header := raw[:HeaderSize]
 	plaintext := raw[HeaderSize:]
-	sealed := aead.Seal(nil, nonce[:], plaintext, header) // len = N + 16
+	// Copy the header and update PayloadLen to include the tag before sealing,
+	// so the AAD matches what the receiver will see in the wire header.
+	var hdr [HeaderSize]byte
+	copy(hdr[:], raw[:HeaderSize])
+	binary.BigEndian.PutUint16(hdr[21:23], uint16(len(plaintext)+GCMTagSize))
+	sealed := aead.Seal(nil, nonce[:], plaintext, hdr[:]) // AAD = updated header; len(sealed) = N+16
 	out := make([]byte, HeaderSize+len(sealed))
-	copy(out, header)
+	copy(out[:HeaderSize], hdr[:])
 	copy(out[HeaderSize:], sealed)
 	return out
 }
