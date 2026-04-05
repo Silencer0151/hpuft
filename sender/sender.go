@@ -90,6 +90,12 @@ type Config struct {
 	// generates its own ephemeral key, includes it in SESSION_REQ, derives the
 	// session key, and starts sending — no SESSION_ACCEPT required.
 	PeerPubKey []byte
+
+	// PushFlow, if true, indicates that the session was already established
+	// via PUSH_REQ/PUSH_ACCEPT before Send() was called. Send() will skip
+	// SESSION_REQ and go directly to data transmission.
+	// Must be set by the push client alongside MuxConn/MuxAddr/SessionID.
+	PushFlow bool
 }
 
 // DefaultConfig returns sender config with spec defaults.
@@ -254,100 +260,108 @@ func (s *Sender) Send() error {
 		// Cases 3 and 4 are handled after SESSION_REQ is sent.
 	}
 
-	reqPayload := protocol.SessionReqPayload{
-		FileSize:    fileSize,
-		Checksum:    checksum,
-		InitialRate: s.cfg.InitialRate,
-		FileName:    filepath.Base(s.cfg.FilePath),
-	}
-	reqHdrFlags := protocol.Flag(0)
-
-	var ephemPriv *ecdh.PrivateKey
-	if s.cfg.Encrypt && s.cfg.EncKey == nil {
-		// Cases 3 and 4: embed sender's public key in SESSION_REQ.
-		ephemPriv, err = protocol.GenerateEphemeralKey()
-		if err != nil {
-			return fmt.Errorf("generate ephemeral key: %w", err)
+	// Push flow: the PUSH_REQ/PUSH_ACCEPT handshake already established the
+	// session before Send() was called. Sending SESSION_REQ would confuse the
+	// server (session already active in DATA state). Skip it and go straight to
+	// data transfer. All other flows (serve pull, direct send) need SESSION_REQ.
+	if !s.cfg.PushFlow {
+		reqPayload := protocol.SessionReqPayload{
+			FileSize:    fileSize,
+			Checksum:    checksum,
+			InitialRate: s.cfg.InitialRate,
+			FileName:    filepath.Base(s.cfg.FilePath),
 		}
-		reqPayload.Encrypted = true
-		copy(reqPayload.PubKey[:], ephemPriv.PublicKey().Bytes())
-		reqHdrFlags |= protocol.FlagEncrypted
-	}
+		reqHdrFlags := protocol.Flag(0)
 
-	reqPkt := protocol.Packet{
-		Header: protocol.Header{
-			Type:      protocol.PacketSessionReq,
-			SessionID: sessionID,
-			Flags:     reqHdrFlags,
-		},
-		Payload: protocol.MarshalSessionReq(&reqPayload),
-	}
-
-	reqRaw, err := protocol.MarshalPacket(&reqPkt)
-	if err != nil {
-		return fmt.Errorf("marshal SESSION_REQ: %w", err)
-	}
-
-	dbgLog.Printf("[sender] sending SESSION_REQ: sessionID=0x%08X -> %s encrypted=%v",
-		sessionID, s.cfg.RemoteAddr, s.cfg.Encrypt)
-	writeFn(reqRaw)
-
-	// Case 3: serve pull — derive key immediately from PeerPubKey.
-	if s.cfg.Encrypt && s.cfg.EncKey == nil && len(s.cfg.PeerPubKey) > 0 {
-		key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, s.cfg.PeerPubKey, sessionID)
-		if err != nil {
-			return fmt.Errorf("derive session key (pull): %w", err)
+		var ephemPriv *ecdh.PrivateKey
+		if s.cfg.Encrypt {
+			// Cases 3 and 4: embed sender's public key in SESSION_REQ.
+			ephemPriv, err = protocol.GenerateEphemeralKey()
+			if err != nil {
+				return fmt.Errorf("generate ephemeral key: %w", err)
+			}
+			reqPayload.Encrypted = true
+			copy(reqPayload.PubKey[:], ephemPriv.PublicKey().Bytes())
+			reqHdrFlags |= protocol.FlagEncrypted
 		}
-		c, err := protocol.NewSessionCipher(key)
-		if err != nil {
-			return fmt.Errorf("init cipher (pull): %w", err)
-		}
-		aead = c
-		ivBase = derivedIVBase
-		dbgLog.Printf("[sender] session key derived (pull flow, no SESSION_ACCEPT)")
-	}
 
-	// Case 4: direct send/recv — wait for SESSION_ACCEPT.
-	if s.cfg.Encrypt && s.cfg.EncKey == nil && len(s.cfg.PeerPubKey) == 0 {
-		dbgLog.Printf("[sender] waiting for SESSION_ACCEPT...")
-		buf := make([]byte, protocol.MTUHardCap)
-		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-		acceptLoop:
-		for {
-			n, err := conn.Read(buf)
+		reqPkt := protocol.Packet{
+			Header: protocol.Header{
+				Type:      protocol.PacketSessionReq,
+				SessionID: sessionID,
+				Flags:     reqHdrFlags,
+			},
+			Payload: protocol.MarshalSessionReq(&reqPayload),
+		}
+
+		reqRaw, err := protocol.MarshalPacket(&reqPkt)
+		if err != nil {
+			return fmt.Errorf("marshal SESSION_REQ: %w", err)
+		}
+
+		dbgLog.Printf("[sender] sending SESSION_REQ: sessionID=0x%08X -> %s encrypted=%v",
+			sessionID, s.cfg.RemoteAddr, s.cfg.Encrypt)
+		writeFn(reqRaw)
+
+		// Case 3: serve pull — derive key immediately from PeerPubKey.
+		if s.cfg.Encrypt && len(s.cfg.PeerPubKey) > 0 {
+			key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, s.cfg.PeerPubKey, sessionID)
 			if err != nil {
-				conn.SetReadDeadline(time.Time{})
-				return fmt.Errorf("SESSION_ACCEPT read: %w", err)
-			}
-			if n < protocol.HeaderSize {
-				continue
-			}
-			hdr, err := protocol.UnmarshalHeader(buf[:n])
-			if err != nil || hdr.Type != protocol.PacketSessionAccept || hdr.SessionID != sessionID {
-				continue
-			}
-			payloadEnd := protocol.HeaderSize + int(hdr.PayloadLen)
-			if payloadEnd > n {
-				continue
-			}
-			accept, err := protocol.UnmarshalSessionAccept(buf[protocol.HeaderSize:payloadEnd])
-			if err != nil {
-				continue
-			}
-			conn.SetReadDeadline(time.Time{})
-			key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, accept.PubKey[:], sessionID)
-			if err != nil {
-				return fmt.Errorf("derive session key: %w", err)
+				return fmt.Errorf("derive session key (pull): %w", err)
 			}
 			c, err := protocol.NewSessionCipher(key)
 			if err != nil {
-				return fmt.Errorf("init cipher: %w", err)
+				return fmt.Errorf("init cipher (pull): %w", err)
 			}
 			aead = c
 			ivBase = derivedIVBase
-			dbgLog.Printf("[sender] session key derived (direct, SESSION_ACCEPT received)")
-			break acceptLoop
+			dbgLog.Printf("[sender] session key derived (pull flow, no SESSION_ACCEPT)")
 		}
+
+		// Case 4: direct send/recv — wait for SESSION_ACCEPT.
+		if s.cfg.Encrypt && len(s.cfg.PeerPubKey) == 0 {
+			dbgLog.Printf("[sender] waiting for SESSION_ACCEPT...")
+			buf := make([]byte, protocol.MTUHardCap)
+			conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		acceptLoop:
+			for {
+				n, err := conn.Read(buf)
+				if err != nil {
+					conn.SetReadDeadline(time.Time{})
+					return fmt.Errorf("SESSION_ACCEPT read: %w", err)
+				}
+				if n < protocol.HeaderSize {
+					continue
+				}
+				hdr, err := protocol.UnmarshalHeader(buf[:n])
+				if err != nil || hdr.Type != protocol.PacketSessionAccept || hdr.SessionID != sessionID {
+					continue
+				}
+				payloadEnd := protocol.HeaderSize + int(hdr.PayloadLen)
+				if payloadEnd > n {
+					continue
+				}
+				accept, err := protocol.UnmarshalSessionAccept(buf[protocol.HeaderSize:payloadEnd])
+				if err != nil {
+					continue
+				}
+				conn.SetReadDeadline(time.Time{})
+				key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, accept.PubKey[:], sessionID)
+				if err != nil {
+					return fmt.Errorf("derive session key: %w", err)
+				}
+				c, err := protocol.NewSessionCipher(key)
+				if err != nil {
+					return fmt.Errorf("init cipher: %w", err)
+				}
+				aead = c
+				ivBase = derivedIVBase
+				dbgLog.Printf("[sender] session key derived (direct, SESSION_ACCEPT received)")
+				break acceptLoop
+			}
+		}
+	} else {
+		dbgLog.Printf("[sender] push flow: skipping SESSION_REQ, session already established (sessionID=0x%08X)", sessionID)
 	}
 
 	// --- Step 4: Open file and prepare send state ---
@@ -499,7 +513,10 @@ func (s *Sender) Send() error {
 
 				sw.Advance(hb.HighestContiguous)
 
-			case protocol.PacketTransferComplete, protocol.PacketSessionReject:
+			case protocol.PacketACKClose, protocol.PacketTransferComplete, protocol.PacketSessionReject:
+				// ACK_CLOSE is the C server's "all data received" signal. Forward
+				// it to teardownCh alongside TRANSFER_COMPLETE so the probe loop
+				// can handle it even if it arrives before data transmission ends.
 				select {
 				case teardownCh <- teardownMsg{pkt.Header.Type, pkt.Payload}:
 				default:
@@ -800,6 +817,17 @@ func (s *Sender) Send() error {
 		case protocol.PacketTransferComplete, protocol.PacketSessionReject:
 			return s.handleTeardown(conn, writeFn, recvChan, sessionID, pkt.Header.Type, pkt.Payload, dbgLog)
 
+		case protocol.PacketACKClose:
+			// C-style receiver: signals completion by sending ACK_CLOSE instead of
+			// TRANSFER_COMPLETE. Complete the handshake by sending TRANSFER_COMPLETE
+			// back, then exit — the receiver's linger is time-based and needs no ACK.
+			dbgLog.Printf("[sender] received ACK_CLOSE — receiver confirmed all data")
+			tcPkt := protocol.Packet{Header: protocol.Header{Type: protocol.PacketTransferComplete, SessionID: sessionID}}
+			tcRaw, _ := protocol.MarshalPacket(&tcPkt)
+			writeFn(tcRaw)
+			log.Printf("[sender] linger complete, session finished")
+			return nil
+
 		case protocol.PacketHeartbeat:
 			hb, err := protocol.UnmarshalHeartbeat(pkt.Payload)
 			if err != nil {
@@ -860,6 +888,21 @@ func (s *Sender) Send() error {
 					}
 				}
 			}
+
+			// Completion check: nacksToProcess is empty only when the receiver has
+			// all packets with no gaps (tail-drop logic above would have injected
+			// missing sequences otherwise). This catches C-style receivers that
+			// haven't yet sent ACK_CLOSE but whose heartbeat confirms all data arrived.
+			if len(nacksToProcess) == 0 {
+				dbgLog.Printf("[sender] heartbeat confirms receiver complete (hc=%d, total=%d) — sending TRANSFER_COMPLETE",
+					hb.HighestContiguous+1, totalChunks)
+				tcPkt := protocol.Packet{Header: protocol.Header{Type: protocol.PacketTransferComplete, SessionID: sessionID}}
+				tcRaw, _ := protocol.MarshalPacket(&tcPkt)
+				writeFn(tcRaw)
+				log.Printf("[sender] linger complete, session finished")
+				return nil
+			}
+
 			// Reset deadline — still making progress
 			if recvChan != nil {
 				probeDeadline.Reset(s.cfg.Session.SenderProbeTimeout)
