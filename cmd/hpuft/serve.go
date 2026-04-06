@@ -1,11 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"hpuft/protocol"
 	"hpuft/receiver"
 	"hpuft/sender"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -26,6 +29,7 @@ func runServe(args []string) {
 	listenAddr := fs.String("listen", ":9001", "address to listen on for PULL_REQ / PUSH_REQ")
 	dir := fs.String("dir", ".", "directory of files available to serve")
 	debug := fs.Bool("debug", false, "enable CC/protocol debug logging for transfers")
+	masterAddr := fs.String("master", "", "master tracker address (host:port); if set, register this daemon over TCP")
 	fs.Parse(args)
 
 	// Serve uses structured event logging on stderr with timestamps.
@@ -50,6 +54,11 @@ func runServe(args []string) {
 
 	fmt.Fprintf(os.Stderr, "[serve] Online. Listening on %s\n", conn.LocalAddr())
 	fmt.Fprintf(os.Stderr, "[serve] Manifest loaded: %d authorized files found in %s\n", len(manifest), *dir)
+
+	if *masterAddr != "" {
+		udpPort := uint16(conn.LocalAddr().(*net.UDPAddr).Port)
+		go runMasterRegistration(*masterAddr, udpPort, &manifestMu, manifest)
+	}
 
 	// busy is 0 when idle, 1 when a transfer is in progress.
 	var busy int32
@@ -437,6 +446,136 @@ func buildManifest(dir string) map[string]manifestEntry {
 	}
 
 	return manifest
+}
+
+// runMasterRegistration dials masterAddr over TCP, sends a Burst (0x01) with the
+// current manifest state, then keeps the connection alive with Heartbeat (0x00)
+// frames every 50 seconds. On any error it reconnects with exponential backoff.
+func runMasterRegistration(masterAddr string, udpPort uint16, manifestMu *sync.RWMutex, manifest map[string]manifestEntry) {
+	backoff := time.Second
+	for {
+		conn, err := net.Dial("tcp", masterAddr)
+		if err != nil {
+			log.Printf("[master] connect %s: %v — retry in %s", masterAddr, err, backoff)
+			time.Sleep(backoff)
+			if backoff < 64*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		backoff = time.Second
+		log.Printf("[master] connected to %s", masterAddr)
+
+		if err := sendMasterBurst(conn, udpPort, manifestMu, manifest); err != nil {
+			log.Printf("[master] burst: %v", err)
+			conn.Close()
+			continue
+		}
+
+		ticker := time.NewTicker(50 * time.Second)
+		lost := false
+		for range ticker.C {
+			if err := sendMasterHeartbeat(conn); err != nil {
+				log.Printf("[master] heartbeat: %v", err)
+				lost = true
+				break
+			}
+		}
+		ticker.Stop()
+		conn.Close()
+		if lost {
+			time.Sleep(time.Second)
+		}
+	}
+}
+
+// sendMasterBurst builds and writes a 0x01 Burst frame to conn.
+//
+// Wire layout:
+//
+//	[4] total length  — bytes after this field (type + port + count + file entries)
+//	[1] type          — 0x01
+//	[2] UDP port
+//	[4] file count
+//	per file:
+//	  [32] SHA-256 hash
+//	  [8]  size (uint64)
+//	  [2]  name length (uint16)
+//	  [N]  name bytes
+func sendMasterBurst(conn net.Conn, udpPort uint16, manifestMu *sync.RWMutex, manifest map[string]manifestEntry) error {
+	type entry struct {
+		hash [32]byte
+		size uint64
+		name string
+	}
+
+	manifestMu.RLock()
+	entries := make([]entry, 0, len(manifest))
+	for name, me := range manifest {
+		entries = append(entries, entry{size: uint64(me.size), name: name})
+		// capture path for hashing after unlock
+		entries[len(entries)-1].hash = sha256File(me.path)
+	}
+	manifestMu.RUnlock()
+
+	// Compute payload size: port(2) + count(4) + per-file(32+8+2+namelen)
+	payloadSize := 2 + 4
+	for i := range entries {
+		payloadSize += 32 + 8 + 2 + len(entries[i].name)
+	}
+
+	// totalLen = type(1) + payloadSize
+	totalLen := 1 + payloadSize
+	buf := make([]byte, 4+totalLen)
+	off := 0
+
+	binary.BigEndian.PutUint32(buf[off:], uint32(totalLen))
+	off += 4
+	buf[off] = 0x01
+	off++
+	binary.BigEndian.PutUint16(buf[off:], udpPort)
+	off += 2
+	binary.BigEndian.PutUint32(buf[off:], uint32(len(entries)))
+	off += 4
+
+	for _, e := range entries {
+		copy(buf[off:], e.hash[:])
+		off += 32
+		binary.BigEndian.PutUint64(buf[off:], e.size)
+		off += 8
+		binary.BigEndian.PutUint16(buf[off:], uint16(len(e.name)))
+		off += 2
+		copy(buf[off:], e.name)
+		off += len(e.name)
+	}
+
+	_, err := conn.Write(buf)
+	return err
+}
+
+// sendMasterHeartbeat writes a 0x00 Heartbeat frame to conn.
+//
+// Wire layout: [4] length=0  [1] type=0x00
+func sendMasterHeartbeat(conn net.Conn) error {
+	var frame [5]byte
+	// length field stays 0x00000000; type byte is 0x00
+	_, err := conn.Write(frame[:])
+	return err
+}
+
+// sha256File computes the SHA-256 hash of the file at path.
+// Returns a zero hash on error (logged by caller).
+func sha256File(path string) [32]byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return [32]byte{}
+	}
+	defer f.Close()
+	h := sha256.New()
+	io.Copy(h, f)
+	var out [32]byte
+	h.Sum(out[:0])
+	return out
 }
 
 // sendReject sends a SESSION_REJECT packet to addr with the given reason code.
