@@ -38,6 +38,8 @@ func main() {
 		runPush(args)
 	case "list":
 		runList(args)
+	case "servers":
+		runServers(args)
 	case "proxy":
 		runProxy(args)
 	case "test":
@@ -58,7 +60,8 @@ Commands:
   serve  Persistent daemon: serve files on request (single-lane)
   get    Pull a file from a serve daemon (NAT-traversal friendly)
   push   Push a file to a serve daemon (bidirectional hub)
-  list   List files available on a serve daemon
+  list     List files available on a serve daemon
+  servers  Query master tracker for active daemons
   proxy  Lossy UDP proxy for testing
   test   Run end-to-end integration tests
 

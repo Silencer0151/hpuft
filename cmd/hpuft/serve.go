@@ -555,10 +555,12 @@ func sendMasterBurst(conn net.Conn, udpPort uint16, manifestMu *sync.RWMutex, ma
 
 // sendMasterHeartbeat writes a 0x00 Heartbeat frame to conn.
 //
-// Wire layout: [4] length=0  [1] type=0x00
+// Wire layout: [4] length=1  [1] type=0x00
+// Length counts the type byte, matching the burst framing convention.
 func sendMasterHeartbeat(conn net.Conn) error {
 	var frame [5]byte
-	// length field stays 0x00000000; type byte is 0x00
+	binary.BigEndian.PutUint32(frame[0:4], 1)
+	frame[4] = 0x00
 	_, err := conn.Write(frame[:])
 	return err
 }
