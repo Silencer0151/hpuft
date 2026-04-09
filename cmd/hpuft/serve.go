@@ -350,6 +350,20 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 		cfg.EncKey = encKey
 		cfg.IVBase = ivBase
 		cfg.Debug = debug
+		// PushFlow senders skip SESSION_REQ and go straight to data.
+		// Pre-populate IncomingSession from the PUSH_REQ so the receiver
+		// skips Phase 1 (waiting for SESSION_REQ on the channel).
+		cfg.IncomingSession = &receiver.IncomingSession{
+			SenderAddr: clientAddr,
+			SessionID:  sessionID,
+			Req: protocol.SessionReqPayload{
+				FileSize:    req.FileSize,
+				Checksum:    req.FileHash,
+				FileName:    safeName,
+				Encrypted:   isEncrypted,
+				InitialRate: req.InitialRate,
+			},
+		}
 
 		r, err := receiver.New(cfg)
 		if err != nil {
