@@ -80,12 +80,14 @@ func runTest(args []string) {
 		log.Fatalf("resolve executable: %v", err)
 	}
 
+	var tmpDir string
 	if outDir == "" {
-		outDir, err = os.MkdirTemp("", "hpuft-test-*")
+		tmpDir, err = os.MkdirTemp("", "hpuft-test-*")
 		if err != nil {
 			log.Fatalf("create temp dir: %v", err)
 		}
-		defer os.RemoveAll(outDir)
+		defer os.RemoveAll(tmpDir)
+		outDir = tmpDir
 	}
 
 	log.Printf("=== HP-UDP Integration Test Suite ===")
@@ -164,6 +166,8 @@ type transferResult struct {
 	errMsg         string
 }
 
+// runOneTransfer starts a serve daemon (with optional loss proxy) and drives a
+// complete put→get round-trip, verifying the retrieved file matches the source.
 func runOneTransfer(self, file string, lossPct float64, outDir string, timeoutSec int) transferResult {
 	fileInfo, err := os.Stat(file)
 	if err != nil {
@@ -171,39 +175,42 @@ func runOneTransfer(self, file string, lossPct float64, outDir string, timeoutSe
 	}
 	fileSize := fileInfo.Size()
 
-	receiverPort := freePort()
+	servePort := freePort()
 	proxyPort := freePort()
 
-	recvDir := filepath.Join(outDir, fmt.Sprintf("loss_%.0f", lossPct))
-	os.MkdirAll(recvDir, 0755)
-	receivedPath := filepath.Join(recvDir, filepath.Base(file))
-	os.Remove(receivedPath)
+	// Serve daemon writes received files into a dedicated subdirectory.
+	serveDir := filepath.Join(outDir, fmt.Sprintf("serve_%.0f_%d", lossPct, servePort))
+	os.MkdirAll(serveDir, 0755)
 
-	log.Printf("[test] %s @ %.1f%% loss (receiver=:%d proxy=:%d)",
-		filepath.Base(file), lossPct, receiverPort, proxyPort)
+	// Get output lands in a separate dir to avoid name collision.
+	getDir := filepath.Join(outDir, fmt.Sprintf("get_%.0f_%d", lossPct, servePort))
+	os.MkdirAll(getDir, 0755)
 
-	// Start receiver
-	recv := exec.Command(self, "recv",
-		"-listen", fmt.Sprintf(":%d", receiverPort),
-		"-out", recvDir,
+	log.Printf("[test] %s @ %.1f%% loss (serve=:%d proxy=:%d)",
+		filepath.Base(file), lossPct, servePort, proxyPort)
+
+	// Start serve daemon.
+	serve := exec.Command(self, "serve",
+		"-listen", fmt.Sprintf(":%d", servePort),
+		"-dir", serveDir,
 	)
-	var recvOut bytes.Buffer
-	recv.Stdout = &recvOut
-	recv.Stderr = &recvOut
-	if err := recv.Start(); err != nil {
-		return transferResult{file: file, loss: lossPct, errMsg: fmt.Sprintf("start receiver: %v", err)}
+	var serveOut bytes.Buffer
+	serve.Stdout = &serveOut
+	serve.Stderr = &serveOut
+	if err := serve.Start(); err != nil {
+		return transferResult{file: file, loss: lossPct, errMsg: fmt.Sprintf("start serve: %v", err)}
 	}
-	defer func() { recv.Process.Kill(); recv.Wait() }()
+	defer func() { serve.Process.Kill(); serve.Wait() }()
 	time.Sleep(200 * time.Millisecond)
 
-	// Start proxy (skip at 0% loss — connect sender directly to receiver)
-	var senderTarget string
+	// Determine the address that put/get will connect to.
+	var targetAddr string
 	var proxy *exec.Cmd
 
 	if lossPct > 0 {
 		proxy = exec.Command(self, "proxy",
 			"-listen", fmt.Sprintf(":%d", proxyPort),
-			"-target", fmt.Sprintf("127.0.0.1:%d", receiverPort),
+			"-target", fmt.Sprintf("127.0.0.1:%d", servePort),
 			"-loss", fmt.Sprintf("%.1f", lossPct),
 			"-seed", fmt.Sprintf("%d", rand.Int63()),
 		)
@@ -215,77 +222,99 @@ func runOneTransfer(self, file string, lossPct float64, outDir string, timeoutSe
 		}
 		defer func() { proxy.Process.Kill(); proxy.Wait() }()
 		time.Sleep(200 * time.Millisecond)
-		senderTarget = fmt.Sprintf("127.0.0.1:%d", proxyPort)
+		targetAddr = fmt.Sprintf("127.0.0.1:%d", proxyPort)
 	} else {
-		senderTarget = fmt.Sprintf("127.0.0.1:%d", receiverPort)
+		targetAddr = fmt.Sprintf("127.0.0.1:%d", servePort)
 	}
 
 	absFile, _ := filepath.Abs(file)
-	send := exec.Command(self, "send",
+
+	// --- PUT phase ---
+	put := exec.Command(self, "put",
 		"-file", absFile,
-		"-addr", senderTarget,
+		"-addr", targetAddr,
 		"-nodelay",
 	)
-	var sendOut bytes.Buffer
-	send.Stdout = &sendOut
-	send.Stderr = &sendOut
+	var putOut bytes.Buffer
+	put.Stdout = &putOut
+	put.Stderr = &putOut
 
 	start := time.Now()
-	if err := send.Start(); err != nil {
-		return transferResult{file: file, loss: lossPct, errMsg: fmt.Sprintf("start sender: %v", err)}
+	if err := put.Start(); err != nil {
+		return transferResult{file: file, loss: lossPct, errMsg: fmt.Sprintf("start put: %v", err)}
 	}
 
-	done := make(chan error, 1)
-	go func() { done <- send.Wait() }()
+	putDone := make(chan error, 1)
+	go func() { putDone <- put.Wait() }()
 
 	select {
-	case err := <-done:
+	case err := <-putDone:
 		if err != nil {
 			return transferResult{
 				file:     file,
 				loss:     lossPct,
 				duration: time.Since(start),
-				errMsg:   fmt.Sprintf("sender error: %v\nSENDER:\n%s\nRECEIVER:\n%s", err, sendOut.String(), recvOut.String()),
+				errMsg:   fmt.Sprintf("put error: %v\nPUT:\n%s\nSERVE:\n%s", err, putOut.String(), serveOut.String()),
 			}
 		}
 	case <-time.After(time.Duration(timeoutSec) * time.Second):
-		send.Process.Kill()
+		put.Process.Kill()
 		return transferResult{
 			file:     file,
 			loss:     lossPct,
 			duration: time.Duration(timeoutSec) * time.Second,
-			errMsg:   fmt.Sprintf("timeout after %ds\nsender: %s\nreceiver: %s", timeoutSec, sendOut.String(), recvOut.String()),
+			errMsg:   fmt.Sprintf("put timeout after %ds\nput: %s\nserve: %s", timeoutSec, putOut.String(), serveOut.String()),
 		}
 	}
 
-	duration := time.Since(start)
+	putDuration := time.Since(start)
 
-	recvDone := make(chan error, 1)
-	go func() { recvDone <- recv.Wait() }()
+	// --- GET phase ---
+	get := exec.Command(self, "get",
+		"-file", filepath.Base(absFile),
+		"-addr", targetAddr,
+		"-out", getDir,
+		"-nodelay",
+	)
+	var getOut bytes.Buffer
+	get.Stdout = &getOut
+	get.Stderr = &getOut
+
+	if err := get.Start(); err != nil {
+		return transferResult{file: file, loss: lossPct, duration: putDuration, errMsg: fmt.Sprintf("start get: %v", err)}
+	}
+
+	getDone := make(chan error, 1)
+	go func() { getDone <- get.Wait() }()
 
 	select {
-	case err := <-recvDone:
+	case err := <-getDone:
 		if err != nil {
 			return transferResult{
 				file:     file,
 				loss:     lossPct,
-				duration: duration,
-				errMsg:   fmt.Sprintf("receiver error: %v\n%s", err, recvOut.String()),
+				duration: putDuration,
+				errMsg:   fmt.Sprintf("get error: %v\nGET:\n%s\nSERVE:\n%s", err, getOut.String(), serveOut.String()),
 			}
 		}
-	case <-time.After(15 * time.Second):
+	case <-time.After(time.Duration(timeoutSec) * time.Second):
+		get.Process.Kill()
 		return transferResult{
 			file:     file,
 			loss:     lossPct,
-			duration: duration,
-			errMsg:   fmt.Sprintf("receiver didn't finish within 15s of sender completing\n%s", recvOut.String()),
+			duration: putDuration,
+			errMsg:   fmt.Sprintf("get timeout after %ds\nget: %s\nserve: %s", timeoutSec, getOut.String(), serveOut.String()),
 		}
 	}
 
+	duration := putDuration + time.Since(start.Add(putDuration))
+
+	// --- Integrity check ---
 	original, err := os.ReadFile(file)
 	if err != nil {
 		return transferResult{file: file, loss: lossPct, duration: duration, errMsg: fmt.Sprintf("read original: %v", err)}
 	}
+	receivedPath := filepath.Join(getDir, filepath.Base(file))
 	received, err := os.ReadFile(receivedPath)
 	if err != nil {
 		return transferResult{file: file, loss: lossPct, duration: duration, errMsg: fmt.Sprintf("read received: %v", err)}

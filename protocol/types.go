@@ -7,55 +7,51 @@ import "time"
 type PacketType uint8
 
 const (
-	PacketSessionReq       PacketType = 0x00
-	PacketData             PacketType = 0x01
-	PacketParity           PacketType = 0x02
-	PacketHeartbeat        PacketType = 0x03
-	PacketSessionReject    PacketType = 0x04
-	PacketTransferComplete PacketType = 0x05
-	PacketACKClose         PacketType = 0x06
-	PacketPullReq          PacketType = 0x07
-	PacketPushReq          PacketType = 0x08
-	PacketPushAccept       PacketType = 0x09
-	PacketSessionAccept    PacketType = 0x0A
-	PacketResumeReq        PacketType = 0x0B
-	PacketResumeAccept     PacketType = 0x0C
-	PacketListReq          PacketType = 0x0D
-	PacketListResp         PacketType = 0x0E
+	// Connection layer
+	PacketHello    PacketType = 0x00 // was PacketSessionReq (0x00)
+	PacketWelcome  PacketType = 0x01 // was PacketSessionAccept (0x0A)
+	PacketRequest  PacketType = 0x02 // NEW
+	PacketResponse PacketType = 0x03 // NEW
+	PacketReject   PacketType = 0x04 // was PacketSessionReject (0x04)
+
+	// Data layer (renumbered from v5)
+	PacketData      PacketType = 0x05 // was 0x01
+	PacketParity    PacketType = 0x06 // was 0x02
+	PacketHeartbeat PacketType = 0x07 // was 0x03
+	PacketComplete  PacketType = 0x08 // was PacketTransferComplete (0x05)
+	PacketAckClose  PacketType = 0x09 // was PacketACKClose (0x06)
+
+	// Keepalive
+	PacketPing PacketType = 0x0A // NEW
+	PacketPong PacketType = 0x0B // NEW
 )
 
 func (p PacketType) String() string {
 	switch p {
-	case PacketSessionReq:
-		return "SESSION_REQ"
+	case PacketHello:
+		return "HELLO"
+	case PacketWelcome:
+		return "WELCOME"
+	case PacketRequest:
+		return "REQUEST"
+	case PacketResponse:
+		return "RESPONSE"
+	case PacketReject:
+		return "REJECT"
 	case PacketData:
 		return "DATA"
 	case PacketParity:
 		return "PARITY"
 	case PacketHeartbeat:
 		return "HEARTBEAT"
-	case PacketSessionReject:
-		return "SESSION_REJECT"
-	case PacketTransferComplete:
-		return "TRANSFER_COMPLETE"
-	case PacketACKClose:
+	case PacketComplete:
+		return "COMPLETE"
+	case PacketAckClose:
 		return "ACK_CLOSE"
-	case PacketPullReq:
-		return "PULL_REQ"
-	case PacketPushReq:
-		return "PUSH_REQ"
-	case PacketPushAccept:
-		return "PUSH_ACCEPT"
-	case PacketSessionAccept:
-		return "SESSION_ACCEPT"
-	case PacketResumeReq:
-		return "RESUME_REQ"
-	case PacketResumeAccept:
-		return "RESUME_ACCEPT"
-	case PacketListReq:
-		return "LIST_REQ"
-	case PacketListResp:
-		return "LIST_RESP"
+	case PacketPing:
+		return "PING"
+	case PacketPong:
+		return "PONG"
 	default:
 		return "UNKNOWN"
 	}
@@ -68,42 +64,62 @@ type Flag uint8
 const (
 	FlagEndOfFile        Flag = 0x01
 	FlagCalibrationBurst Flag = 0x02
-	FlagEncrypted        Flag = 0x04
+	// FlagEncrypted removed — v6 is always encrypted
 )
 
-// --- Session Reject Reason Codes ---
+// --- Operation Codes (REQUEST payload byte 0) ---
 
-type RejectReason uint8
+type OpCode uint8
 
 const (
-	RejectSessionIDCollision RejectReason = 0x01
-	RejectHashMismatch       RejectReason = 0x02
-	RejectServerBusy         RejectReason = 0x03
-	RejectFileNotFound       RejectReason = 0x04
-	RejectFileExists                RejectReason = 0x05
-	RejectEncryptionUnsupported     RejectReason = 0x06
-	RejectResumeHashMismatch        RejectReason = 0x07
-	RejectClientDisconnect          RejectReason = 0x08
+	OpPut    OpCode = 0x01
+	OpGet    OpCode = 0x02
+	OpList   OpCode = 0x03
+	OpDelete OpCode = 0x04
 )
 
-func (r RejectReason) String() string {
+// --- Response Status ---
+
+type ResponseStatus uint8
+
+const (
+	StatusOK    ResponseStatus = 0x00
+	StatusError ResponseStatus = 0x01
+)
+
+// --- Reason Codes ---
+
+type Reason uint8
+
+const (
+	ReasonConnectionIDCollision Reason = 0x01 // was RejectSessionIDCollision
+	ReasonHashMismatch          Reason = 0x02
+	ReasonServerBusy            Reason = 0x03
+	ReasonFileNotFound          Reason = 0x04
+	ReasonFileExists            Reason = 0x05
+	ReasonClientDisconnect      Reason = 0x06 // was 0x08 in v5
+	ReasonInvalidRequest        Reason = 0x07
+	ReasonDeleteDenied          Reason = 0x08
+)
+
+func (r Reason) String() string {
 	switch r {
-	case RejectSessionIDCollision:
-		return "SESSION_ID_COLLISION"
-	case RejectHashMismatch:
+	case ReasonConnectionIDCollision:
+		return "CONNECTION_ID_COLLISION"
+	case ReasonHashMismatch:
 		return "HASH_MISMATCH"
-	case RejectServerBusy:
+	case ReasonServerBusy:
 		return "SERVER_BUSY"
-	case RejectFileNotFound:
+	case ReasonFileNotFound:
 		return "FILE_NOT_FOUND"
-	case RejectFileExists:
+	case ReasonFileExists:
 		return "FILE_EXISTS"
-	case RejectEncryptionUnsupported:
-		return "ENCRYPTION_UNSUPPORTED"
-	case RejectResumeHashMismatch:
-		return "RESUME_HASH_MISMATCH"
-	case RejectClientDisconnect:
+	case ReasonClientDisconnect:
 		return "CLIENT_DISCONNECT"
+	case ReasonInvalidRequest:
+		return "INVALID_REQUEST"
+	case ReasonDeleteDenied:
+		return "DELETE_DENIED"
 	default:
 		return "UNKNOWN"
 	}
@@ -112,9 +128,9 @@ func (r RejectReason) String() string {
 // --- Wire Format Constants ---
 
 const (
-	HeaderSize = 32                      // bytes, 4 x 64-bit aligned
-	MTUHardCap = 1400                    // bytes, total packet size
-	MaxPayload = MTUHardCap - HeaderSize // 1368 bytes
+	HeaderSize = 32                                   // bytes, 4 x 64-bit aligned
+	MTUHardCap = 1400                                 // bytes, total packet size
+	MaxPayload = MTUHardCap - HeaderSize - GCMTagSize // 1352 bytes; v6 always encrypts
 )
 
 // --- Header ---
@@ -122,14 +138,15 @@ const (
 // Header is the 32-byte fixed-width binary header for every HP-UDP datagram.
 //
 // Wire layout:
-//   Offset  Size  Field
-//   0x00    1     PacketType
-//   0x01    4     SessionID
-//   0x05    8     SequenceNum
-//   0x0D    8     BlockGroup
-//   0x15    2     PayloadLen
-//   0x17    1     Flags
-//   0x18    8     SenderTimestampNs
+//
+//	Offset  Size  Field
+//	0x00    1     PacketType
+//	0x01    4     ConnectionID
+//	0x05    8     SequenceNum
+//	0x0D    8     BlockGroup
+//	0x15    2     PayloadLen
+//	0x17    1     Flags
+//	0x18    8     SenderTimestampNs
 //
 // SenderTimestampNs carries the sender's time.Now().UnixNano() at the moment
 // a DATA or PARITY packet is built. The receiver echoes this value back in
@@ -137,31 +154,19 @@ const (
 // using only its own clock, avoiding cross-machine clock-skew errors.
 // Non-data packets leave this field zero.
 type Header struct {
-	Type               PacketType
-	SessionID          uint32
-	SequenceNum        uint64
-	BlockGroup         uint64
-	PayloadLen         uint16
-	Flags              Flag
-	SenderTimestampNs  uint64
+	Type              PacketType
+	ConnectionID      uint32 // was SessionID
+	SequenceNum       uint64
+	BlockGroup        uint64
+	PayloadLen        uint16
+	Flags             Flag
+	SenderTimestampNs uint64
 }
 
 // Packet is a fully parsed datagram: header + payload bytes.
 type Packet struct {
 	Header  Header
 	Payload []byte
-}
-
-// --- Session Request Payload ---
-
-// SessionReqPayload is the structured payload carried inside a SESSION_REQ packet.
-type SessionReqPayload struct {
-	FileSize    uint64   // total file size in bytes
-	Checksum    uint64   // xxHash64 of the complete file
-	InitialRate uint32   // bytes/sec, 0 = use calibration mode
-	PubKey      [32]byte // X25519 ephemeral public key; only included on the wire when Encrypted=true
-	Encrypted   bool     // if true, PubKey is written/expected in the wire format
-	FileName    string   // null-terminated on the wire
 }
 
 // --- Heartbeat Payload ---
@@ -269,7 +274,7 @@ type SessionConfig struct {
 	SenderHeartbeatTimeout  time.Duration // max silence from receiver during data phase before abort (default 3s)
 	LingerDuration          time.Duration // post-transfer linger on both sides (default 3s)
 	ReceiverTeardownRetries int           // TRANSFER_COMPLETE retransmit count (default 3)
-	StaleIDReservation      time.Duration // how long purged SessionIDs stay reserved (default 10s)
+	ConnectionIDReservation time.Duration // how long torn-down ConnectionIDs stay reserved (default 10s)
 }
 
 // DefaultSessionConfig returns the spec defaults from Appendix A.
@@ -281,7 +286,7 @@ func DefaultSessionConfig() SessionConfig {
 		SenderHeartbeatTimeout:  3 * time.Second,
 		LingerDuration:          3 * time.Second,
 		ReceiverTeardownRetries: 3,
-		StaleIDReservation:      10 * time.Second,
+		ConnectionIDReservation: 10 * time.Second,
 	}
 }
 

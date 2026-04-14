@@ -284,7 +284,7 @@ func (hg *HeartbeatGenerator) sendHeartbeat() {
 	pkt := protocol.Packet{
 		Header: protocol.Header{
 			Type:      protocol.PacketHeartbeat,
-			SessionID: hg.sessionID,
+			ConnectionID: hg.sessionID,
 		},
 		Payload: protocol.MarshalHeartbeat(&payload),
 	}

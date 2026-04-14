@@ -23,7 +23,7 @@ func MarshalHeader(dst []byte, h *Header) (int, error) {
 	}
 
 	dst[0] = byte(h.Type)
-	binary.BigEndian.PutUint32(dst[1:5], h.SessionID)
+	binary.BigEndian.PutUint32(dst[1:5], h.ConnectionID)
 	binary.BigEndian.PutUint64(dst[5:13], h.SequenceNum)
 	binary.BigEndian.PutUint64(dst[13:21], h.BlockGroup)
 	binary.BigEndian.PutUint16(dst[21:23], h.PayloadLen)
@@ -41,7 +41,7 @@ func UnmarshalHeader(src []byte) (Header, error) {
 
 	h := Header{
 		Type:              PacketType(src[0]),
-		SessionID:         binary.BigEndian.Uint32(src[1:5]),
+		ConnectionID:      binary.BigEndian.Uint32(src[1:5]),
 		SequenceNum:       binary.BigEndian.Uint64(src[5:13]),
 		BlockGroup:        binary.BigEndian.Uint64(src[13:21]),
 		PayloadLen:        binary.BigEndian.Uint16(src[21:23]),
