@@ -136,18 +136,26 @@ func runServe(args []string) {
 // ── HELLO handler ─────────────────────────────────────────────────────────────
 
 func handleHello(conn *net.UDPConn, addr *net.UDPAddr, hdr protocol.Header, raw []byte, conns *connTable) {
-	// If the ConnectionID is already in use, only hard-reject when a transfer
-	// is actively in progress. Idle entries are orphaned connections left by
-	// clients that crashed without sending REJECT — evict them so the new
-	// HELLO can proceed without spamming collision errors.
+	// If the ConnectionID is already in use, reject it so the client retries
+	// with a new random ID.
+	//
+	// ConnTransferring → genuine collision; hard reject.
+	// ConnIdle         → orphaned entry from a previous session that ended
+	//                    without a clean REJECT(ClientDisconnect). Silently
+	//                    evict the dead entry and send REJECT(Collision) so
+	//                    DialConnection picks a fresh ID. This avoids creating
+	//                    a phantom connection the client will never use and
+	//                    keeps the connTable clean without log spam.
 	if existing := conns.get(addr, hdr.ConnectionID); existing != nil {
 		if existing.State() == protocol.ConnTransferring {
 			sendReject(conn, addr, hdr.ConnectionID, protocol.ReasonConnectionIDCollision)
-			log.Printf("[serve] REJECTED %s: HELLO ID collision (0x%08x, transfer active)", addr, hdr.ConnectionID)
+			log.Printf("[serve] REJECTED %s: HELLO collision (0x%08x, transfer active)", addr, hdr.ConnectionID)
 			return
 		}
+		// Idle orphan — evict silently and tell the client to try a new ID.
 		conns.remove(addr, hdr.ConnectionID)
-		log.Printf("[serve] evicting orphaned connection %s (ID=0x%08x) for new HELLO", addr, hdr.ConnectionID)
+		sendReject(conn, addr, hdr.ConnectionID, protocol.ReasonConnectionIDCollision)
+		return
 	}
 
 	// Extract the HELLO payload (everything after the fixed header).
