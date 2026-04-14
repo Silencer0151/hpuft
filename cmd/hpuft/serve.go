@@ -136,11 +136,18 @@ func runServe(args []string) {
 // ── HELLO handler ─────────────────────────────────────────────────────────────
 
 func handleHello(conn *net.UDPConn, addr *net.UDPAddr, hdr protocol.Header, raw []byte, conns *connTable) {
-	// Reject if the ConnectionID is already in use (collision).
+	// If the ConnectionID is already in use, only hard-reject when a transfer
+	// is actively in progress. Idle entries are orphaned connections left by
+	// clients that crashed without sending REJECT — evict them so the new
+	// HELLO can proceed without spamming collision errors.
 	if existing := conns.get(addr, hdr.ConnectionID); existing != nil {
-		sendReject(conn, addr, hdr.ConnectionID, protocol.ReasonConnectionIDCollision)
-		log.Printf("[serve] REJECTED %s: HELLO ConnectionID collision (0x%08x)", addr, hdr.ConnectionID)
-		return
+		if existing.State() == protocol.ConnTransferring {
+			sendReject(conn, addr, hdr.ConnectionID, protocol.ReasonConnectionIDCollision)
+			log.Printf("[serve] REJECTED %s: HELLO ID collision (0x%08x, transfer active)", addr, hdr.ConnectionID)
+			return
+		}
+		conns.remove(addr, hdr.ConnectionID)
+		log.Printf("[serve] evicting orphaned connection %s (ID=0x%08x) for new HELLO", addr, hdr.ConnectionID)
 	}
 
 	// Extract the HELLO payload (everything after the fixed header).
