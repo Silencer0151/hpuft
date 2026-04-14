@@ -10,124 +10,166 @@ import (
 	"time"
 )
 
-const barWidth = 20
+const barWidth = 30
 
-// RunSendProgress prints a live \r progress bar for a push/send transfer.
-// It polls s.Progress() every 100ms until done is closed, then prints the
-// final summary line.
-func RunSendProgress(s *sender.Sender, done <-chan struct{}) {
+// RunSendProgress prints a live \r progress bar for a send transfer.
+// It blocks until errCh receives and returns the transfer error.
+//
+//	[====>                         ]  14%   52.3 MB/s   ETA 8s
+//	[==================>           ]  62%   34.7 MB/s   ETA 6s  NACKs: 23
+//	[=============================>] 100%   97.4 MB/s   4.2s
+//	[==============================] 100%   Repairing   NACKs: 4
+func RunSendProgress(s *sender.Sender, errCh <-chan error) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
+	start := time.Now()
+	var prevBytes int64
+	var prevTime time.Time
+	var ewma float64
+
+	updateEWMA := func(bytes int64, now time.Time) {
+		if !prevTime.IsZero() {
+			dt := now.Sub(prevTime).Seconds()
+			if dt > 0 && bytes > prevBytes {
+				instant := float64(bytes-prevBytes) / dt / 1e6
+				if ewma == 0 {
+					ewma = instant
+				} else {
+					ewma = 0.25*instant + 0.75*ewma
+				}
+			}
+		}
+		prevBytes = bytes
+		prevTime = now
+	}
+
 	for {
 		select {
-		case <-done:
+		case err := <-errCh:
 			p := s.Progress()
-			printSendBar(p, true)
-			fmt.Fprintln(os.Stdout)
-			return
+			if line := fmtSendBar(p, ewma, time.Since(start), true); line != "" {
+				fmt.Fprint(os.Stdout, line)
+				fmt.Fprintln(os.Stdout)
+			}
+			return err
 		case <-ticker.C:
-			printSendBar(s.Progress(), false)
+			now := time.Now()
+			p := s.Progress()
+			updateEWMA(p.BytesSent, now)
+			if line := fmtSendBar(p, ewma, time.Since(start), false); line != "" {
+				fmt.Fprint(os.Stdout, line)
+			}
 		}
 	}
 }
 
-// RunRecvProgress prints a live \r progress bar for a recv/get transfer.
-func RunRecvProgress(r *receiver.Receiver, done <-chan struct{}) {
+// RunRecvProgress prints a live \r progress bar for a receive transfer.
+// It blocks until errCh receives and returns the transfer error.
+func RunRecvProgress(r *receiver.Receiver, errCh <-chan error) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
+	start := time.Now()
+	var prevBytes int64
+	var prevTime time.Time
+	var ewma float64
+
+	updateEWMA := func(bytes int64, now time.Time) {
+		if !prevTime.IsZero() {
+			dt := now.Sub(prevTime).Seconds()
+			if dt > 0 && bytes > prevBytes {
+				instant := float64(bytes-prevBytes) / dt / 1e6
+				if ewma == 0 {
+					ewma = instant
+				} else {
+					ewma = 0.25*instant + 0.75*ewma
+				}
+			}
+		}
+		prevBytes = bytes
+		prevTime = now
+	}
+
 	for {
 		select {
-		case <-done:
+		case err := <-errCh:
 			p := r.Progress()
-			printRecvBar(p, true)
-			fmt.Fprintln(os.Stdout)
-			return
+			if line := fmtRecvBar(p, ewma, time.Since(start), true); line != "" {
+				fmt.Fprint(os.Stdout, line)
+				fmt.Fprintln(os.Stdout)
+			}
+			return err
 		case <-ticker.C:
-			printRecvBar(r.Progress(), false)
+			now := time.Now()
+			p := r.Progress()
+			updateEWMA(p.BytesReceived, now)
+			if line := fmtRecvBar(p, ewma, time.Since(start), false); line != "" {
+				fmt.Fprint(os.Stdout, line)
+			}
 		}
 	}
 }
 
-func printSendBar(p sender.SenderProgress, final bool) {
+func fmtSendBar(p sender.SenderProgress, ewma float64, elapsed time.Duration, final bool) string {
 	if p.TotalBytes == 0 {
-		return
+		return ""
 	}
 	pct := float64(p.BytesSent) / float64(p.TotalBytes)
 	if pct > 1 {
 		pct = 1
 	}
-
-	elapsed := time.Duration(time.Now().UnixNano()-p.StartNs) * time.Nanosecond
-	if p.StartNs == 0 {
-		elapsed = 0
-	}
-
-	rateMBps := 0.0
-	if p.RateBPS > 0 {
-		rateMBps = p.RateBPS / 1e6
-	} else if elapsed.Seconds() > 0 {
-		rateMBps = float64(p.BytesSent) / elapsed.Seconds() / 1e6
-	}
-
-	eta := ""
-	if rateMBps > 0 && pct < 1 {
-		remaining := float64(p.TotalBytes-p.BytesSent) / (rateMBps * 1e6)
-		eta = fmt.Sprintf(" | ETA: %s", fmtDuration(remaining))
-	}
-
 	bar := buildBar(pct)
-	var line string
-	if p.InRepair {
-		line = fmt.Sprintf("\r%s %s 100%% | Repairing... | NACKs: %d",
-			bar, humanBytes(p.TotalBytes), p.NACKsSent)
-	} else {
-		line = fmt.Sprintf("\r%s %s %3.0f%% | %5.1f MB/s%s | NACKs: %d",
-			bar, humanBytes(p.TotalBytes), pct*100, rateMBps, eta, p.NACKsSent)
-	}
 
-	if final {
-		fmt.Fprint(os.Stdout, line)
-	} else {
-		fmt.Fprint(os.Stdout, line)
+	var suffix string
+	switch {
+	case p.InRepair:
+		suffix = "   Repairing"
+		if p.NACKsSent > 0 {
+			suffix += fmt.Sprintf("   NACKs: %d", p.NACKsSent)
+		}
+	case final:
+		suffix = fmt.Sprintf("  %5.1f MB/s   %s", ewma, fmtElapsed(elapsed.Seconds()))
+	default:
+		suffix = fmt.Sprintf("  %5.1f MB/s", ewma)
+		if ewma > 0 && pct < 1 {
+			remaining := float64(p.TotalBytes-p.BytesSent) / (ewma * 1e6)
+			suffix += fmt.Sprintf("   ETA %s", fmtETA(remaining))
+		}
+		if p.NACKsSent > 0 {
+			suffix += fmt.Sprintf("  NACKs: %d", p.NACKsSent)
+		}
 	}
+	return fmt.Sprintf("\r%s %3.0f%%%s", bar, pct*100, suffix)
 }
 
-func printRecvBar(p receiver.ReceiverProgress, final bool) {
+func fmtRecvBar(p receiver.ReceiverProgress, ewma float64, elapsed time.Duration, final bool) string {
 	if p.TotalBytes == 0 {
-		return
+		return ""
 	}
 	pct := float64(p.BytesReceived) / float64(p.TotalBytes)
 	if pct > 1 {
 		pct = 1
 	}
-
-	elapsed := time.Duration(time.Now().UnixNano()-p.StartNs) * time.Nanosecond
-	if p.StartNs == 0 {
-		elapsed = 0
-	}
-
-	rateMBps := 0.0
-	if elapsed.Seconds() > 0.1 {
-		rateMBps = float64(p.BytesReceived) / elapsed.Seconds() / 1e6
-	}
-
-	eta := ""
-	if rateMBps > 0 && pct < 1 {
-		remaining := float64(p.TotalBytes-p.BytesReceived) / (rateMBps * 1e6)
-		eta = fmt.Sprintf(" | ETA: %s", fmtDuration(remaining))
-	}
-
 	bar := buildBar(pct)
-	line := fmt.Sprintf("\r%s %s %3.0f%% | %5.1f MB/s%s | Rebuilt: %d",
-		bar, humanBytes(p.TotalBytes), pct*100, rateMBps, eta, p.Rebuilt)
 
-	fmt.Fprint(os.Stdout, line)
+	var suffix string
+	if final {
+		suffix = fmt.Sprintf("  %5.1f MB/s   %s", ewma, fmtElapsed(elapsed.Seconds()))
+	} else {
+		suffix = fmt.Sprintf("  %5.1f MB/s", ewma)
+		if ewma > 0 && pct < 1 {
+			remaining := float64(p.TotalBytes-p.BytesReceived) / (ewma * 1e6)
+			suffix += fmt.Sprintf("   ETA %s", fmtETA(remaining))
+		}
+	}
+	return fmt.Sprintf("\r%s %3.0f%%%s", bar, pct*100, suffix)
 }
 
+// buildBar returns a [====>     ] style bar of width barWidth.
+// The > is the head; at 100% it sits at the last position.
 func buildBar(pct float64) string {
-	filled := int(pct * barWidth)
+	filled := int(pct * float64(barWidth))
 	if filled > barWidth {
 		filled = barWidth
 	}
@@ -135,9 +177,9 @@ func buildBar(pct float64) string {
 	b.WriteByte('[')
 	for i := 0; i < barWidth; i++ {
 		switch {
-		case i < filled:
+		case i < filled-1:
 			b.WriteByte('=')
-		case i == filled:
+		case i == filled-1:
 			b.WriteByte('>')
 		default:
 			b.WriteByte(' ')
@@ -145,6 +187,30 @@ func buildBar(pct float64) string {
 	}
 	b.WriteByte(']')
 	return b.String()
+}
+
+// fmtETA formats a remaining-seconds estimate as "8s", "1m30s", etc.
+func fmtETA(sec float64) string {
+	s := int(sec)
+	if s < 60 {
+		return fmt.Sprintf("%ds", s)
+	}
+	m := s / 60
+	s = s % 60
+	if s == 0 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return fmt.Sprintf("%dm%ds", m, s)
+}
+
+// fmtElapsed formats an elapsed duration with one decimal for sub-minute values.
+func fmtElapsed(sec float64) string {
+	if sec < 60 {
+		return fmt.Sprintf("%.1fs", sec)
+	}
+	m := int(sec) / 60
+	s := int(sec) % 60
+	return fmt.Sprintf("%dm%ds", m, s)
 }
 
 func humanBytes(b int64) string {
@@ -160,14 +226,7 @@ func humanBytes(b int64) string {
 	return fmt.Sprintf("%.0f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func fmtDuration(sec float64) string {
-	if sec > 3600 {
-		return fmt.Sprintf("%d:%02d:%02d", int(sec)/3600, int(sec)%3600/60, int(sec)%60)
-	}
-	return fmt.Sprintf("%d:%02d", int(sec)/60, int(sec)%60)
-}
-
-// truncName shortens a filename to at most maxLen chars for the progress bar.
+// truncName shortens a filename to at most maxLen chars for display.
 func truncName(path string, maxLen int) string {
 	name := filepath.Base(path)
 	if len(name) <= maxLen {

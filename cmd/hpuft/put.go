@@ -107,7 +107,7 @@ func runPut(args []string) {
 		start := time.Now()
 		errCh := make(chan error, 1)
 		go func() { errCh <- s.Send() }()
-		err = RunSendTUI(s, fileName, *serveAddr, errCh)
+		err = RunSendProgress(s, errCh)
 		if err != nil {
 			pc.Close()
 			fmt.Fprintf(os.Stderr, "[put] FAILED: %v\n", err)

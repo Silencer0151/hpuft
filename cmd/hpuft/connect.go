@@ -353,7 +353,9 @@ func shellGet(pc *protocol.Connection, d *replDispatch, conn *net.UDPConn, rAddr
 	}
 
 	start := time.Now()
-	if err := r.Run(); err != nil {
+	errCh := make(chan error, 1)
+	go func() { errCh <- r.Run() }()
+	if err := RunRecvProgress(r, errCh); err != nil {
 		fmt.Fprintf(os.Stderr, "get: FAILED: %v\n", err)
 	} else {
 		elapsed := time.Since(start)
@@ -416,7 +418,9 @@ func shellPut(pc *protocol.Connection, d *replDispatch, conn *net.UDPConn, rAddr
 
 	s := sender.New(sCfg)
 	start := time.Now()
-	if err := s.Send(); err != nil {
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Send() }()
+	if err := RunSendProgress(s, errCh); err != nil {
 		fmt.Fprintf(os.Stderr, "put: FAILED: %v\n", err)
 	} else {
 		elapsed := time.Since(start)
