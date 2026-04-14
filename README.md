@@ -2,8 +2,6 @@
 
 High-Performance UDP File Transfer — a loss-driven, FEC-protected UDP protocol designed for maximum throughput on both LAN and long-fat networks.
 
-> **Protocol spec:** [UDP_FILE_TRANSFER_SPEC.html](UDP_FILE_TRANSFER_SPEC.html) (v5.0)
-
 ## Installation
 
 ### Requirements
@@ -28,148 +26,150 @@ go build -o hpuft ./cmd/hpuft
 
 ## Usage
 
-`hpuft` is a single binary with subcommands.
+`hpuft` is a single binary with subcommands. All client commands connect to a
+`serve` daemon — there is no direct peer-to-peer transfer mode.
 
-### `send` — push a file to a waiting receiver
-```bash
-hpuft send -file <path> [-addr host:port] [-rate MB/s] [-delay us] [-nodelay] [-nocc] [-encrypt] [-debug]
+### `serve` — persistent daemon (single-lane)
+```
+hpuft serve [-listen :9001] [-dir .] [-master host:port] [-debug]
 
-  -file     path to the file to send (required)
-  -addr     receiver address (default: 127.0.0.1:9000)
-  -rate     initial send rate in MB/s (congestion control adjusts from here)
-  -delay    fixed inter-packet delay in microseconds (disables CC)
-  -nodelay  send as fast as possible, no pacing (disables CC)
-  -nocc     disable congestion control, use fixed rate
-  -encrypt  enable AES-128-GCM per-packet encryption
+  -listen   UDP address to listen on (default: :9001)
+  -dir      directory to serve files from and accept uploads into (default: .)
+  -master   optional master tracker address for daemon discovery
+  -debug    enable CC/protocol debug logging for transfers
+```
+
+The daemon accepts connections from any number of clients simultaneously, but
+executes **one transfer at a time** — concurrent transfer requests receive
+`SERVER_BUSY` and can retry. The daemon stays running between transfers.
+
+All control and data traffic flows through the single `-listen` port. Forward
+only this port on your router for cross-NAT use — no second rule needed.
+
+**File management rules (server-enforced):**
+1. **Base-name only** — path traversal in filenames is stripped to the final component.
+2. **No overwrite** — uploading a file that already exists is rejected with `FILE_EXISTS`.
+3. **Atomic promotion** — uploaded files are staged as `.tmp` during transfer and only
+   renamed to their final path after xxHash64 verification passes. Failed transfers
+   leave no partial file on disk.
+
+### `put` — upload a file to a serve daemon
+```
+hpuft put -file <path> [-addr host:9001] [-rate MB/s] [-id clientID] [-debug]
+
+  -file     path to the file to upload (required)
+  -addr     serve daemon address (default: 127.0.0.1:9001)
+  -rate     initial send rate in MB/s (0 = auto-calibrate)
+  -id       optional client identifier ≤32 bytes
   -debug    stream raw protocol and CC telemetry to stderr
 ```
 
-### `recv` — listen for an incoming push transfer
-```bash
-hpuft recv [-listen :9000] [-out ./output] [-encrypt] [-debug]
-
-  -listen   UDP address to listen on (default: :9000)
-  -out      directory to write received files (default: .)
-  -encrypt  enable AES-128-GCM per-packet encryption
-  -debug    stream raw protocol telemetry to stderr
+### `get` — download a file from a serve daemon
 ```
-
-### `serve` — persistent bidirectional daemon (single-lane)
-```bash
-hpuft serve [-listen :9001] [-dir .]
-
-  -listen   port for PULL_REQ, PUSH_REQ, and all transfer data (default: :9001)
-  -dir      directory to serve files from and accept pushes into (default: .)
-```
-
-The serve daemon scans `-dir` at startup and builds an allowlist of available
-files. It handles one transfer at a time — concurrent requests receive
-`SERVER_BUSY` and can retry. The daemon stays running after each transfer.
-Pushed files are validated and added to the live manifest on success.
-
-**Cross-NAT use**: Forward only `-listen` on your router. All control and data
-traffic flows through this single port. The NAT hole punched by the initial
-`PULL_REQ` or `PUSH_REQ` covers the entire transfer — no second port-forward rule needed.
-
-### `get` — pull a file from a serve daemon (NAT-friendly)
-```bash
-hpuft get -file <name> [-addr host:9001] [-out .] [-encrypt] [-debug]
+hpuft get -file <name> [-addr host:9001] [-out .] [-id clientID] [-debug]
 
   -file     name of the file to request (required)
-  -addr     address of the serve daemon (default: 127.0.0.1:9001)
+  -addr     serve daemon address (default: 127.0.0.1:9001)
   -out      directory to write the received file (default: .)
-  -encrypt  enable AES-128-GCM per-packet encryption
+  -id       optional client identifier ≤32 bytes
   -debug    stream raw protocol telemetry to stderr
 ```
 
-The `get` command punches a NAT hole by sending a `PULL_REQ` to the serve
-daemon. The daemon fires back the `SESSION_REQ` (and the full transfer) through
-the open hole — no port forwarding required on the client side.
+### `ls` — list files available on a serve daemon
+```
+hpuft ls [-addr host:9001] [-id clientID]
 
-### `push` — push a file to a serve daemon
-```bash
-hpuft push -file <path> [-addr host:9001] [-encrypt] [-debug]
-
-  -file     path to the file to push (required)
-  -addr     address of the serve daemon (default: 127.0.0.1:9001)
-  -encrypt  enable AES-128-GCM per-packet encryption
-  -debug    stream raw protocol telemetry to stderr
+  -addr     serve daemon address (default: 127.0.0.1:9001)
+  -id       optional client identifier ≤32 bytes
 ```
 
-The `push` command deposits a file into the serve daemon's directory.
-Three security rules are always enforced server-side:
-1. **Base-name only** — path traversal in the filename is stripped to the final component.
-2. **No overwrite** — if the file already exists the push is rejected with `FILE_EXISTS`.
-3. **Post-hash promotion** — the file is staged as `.tmp` during transfer and only
-   renamed to its final path after xxHash64 verification passes. Failed transfers
-   leave no partial file on disk.
+### `rm` — delete a file on a serve daemon
+```
+hpuft rm -file <name> [-addr host:9001] [-id clientID]
+
+  -file     name of the file to delete (required)
+  -addr     serve daemon address (default: 127.0.0.1:9001)
+  -id       optional client identifier ≤32 bytes
+```
+
+### `connect` — interactive shell session with a serve daemon
+```
+hpuft connect [-addr host:9001] [-id clientID]
+
+  -addr     serve daemon address (default: 127.0.0.1:9001)
+  -id       optional client identifier ≤32 bytes
+```
+
+Opens a persistent REPL over a single connection. Automatic keepalive pings
+keep the connection alive between commands. Shell commands:
+
+```
+hpuft> ls
+hpuft> get <file> [-o dir]
+hpuft> put <path>
+hpuft> rm <file>
+hpuft> exit
+```
 
 ### `proxy` — lossy UDP proxy for testing
-```bash
+```
 hpuft proxy [-listen :9500] [-target host:9000] [-loss pct] [-seed n]
 
   -listen   address the sender connects to (default: :9500)
-  -target   address to forward to, i.e. the receiver (default: 127.0.0.1:9000)
+  -target   address to forward to (default: 127.0.0.1:9000)
   -loss     packet loss percentage 0–100 (default: 0)
   -seed     random seed for reproducible loss patterns (default: time-based)
 ```
 
+### `servers` — query master tracker for active daemons
+```
+hpuft servers [-master host:port]
+```
+
 ### `test` — end-to-end integration tests
-```bash
-hpuft test [-files f1,f2,...] [-loss 0,1,5,10,15] [-out dir] [-timeout 120]
+```
+hpuft test [-files f1,f2,...] [-loss 0,1,5,10,15] [-timeout 120]
 
   -files    comma-separated list of files to transfer (default: auto-detect testdata/)
   -loss     comma-separated loss percentages to run (default: 0,1,5,10,15)
-  -out      output directory for received files (default: temp dir, cleaned up after)
   -timeout  per-transfer timeout in seconds (default: 120)
 ```
 
 ## Typical workflows
 
-### Direct push (both sides reachable / on LAN)
+### Upload and download via serve daemon
 ```bash
-# Terminal 1 — receiver
-hpuft recv -out ./received
-
-# Terminal 2 — sender
-hpuft send -file ./myfile.bin
-```
-
-### Pull via serve daemon (only the server needs a public IP)
-```bash
-# Server — run once, serves any file in ~/shared
+# Server — run once
 hpuft serve -listen :9001 -dir ~/shared
 
-# Client pulls a file (no port forwarding needed on the client)
+# Client uploads a file
+hpuft put -file ./bigfile.iso -addr server-ip:9001
+
+# Client downloads a file
 hpuft get -file bigfile.iso -addr server-ip:9001 -out ./downloads
 ```
 
-### Bidirectional hub (serve + push + get, cross-NAT)
+### List and manage remote files
 ```bash
-# Server — forward only port 9001 on your router
-hpuft serve -listen :9001 -dir ~/shared
-
-# Client A pushes a file
-hpuft push -file ./upload.bin -addr server-ip:9001
-
-# Client B pulls a file (no port-forwarding needed on client side)
-hpuft get -file upload.bin -addr server-ip:9001 -out ./downloads
+hpuft ls -addr server-ip:9001
+hpuft rm -file oldfile.bin -addr server-ip:9001
 ```
 
-### Encrypted push/pull
+### Interactive session
 ```bash
-# Both sides must pass -encrypt — unencrypted clients are rejected mid-transfer
-hpuft serve -listen :9001 -dir ~/shared
-
-hpuft push -file ./secret.bin -addr server-ip:9001 -encrypt
-hpuft get -file secret.bin -addr server-ip:9001 -encrypt -out ./downloads
+hpuft connect -addr server-ip:9001
+# Connected to server-ip:9001 (ID=0x1a2b3c4d)
+hpuft> ls
+hpuft> get bigfile.iso -o ./downloads
+hpuft> put ./upload.bin
+hpuft> exit
 ```
 
 ### Simulated 5% loss test
 ```bash
 hpuft proxy -loss 5 &
-hpuft recv -out ./received &
-hpuft send -file ./myfile.bin -addr 127.0.0.1:9500
+hpuft serve -dir ./testdata &
+hpuft get -file myfile.bin -addr 127.0.0.1:9500 -out ./received
 ```
 
 ## Unit tests
@@ -178,33 +178,95 @@ hpuft send -file ./myfile.bin -addr 127.0.0.1:9500
 go test ./...
 ```
 
-## How it works (summary)
+## How it works
 
-hpuft sends data over UDP with a custom reliability layer rather than TCP.
+### Protocol overview (v6)
 
-**Sender** blasts packets paced by a token-bucket congestion controller that probes upward multiplicatively (Phase 1) and then additively (Phase 2) once loss is detected. Loss is reported by the receiver via NACK lists inside periodic heartbeats.
+hpuft v6 uses a **persistent, RPC-style connection model** over a single UDP
+socket. Every client-daemon interaction follows the same three-phase flow:
 
-**Sliding window** caps in-flight data at 50,000 packets (~68 MB of RAM), replacing the unbounded `map` used in earlier versions. When `HighestContiguous` advances in a heartbeat, the tail of the ring buffer is released back to the pool. If the sender gets ahead of the receiver (window full), it yields and continues draining NACK retransmits until the window opens — preventing both memory exhaustion and the deadlock that would occur if NACK processing were blocked during backpressure.
+```
+1. Handshake    HELLO  ──────────────────► serve
+                serve  ◄──────────── WELCOME
+                (X25519 key exchange → AES-128-GCM session key derived via HKDF-SHA256)
 
-**FEC** (Reed-Solomon) is applied per block of 100 data packets. The parity ratio scales automatically with observed loss: 2% at <0.5% loss up to 20% at >10% loss. Most drops are recovered without a retransmit.
+2. RPC          client ──── REQUEST ─────► serve   (PUT / GET / LIST / DELETE)
+                serve  ◄─── RESPONSE ───── client
 
-**Heartbeats** carry `NetworkDeliveryRate`, `LossRate`, `HighestContiguous`, `NACKs`, and an echoed `SenderTimestampNs` for same-clock RTT measurement. RTT drives the NACK retransmit cooldown — each dropped sequence is retransmitted at most once per RTT + 25% margin, preventing retransmit storms. The RTT estimate is guarded against stale echo timestamps: if the sender is idle (honoring cooldown), the receiver echoes the same frozen timestamp; the sender only updates its RTT estimate when a strictly newer timestamp arrives.
+3. Data         serve / client ─── DATA / PARITY / HEARTBEAT / COMPLETE ───►
+                (single-lane; one transfer at a time)
+```
 
-**Teardown** handles the hard case: if the last packets of the file drop, the receiver's NACK window is empty (it never saw those sequences). The sender detects `HighestContiguous < totalChunks-1` with zero NACKs and proactively injects the missing tail sequences. Retransmits are batched at 10 packets per 2 ms to avoid micro-bursting through OS socket buffers and the serve daemon's channel.
+**Encryption is always on.** There is no `-encrypt` flag — all traffic is
+AES-128-GCM encrypted from the first REQUEST onward. The 32-byte fixed header
+is authenticated as AAD (transmitted in cleartext for routing); only the payload
+is encrypted.
 
-**Encryption** — all four transfer commands accept `-encrypt` to enable AES-128-GCM per-packet encryption (spec §4.5). Both sides generate a fresh X25519 ephemeral keypair per session; the shared secret is derived via HKDF-SHA256 into a 16-byte AES-128 key. For `push`/`get` the key exchange piggybacks on the existing `PUSH_REQ`/`PUSH_ACCEPT` and `PULL_REQ`/`SESSION_REQ` round trips — zero added latency. For direct `send`/`recv` a 1-RTT `SESSION_ACCEPT` message carries the receiver's public key. The 32-byte header is authenticated as AAD but transmitted in cleartext (the receiver needs it for routing); only the payload is encrypted. Private keys are ephemeral and exist only in memory for the duration of the session — perfect forward secrecy with no key management.
+**Connection lifecycle:**
+- `ConnHandshaking` → `ConnIdle` after HELLO/WELCOME
+- `ConnIdle` → `ConnTransferring` when a PUT/GET is accepted
+- `ConnTransferring` → `ConnIdle` when the transfer completes
+- Idle connections are reaped after 30 seconds
 
-**TUI dashboard** — `push` and `get` render a live terminal dashboard (Charmbracelet Bubble Tea) instead of a scrolling log. The dashboard shows throughput, RTT, loss rate, CC phase, cumulative NACKs, and a progress bar. When the main send loop finishes and tail repair begins, the bar switches to `Repairing...` so the user knows the transfer is still making progress rather than stalled.
+**RPC idempotency:** The client retransmits REQUEST packets on timeout (up to 3
+retries, 2 s each). The server deduplicates by (connectionID, requestID) so
+retransmitted requests are never executed twice.
+
+**Connection pooling:** The server keeps idle connections alive so a `connect`
+REPL session can issue multiple commands without re-handshaking.
+
+### Data plane (unchanged from v5)
+
+hpuft sends file data over UDP with a custom reliability layer rather than TCP.
+
+**Sender** blasts packets paced by a token-bucket congestion controller that
+probes upward multiplicatively (Phase 1) and then additively (Phase 2) once loss
+is detected. Loss is reported by the receiver via NACK lists inside periodic
+heartbeats.
+
+**Sliding window** caps in-flight data at 50,000 packets (~68 MB of RAM),
+replacing the unbounded `map` used in earlier versions. When `HighestContiguous`
+advances in a heartbeat, the tail of the ring buffer is released back to the
+pool. If the sender gets ahead of the receiver (window full), it yields and
+continues draining NACK retransmits until the window opens — preventing both
+memory exhaustion and the deadlock that would occur if NACK processing were
+blocked during backpressure.
+
+**FEC** (Reed-Solomon) is applied per block of 100 data packets. The parity
+ratio scales automatically with observed loss: 2% at <0.5% loss up to 20% at
+>10% loss. Most drops are recovered without a retransmit.
+
+**Heartbeats** carry `NetworkDeliveryRate`, `LossRate`, `HighestContiguous`,
+`NACKs`, and an echoed `SenderTimestampNs` for same-clock RTT measurement. RTT
+drives the NACK retransmit cooldown — each dropped sequence is retransmitted at
+most once per RTT + 25% margin, preventing retransmit storms. The RTT estimate
+is guarded against stale echo timestamps: if the sender is idle (honoring
+cooldown), the receiver echoes the same frozen timestamp; the sender only updates
+its RTT estimate when a strictly newer timestamp arrives.
+
+**Teardown** handles the hard case: if the last packets of the file drop, the
+receiver's NACK window is empty (it never saw those sequences). The sender
+detects `HighestContiguous < totalChunks-1` with zero NACKs and proactively
+injects the missing tail sequences. Retransmits are batched at 10 packets per
+2 ms to avoid micro-bursting through OS socket buffers and the serve daemon's
+channel.
+
+**TUI dashboard** — `put` and `get` render a live terminal dashboard showing
+throughput, RTT, loss rate, CC phase, cumulative NACKs, and a progress bar. When
+the main send loop finishes and tail repair begins, the bar switches to
+`Repairing...` so the user knows the transfer is still making progress.
 
 ### Observed performance
 
 | Scenario | Transfer speed |
 |---|---|
-| GbE LAN (clean, unencrypted) — 1 GB | ~66 MB/s |
-| GbE LAN (clean, unencrypted) — 7 GB | ~87 MB/s (CC reaches ceiling after longer ramp) |
-| GbE LAN (AES-128-GCM encrypted) — 579 MB | ~49 MB/s |
-| GbE LAN (AES-128-GCM encrypted) — 1 GB push | ~69 MB/s |
-| WAN simulation (50 ms RTT, 0.1% loss, `tc netem`) | ~ 40M B/s transfer completes reliably; FEC absorbs drops, CC holds near ceiling |
+| GbE LAN (clean) — 1 GB | ~66 MB/s |
+| GbE LAN (clean) — 7 GB | ~87 MB/s (CC reaches ceiling after longer ramp) |
+| GbE LAN (AES-128-GCM) — 579 MB | ~49 MB/s |
+| GbE LAN (AES-128-GCM) — 1 GB | ~69 MB/s |
+| WAN simulation (50 ms RTT, 0.1% loss, `tc netem`) | ~40 MB/s; FEC absorbs drops, CC holds near ceiling |
 | FTP/TCP (50 ms RTT, 0.1% loss) | ~1.2 MB/s (AIMD halves window on every drop) |
 
-The 1 GB LAN figure is lower than the 7 GB figure because the congestion controller spends a larger fraction of the transfer in the initial probe phase. Longer transfers give the CC more time to find and hold the link ceiling.
+The 1 GB LAN figure is lower than the 7 GB figure because the congestion
+controller spends a larger fraction of the transfer in the initial probe phase.
+Longer transfers give the CC more time to find and hold the link ceiling.

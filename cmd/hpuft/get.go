@@ -116,7 +116,7 @@ func runGet(args []string) {
 		start := time.Now()
 		errCh := make(chan error, 1)
 		go func() { errCh <- r.Run() }()
-		err = RunRecvTUI(r, *fileName, *serveAddr, errCh)
+		err = RunRecvProgress(r, errCh)
 		if err != nil {
 			pc.Close()
 			fmt.Fprintf(os.Stderr, "[get] FAILED: %v\n", err)
