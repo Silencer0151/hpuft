@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 hpuft integration test suite
-Tests: send, recv, serve, push, list, get  (+ encrypted push/get)
+Tests: serve, put, ls, get, rm
 
 Works on Windows, Linux, and macOS.
 
@@ -10,7 +10,6 @@ Usage:
 
 Options:
     --addr ADDR        Serve daemon address      (default: 127.0.0.1:9001)
-    --recv-addr ADDR   Direct recv address       (default: 127.0.0.1:9000)
     --exe PATH         Path to hpuft binary      (auto-detected)
     --no-build         Skip building the binary
     --keep             Keep test files after run (useful for debugging)
@@ -142,67 +141,18 @@ class BackgroundProc:
 # Individual test groups
 # ══════════════════════════════════════════════════════════════════════════════
 
-def test_send_recv(exe: str, test_dir: Path, recv_addr: str) -> None:
+def test_serve_commands(exe: str, test_dir: Path, serve_addr: str) -> None:
     """
-    Direct send → recv pair, both on localhost.
-
-    Flow:
-      1. Start `recv` listening on recv_addr.
-      2. Run `send` pointing at recv_addr.
-      3. Verify the received file matches the source by SHA-256.
-    """
-    src      = test_dir / f"src_send_{ts()}.bin"
-    out_dir  = test_dir / "out_recv"
-    out_dir.mkdir(exist_ok=True)
-
-    # 64 KB of random bytes — small enough to be fast, big enough to exercise FEC.
-    src.write_bytes(os.urandom(64 * 1024))
-    src_hash = sha256(src)
-
-    port = recv_addr.split(":")[-1]
-    srv  = BackgroundProc([exe, "recv", "-listen", f":{port}", "-out", str(out_dir), "-debug"])
-
-    if not srv.wait_for("[recv] Listening", timeout=6.0):
-        srv.kill()
-        report("recv", False, "daemon did not print ready message in time")
-        report("send", False, "recv not ready")
-        return
-
-    rc, out, err = run_cmd(
-        [exe, "send", "-file", str(src), "-addr", recv_addr, "-debug"],
-        timeout=30,
-    )
-    srv.kill()
-
-    if rc != 0:
-        detail = (err or out).strip().splitlines()[-1][:120] if (err or out).strip() else f"exit {rc}"
-        report("send", False, detail)
-        report("recv", False, "send exited non-zero")
-        return
-
-    dest = out_dir / src.name
-    if not dest.exists():
-        report("send", False, "output file not found in recv dir")
-        report("recv", False, "output file not found in recv dir")
-        return
-
-    ok = sha256(dest) == src_hash
-    report("send", ok, "hash match" if ok else "hash mismatch")
-    report("recv", ok, "hash match" if ok else "hash mismatch")
-
-
-def test_serve_push_list_get(exe: str, test_dir: Path, serve_addr: str) -> None:
-    """
-    Serve daemon integration: push → list → get (plain and encrypted).
+    Serve daemon integration: put → ls → get → rm
 
     Flow:
       1. Start `serve` daemon pointing at an empty directory.
-      2. `list`  → expect "(no files available)".
-      3. `push`  a plain file.
-      4. `list`  → expect the filename to appear.
-      5. `get`   the file back, verify SHA-256.
-      6. `push`  an encrypted file.
-      7. `get`   it back with -encrypt, verify SHA-256.
+      2. `ls`   → expect "(no files available)" or empty listing.
+      3. `put`  a file.
+      4. `ls`   → expect the filename to appear.
+      5. `get`  the file back, verify SHA-256.
+      6. `rm`   the file from the server.
+      7. `ls`   → expect the file is gone.
     """
     serve_dir = test_dir / "serve_root"
     get_dir   = test_dir / "out_get"
@@ -214,41 +164,41 @@ def test_serve_push_list_get(exe: str, test_dir: Path, serve_addr: str) -> None:
 
     if not srv.wait_for("[serve] Online", timeout=6.0):
         srv.kill()
-        for name in ("serve", "push", "list (empty)", "list (after push)", "get",
-                     "push (encrypted)", "get (encrypted)"):
+        for name in ("serve", "ls (empty)", "put", "ls (after put)", "get", "rm", "ls (after rm)"):
             report(name, False, "serve daemon did not start")
         return
 
     report("serve", True, f"daemon listening on :{port}")
 
     try:
-        # ── list (empty) ──────────────────────────────────────────────────────
-        rc, out, err = run_cmd([exe, "list", "-addr", serve_addr], timeout=10)
-        list_empty_ok = rc == 0
-        detail = out.strip()[:80] if list_empty_ok else err.strip()[:80]
-        report("list (empty)", list_empty_ok, detail or "(no output)")
+        # ── ls (empty) ────────────────────────────────────────────────────────
+        rc, out, err = run_cmd([exe, "ls", "-addr", serve_addr], timeout=10)
+        ls_empty_ok = rc == 0
+        detail = out.strip()[:80] if ls_empty_ok else err.strip()[:80]
+        report("ls (empty)", ls_empty_ok, detail or "(no output)")
 
-        # ── push (plain) ──────────────────────────────────────────────────────
-        src      = test_dir / f"push_{ts()}.bin"
+        # ── put ───────────────────────────────────────────────────────────────
+        src      = test_dir / f"put_{ts()}.bin"
         src.write_bytes(os.urandom(128 * 1024))   # 128 KB
         src_hash = sha256(src)
 
         rc, out, err = run_cmd(
-            [exe, "push", "-addr", serve_addr, "-file", str(src), "-debug"],
+            [exe, "put", "-addr", serve_addr, "-file", str(src), "-debug"],
             timeout=30,
         )
-        push_ok = rc == 0
-        report("push", push_ok, "ok" if push_ok else err.strip().splitlines()[-1][:120] if err.strip() else f"exit {rc}")
+        put_ok = rc == 0
+        report("put", put_ok,
+               "ok" if put_ok else err.strip().splitlines()[-1][:120] if err.strip() else f"exit {rc}")
 
-        # ── list (after push) ─────────────────────────────────────────────────
-        rc, out, err = run_cmd([exe, "list", "-addr", serve_addr], timeout=10)
+        # ── ls (after put) ────────────────────────────────────────────────────
+        rc, out, err = run_cmd([exe, "ls", "-addr", serve_addr], timeout=10)
         found = rc == 0 and src.name in out
         report(
-            "list (after push)", found,
+            "ls (after put)", found,
             f"found '{src.name}'" if found else f"output: {out.strip()[:80] or err.strip()[:80]}",
         )
 
-        # ── get (plain) ───────────────────────────────────────────────────────
+        # ── get ───────────────────────────────────────────────────────────────
         rc, out, err = run_cmd(
             [exe, "get", "-addr", serve_addr, "-file", src.name, "-out", str(get_dir), "-debug"],
             timeout=30,
@@ -263,50 +213,22 @@ def test_serve_push_list_get(exe: str, test_dir: Path, serve_addr: str) -> None:
             else:
                 report("get", False, "file missing from output dir")
 
-        # ── push (encrypted) ─────────────────────────────────────────────────
-        # Use a fresh filename — serve rejects duplicate names.
-        src_enc      = test_dir / f"push_enc_{ts()}.bin"
-        src_enc.write_bytes(os.urandom(128 * 1024))
-        src_enc_hash = sha256(src_enc)
-
+        # ── rm ────────────────────────────────────────────────────────────────
         rc, out, err = run_cmd(
-            [exe, "push", "-addr", serve_addr, "-file", str(src_enc), "-encrypt", "-debug"],
-            timeout=30,
+            [exe, "rm", "-addr", serve_addr, "-file", src.name],
+            timeout=10,
         )
-        push_enc_ok = rc == 0
-        report(
-            "push (encrypted)",
-            push_enc_ok,
-            "ok" if push_enc_ok else err.strip().splitlines()[-1][:120] if err.strip() else f"exit {rc}",
-        )
+        rm_ok = rc == 0
+        report("rm", rm_ok,
+               "ok" if rm_ok else err.strip().splitlines()[-1][:120] if err.strip() else f"exit {rc}")
 
-        # ── get (encrypted) ───────────────────────────────────────────────────
-        if push_enc_ok:
-            get_enc_dir = test_dir / "out_get_enc"
-            get_enc_dir.mkdir(exist_ok=True)
-            rc, out, err = run_cmd(
-                [
-                    exe, "get",
-                    "-addr",    serve_addr,
-                    "-file",    src_enc.name,
-                    "-out",     str(get_enc_dir),
-                    "-encrypt",
-                    "-debug",
-                ],
-                timeout=30,
-            )
-            if rc != 0:
-                report("get (encrypted)", False,
-                       err.strip().splitlines()[-1][:120] if err.strip() else f"exit {rc}")
-            else:
-                dest_enc = get_enc_dir / src_enc.name
-                if dest_enc.exists():
-                    ok = sha256(dest_enc) == src_enc_hash
-                    report("get (encrypted)", ok, "hash match" if ok else "hash mismatch")
-                else:
-                    report("get (encrypted)", False, "file missing from output dir")
-        else:
-            report("get (encrypted)", False, "skipped — encrypted push failed")
+        # ── ls (after rm) ─────────────────────────────────────────────────────
+        rc, out, err = run_cmd([exe, "ls", "-addr", serve_addr], timeout=10)
+        gone = rc == 0 and src.name not in out
+        report(
+            "ls (after rm)", gone,
+            f"'{src.name}' not present" if gone else f"file still listed: {out.strip()[:80]}",
+        )
 
     finally:
         srv.kill()
@@ -325,10 +247,6 @@ def main() -> None:
     parser.add_argument(
         "--addr", default="127.0.0.1:9001",
         help="serve daemon address  (default: 127.0.0.1:9001)",
-    )
-    parser.add_argument(
-        "--recv-addr", default="127.0.0.1:9000",
-        help="direct recv address   (default: 127.0.0.1:9000)",
     )
     parser.add_argument(
         "--exe", default="",
@@ -378,19 +296,13 @@ def main() -> None:
     print(f"  binary     : {Path(exe).name}")
     print(f"  test dir   : {test_dir}")
     print(f"  serve addr : {args.addr}")
-    print(f"  recv addr  : {args.recv_addr}")
     print("=" * 60)
     print()
 
     try:
-        # ── send / recv ───────────────────────────────────────────────────────
-        print(f"{CYAN}── send / recv {'─' * 42}{RESET}")
-        test_send_recv(exe, test_dir, args.recv_addr)
-        print()
-
-        # ── serve / push / list / get ─────────────────────────────────────────
-        print(f"{CYAN}── serve / push / list / get {'─' * 29}{RESET}")
-        test_serve_push_list_get(exe, test_dir, args.addr)
+        # ── serve / put / ls / get / rm ───────────────────────────────────────
+        print(f"{CYAN}── serve / put / ls / get / rm {'─' * 26}{RESET}")
+        test_serve_commands(exe, test_dir, args.addr)
 
     finally:
         # ── Cleanup ───────────────────────────────────────────────────────────

@@ -14,18 +14,18 @@ func TestHeaderRoundTrip(t *testing.T) {
 			name: "DATA packet with typical values",
 			header: Header{
 				Type:        PacketData,
-				SessionID:   0xDEADBEEF,
+				ConnectionID:0xDEADBEEF,
 				SequenceNum: 42,
 				BlockGroup:  0,
-				PayloadLen:  1368,
+				PayloadLen:  MaxPayload,
 				Flags:       0,
 			},
 		},
 		{
-			name: "SESSION_REQ packet",
+			name: "HELLO packet",
 			header: Header{
-				Type:        PacketSessionReq,
-				SessionID:   0x12345678,
+				Type:        PacketHello,
+				ConnectionID:0x12345678,
 				SequenceNum: 0,
 				BlockGroup:  0,
 				PayloadLen:  128,
@@ -36,7 +36,7 @@ func TestHeaderRoundTrip(t *testing.T) {
 			name: "DATA packet with EOF flag",
 			header: Header{
 				Type:        PacketData,
-				SessionID:   0xCAFEBABE,
+				ConnectionID:0xCAFEBABE,
 				SequenceNum: 999999,
 				BlockGroup:  9999,
 				PayloadLen:  500,
@@ -47,10 +47,10 @@ func TestHeaderRoundTrip(t *testing.T) {
 			name: "DATA packet with calibration flag",
 			header: Header{
 				Type:        PacketData,
-				SessionID:   0x00000001,
+				ConnectionID:0x00000001,
 				SequenceNum: 1,
 				BlockGroup:  0,
-				PayloadLen:  1368,
+				PayloadLen:  MaxPayload,
 				Flags:       FlagCalibrationBurst,
 			},
 		},
@@ -58,10 +58,10 @@ func TestHeaderRoundTrip(t *testing.T) {
 			name: "PARITY packet",
 			header: Header{
 				Type:        PacketParity,
-				SessionID:   0xAAAAAAAA,
+				ConnectionID:0xAAAAAAAA,
 				SequenceNum: 100,
 				BlockGroup:  1,
-				PayloadLen:  1368,
+				PayloadLen:  MaxPayload,
 				Flags:       0,
 			},
 		},
@@ -69,7 +69,7 @@ func TestHeaderRoundTrip(t *testing.T) {
 			name: "HEARTBEAT packet zero payload",
 			header: Header{
 				Type:        PacketHeartbeat,
-				SessionID:   0xBBBBBBBB,
+				ConnectionID:0xBBBBBBBB,
 				SequenceNum: 0,
 				BlockGroup:  0,
 				PayloadLen:  0,
@@ -80,7 +80,7 @@ func TestHeaderRoundTrip(t *testing.T) {
 			name: "max 64-bit sequence number",
 			header: Header{
 				Type:        PacketData,
-				SessionID:   0xFFFFFFFF,
+				ConnectionID:0xFFFFFFFF,
 				SequenceNum: ^uint64(0),
 				BlockGroup:  ^uint64(0),
 				PayloadLen:  1,
@@ -118,7 +118,7 @@ func TestHeaderRoundTrip(t *testing.T) {
 }
 
 func TestPacketRoundTrip(t *testing.T) {
-	payload := make([]byte, 1368)
+	payload := make([]byte, MaxPayload)
 	for i := range payload {
 		payload[i] = byte(i % 256)
 	}
@@ -126,7 +126,7 @@ func TestPacketRoundTrip(t *testing.T) {
 	original := Packet{
 		Header: Header{
 			Type:        PacketData,
-			SessionID:   0xDEADBEEF,
+			ConnectionID:0xDEADBEEF,
 			SequenceNum: 12345678,
 			BlockGroup:  123456,
 			Flags:       0,
@@ -209,10 +209,12 @@ func TestHeaderSize(t *testing.T) {
 }
 
 func TestMaxPayload(t *testing.T) {
-	if MaxPayload != MTUHardCap-HeaderSize {
-		t.Errorf("MaxPayload = %d, want %d", MaxPayload, MTUHardCap-HeaderSize)
+	// v6: MaxPayload = MTUHardCap - HeaderSize - GCMTagSize (always encrypted)
+	want := MTUHardCap - HeaderSize - GCMTagSize
+	if MaxPayload != want {
+		t.Errorf("MaxPayload = %d, want %d", MaxPayload, want)
 	}
-	if MaxPayload != 1368 {
-		t.Errorf("MaxPayload = %d, want 1368", MaxPayload)
+	if MaxPayload != 1352 {
+		t.Errorf("MaxPayload = %d, want 1352", MaxPayload)
 	}
 }

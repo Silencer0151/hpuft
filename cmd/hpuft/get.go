@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/ecdh"
-	"crypto/rand"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -20,12 +18,12 @@ func runGet(args []string) {
 	serveAddr := fs.String("addr", "127.0.0.1:9001", "serve daemon address (host:port)")
 	fileName := fs.String("file", "", "name of the file to request (required)")
 	outDir := fs.String("out", ".", "directory to write the received file")
+	clientID := fs.String("id", "", "optional client identifier (≤32 bytes)")
 	debug := fs.Bool("debug", false, "stream raw protocol telemetry to stderr")
-	encrypt := fs.Bool("encrypt", false, "enable AES-128-GCM per-packet encryption")
 	fs.Parse(args)
 
 	if *fileName == "" {
-		fmt.Fprintln(os.Stderr, "usage: hpuft get -file <name> [-addr host:port] [-out dir] [-debug] [-encrypt]")
+		fmt.Fprintln(os.Stderr, "usage: hpuft get -file <name> [-addr host:port] [-out dir] [-id clientID] [-debug]")
 		os.Exit(1)
 	}
 
@@ -39,173 +37,79 @@ func runGet(args []string) {
 		os.Exit(1)
 	}
 
-	// Bind a local socket on an OS-assigned ephemeral port.
-	// Using ListenUDP (not DialUDP) gives us a fixed local port so the NAT
-	// mapping created by the outbound PULL_REQ is reused for the inbound
-	// SESSION_REQ and all subsequent transfer traffic.
-	localConn, err := net.ListenUDP("udp", &net.UDPAddr{})
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[get] bind local socket: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[get] bind socket: %v\n", err)
 		os.Exit(1)
 	}
-	defer localConn.Close()
-	localConn.SetReadBuffer(16 * 1024 * 1024)
+	defer conn.Close()
+	conn.SetReadBuffer(16 * 1024 * 1024)
 
 	rAddr, err := net.ResolveUDPAddr("udp", *serveAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[get] resolve serve addr: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[get] resolve addr: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Generate a session ID. The serve daemon reuses it in its SESSION_REQ.
-	sessionID := newGetSessionID()
-
-	// Generate ephemeral key if encrypting.
-	var ephemPriv *ecdh.PrivateKey
-	if *encrypt {
-		ephemPriv, err = protocol.GenerateEphemeralKey()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[get] generate key: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Build and send PULL_REQ — this punches the outbound NAT hole.
-	fmt.Fprintf(os.Stdout, "[get] Punching NAT hole via PULL_REQ for %q -> %s\n", *fileName, *serveAddr)
-
-	pullPayload := &protocol.PullReqPayload{
-		FileName:  *fileName,
-		Encrypted: *encrypt,
-	}
-	if *encrypt && ephemPriv != nil {
-		copy(pullPayload.PubKey[:], ephemPriv.PublicKey().Bytes())
-	}
-
-	pullHdrFlags := protocol.Flag(0)
-	if *encrypt {
-		pullHdrFlags |= protocol.FlagEncrypted
-	}
-
-	pullPkt := protocol.Packet{
-		Header: protocol.Header{
-			Type:      protocol.PacketPullReq,
-			SessionID: sessionID,
-			Flags:     pullHdrFlags,
-		},
-		Payload: protocol.MarshalPullReq(pullPayload),
-	}
-	pullRaw, err := protocol.MarshalPacket(&pullPkt)
+	pc, err := protocol.DialConnection(conn, rAddr, *clientID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[get] marshal PULL_REQ: %v\n", err)
-		os.Exit(1)
-	}
-	if _, err := localConn.WriteToUDP(pullRaw, rAddr); err != nil {
-		fmt.Fprintf(os.Stderr, "[get] send PULL_REQ: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[get] connect: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Wait for SESSION_REQ or SESSION_REJECT.
-	// All data flows through the single control port — no probe packet needed.
-	rawBuf := make([]byte, protocol.MTUHardCap)
-	localConn.SetReadDeadline(time.Now().Add(15 * time.Second))
-
-	var serveSenderAddr *net.UDPAddr
-	var sessionReq protocol.SessionReqPayload
-
-	for {
-		n, from, err := localConn.ReadFromUDP(rawBuf)
-		if err != nil {
-			if os.IsTimeout(err) {
-				fmt.Fprintf(os.Stderr, "[get] timeout: no response from %s after 15s\n", *serveAddr)
-				os.Exit(1)
-			}
-			fmt.Fprintf(os.Stderr, "[get] read: %v\n", err)
-			os.Exit(1)
-		}
-
-		pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
-		if err != nil {
-			continue
-		}
-		if pkt.Header.SessionID != sessionID {
-			continue
-		}
-
-		switch pkt.Header.Type {
-		case protocol.PacketSessionReject:
-			reason := "unknown"
-			if len(pkt.Payload) > 0 {
-				reason = protocol.RejectReason(pkt.Payload[0]).String()
-			}
-			fmt.Fprintf(os.Stderr, "[get] rejected by serve: %s\n", reason)
-			os.Exit(1)
-
-		case protocol.PacketSessionReq:
-			encrypted := pkt.Header.Flags&protocol.FlagEncrypted != 0
-			req, err := protocol.UnmarshalSessionReq(pkt.Payload, encrypted)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[get] malformed SESSION_REQ: %v\n", err)
-				os.Exit(1)
-			}
-			serveSenderAddr = from
-			sessionReq = req
-		}
-
-		if serveSenderAddr != nil {
-			break
-		}
+	respRaw, err := pc.SendRequest(protocol.BuildGetRequest(*fileName))
+	if err != nil {
+		pc.Close()
+		fmt.Fprintf(os.Stderr, "[get] request: %v\n", err)
+		os.Exit(1)
+	}
+	status, reason, body, err := protocol.ParseResponse(respRaw)
+	if err != nil {
+		pc.Close()
+		fmt.Fprintf(os.Stderr, "[get] parse response: %v\n", err)
+		os.Exit(1)
+	}
+	if status != protocol.StatusOK {
+		pc.Close()
+		fmt.Fprintf(os.Stderr, "[get] rejected: %s\n", reason)
+		os.Exit(1)
 	}
 
-	localConn.SetReadDeadline(time.Time{})
-
-	fmt.Fprintf(os.Stdout, "[get] Received SESSION_REQ. Allocating %s ring buffer...\n",
-		humanBytes(int64(sessionReq.FileSize)))
-
-	// Derive session key if encrypted.
-	var getEncKey *[16]byte
-	var getIVBase *[8]byte
-	if *encrypt && ephemPriv != nil && sessionReq.Encrypted {
-		key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, sessionReq.PubKey[:], sessionID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[get] derive session key: %v\n", err)
-			os.Exit(1)
-		}
-		getEncKey = &key
-		getIVBase = &derivedIVBase
+	// GET OK body: FileSize(8) | FileHash(8) | InitialRate(4)
+	if len(body) < 20 {
+		pc.Close()
+		fmt.Fprintf(os.Stderr, "[get] response body too short: %d bytes\n", len(body))
+		os.Exit(1)
 	}
+	fileSize := binary.BigEndian.Uint64(body[0:8])
+	fileHash := binary.BigEndian.Uint64(body[8:16])
+	initialRate := binary.BigEndian.Uint32(body[16:20])
+
+	fmt.Fprintf(os.Stdout, "[get] Receiving %s (%s)...\n", *fileName, humanBytes(int64(fileSize)))
+	pc.SetState(protocol.ConnTransferring)
 
 	cfg := receiver.DefaultConfig()
 	cfg.OutputDir = *outDir
-	cfg.Conn = localConn
+	cfg.Conn = conn
 	cfg.Debug = *debug
-	cfg.Encrypt = *encrypt
-	cfg.EncKey = getEncKey
-	cfg.IVBase = getIVBase
+	cfg.EncKey = &pc.SessionKey
+	cfg.IVBase = &pc.IVBase
 	cfg.IncomingSession = &receiver.IncomingSession{
-		SenderAddr: serveSenderAddr,
-		SessionID:  sessionID,
-		Req:        sessionReq,
+		SenderAddr:   pc.RemoteAddr,
+		ConnectionID: pc.ID,
+		Meta: receiver.TransferMeta{
+			FileName:    *fileName,
+			FileSize:    fileSize,
+			FileHash:    fileHash,
+			InitialRate: initialRate,
+		},
 	}
 
 	r, err := receiver.New(cfg)
 	if err != nil {
+		pc.Close()
 		fmt.Fprintf(os.Stderr, "[get] init receiver: %v\n", err)
 		os.Exit(1)
-	}
-
-	// sendDisconnect notifies the sender we're leaving so it can release
-	// resources (e.g. the serve daemon's busy flag) immediately.
-	sendDisconnect := func() {
-		pkt := protocol.Packet{
-			Header: protocol.Header{
-				Type:      protocol.PacketSessionReject,
-				SessionID: sessionID,
-			},
-			Payload: []byte{byte(protocol.RejectClientDisconnect)},
-		}
-		if raw, err := protocol.MarshalPacket(&pkt); err == nil {
-			localConn.WriteToUDP(raw, serveSenderAddr)
-		}
 	}
 
 	if !*debug {
@@ -213,37 +117,30 @@ func runGet(args []string) {
 		errCh := make(chan error, 1)
 		go func() { errCh <- r.Run() }()
 		err = RunRecvTUI(r, *fileName, *serveAddr, errCh)
-
-		// Surface the actual receiver error before checking completion.
-		// Without this order, a GCM/timeout failure looks like a Ctrl+C.
 		if err != nil {
-			sendDisconnect()
+			pc.Close()
 			fmt.Fprintf(os.Stderr, "[get] FAILED: %v\n", err)
 			os.Exit(1)
 		}
-
-		// If err==nil but bytes are short, the user pressed Ctrl+C.
 		p := r.Progress()
 		if p.BytesReceived < p.TotalBytes {
-			sendDisconnect()
+			pc.Close()
 			fmt.Fprintf(os.Stderr, "[get] interrupted — notified server\n")
 			os.Exit(1)
 		}
 		elapsed := time.Since(start)
-		mbps := float64(sessionReq.FileSize) / elapsed.Seconds() / 1e6
+		mbps := float64(fileSize) / elapsed.Seconds() / 1e6
 		fmt.Fprintf(os.Stdout, "[get] TRANSFER COMPLETE: %s in %s (%.1f MB/s) | FEC rebuilt: %d pkts\n",
 			*fileName, elapsed.Round(time.Millisecond), mbps, r.Progress().Rebuilt)
 	} else {
-		// In debug mode, trap SIGINT to send disconnect before exiting.
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, os.Interrupt)
 		go func() {
 			<-sigCh
-			sendDisconnect()
+			pc.Close()
 			fmt.Fprintf(os.Stderr, "\n[get] interrupted — notified server\n")
 			os.Exit(1)
 		}()
-
 		if err := r.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "[get] FAILED: %v\n", err)
 			os.Exit(1)
@@ -251,10 +148,7 @@ func runGet(args []string) {
 		signal.Stop(sigCh)
 		fmt.Fprintf(os.Stdout, "[get] TRANSFER COMPLETE\n")
 	}
-}
 
-func newGetSessionID() uint32 {
-	var b [4]byte
-	rand.Read(b[:])
-	return binary.BigEndian.Uint32(b[:])
+	pc.SetState(protocol.ConnIdle)
+	pc.Close()
 }

@@ -13,15 +13,22 @@ import (
 	"time"
 )
 
-// IncomingSession holds a pre-negotiated session for the 'get' command.
-// When set on Config, Run() skips Phase 1 (waiting for SESSION_REQ) and
-// starts immediately from the already-parsed session data. This allows
-// the get command to punch a NAT hole via PULL_REQ, receive the SESSION_REQ
-// on its own socket, and hand everything to the receiver without rebinding.
+// TransferMeta holds the file metadata extracted from a PUT request.
+// It replaces the old SessionReqPayload in the IncomingSession path.
+type TransferMeta struct {
+	FileName    string
+	FileSize    uint64
+	FileHash    uint64
+	InitialRate uint32
+}
+
+// IncomingSession holds the pre-established connection state handed off from
+// the serve daemon (or get command) to the receiver. In v6 this is the only
+// entry path — the receiver never waits for a SESSION_REQ on the wire.
 type IncomingSession struct {
-	SenderAddr *net.UDPAddr
-	SessionID  uint32
-	Req        protocol.SessionReqPayload
+	SenderAddr   *net.UDPAddr
+	ConnectionID uint32
+	Meta         TransferMeta
 }
 
 // Config holds all receiver configuration.
@@ -58,18 +65,12 @@ type Config struct {
 	// progress bar instead.
 	Debug bool
 
-	// Encrypt enables AES-128-GCM decryption (spec §4.5). When true and EncKey
-	// is nil, the receiver generates an ephemeral keypair, sends SESSION_ACCEPT
-	// carrying its public key, and derives the session key from the sender's
-	// public key in SESSION_REQ. When EncKey is non-nil, the pre-derived key is
-	// used directly (push or get flows where key exchange happened in the CLI).
-	Encrypt bool
-
-	// EncKey, if non-nil, is a pre-derived 16-byte AES-128 session key.
+	// EncKey is a pre-derived 16-byte AES-128 session key (mandatory in v6).
+	// Set by the CLI after the HELLO/WELCOME handshake via protocol.DialConnection.
 	EncKey *[16]byte
 
-	// IVBase, if non-nil, is the 8-byte iv_base derived alongside EncKey via
-	// HKDF. Must be set whenever EncKey is set. Used to construct GCM nonces.
+	// IVBase is the 8-byte iv_base derived alongside EncKey via HKDF.
+	// Must always be set together with EncKey.
 	IVBase *[8]byte
 }
 
@@ -128,10 +129,10 @@ func (r *Receiver) SendDisconnect() {
 	}
 	pkt := protocol.Packet{
 		Header: protocol.Header{
-			Type:      protocol.PacketSessionReject,
-			SessionID: sid,
+			Type:      protocol.PacketReject,
+			ConnectionID: sid,
 		},
-		Payload: []byte{byte(protocol.RejectClientDisconnect)},
+		Payload: []byte{byte(protocol.ReasonClientDisconnect)},
 	}
 	if raw, err := protocol.MarshalPacket(&pkt); err == nil {
 		r.conn.WriteToUDP(raw, addr)
@@ -175,163 +176,48 @@ func (r *Receiver) Run() error {
 		dbgLog = log.New(io.Discard, "", 0)
 	}
 
-	// --- Phase 1: Wait for SESSION_REQ ---
-	// Skipped when IncomingSession is set (e.g., 'get' command after PULL_REQ handshake).
-	rawBuf := make([]byte, protocol.MTUHardCap)
-	var senderAddr *net.UDPAddr
-	var sessionID uint32
-	var reqPayload protocol.SessionReqPayload
-
-	if r.cfg.IncomingSession != nil {
-		senderAddr = r.cfg.IncomingSession.SenderAddr
-		sessionID = r.cfg.IncomingSession.SessionID
-		reqPayload = r.cfg.IncomingSession.Req
-		dbgLog.Printf("[receiver] session handed off from get: sessionID=0x%08X file=%q size=%d",
-			sessionID, reqPayload.FileName, reqPayload.FileSize)
-	} else if r.cfg.RecvChan != nil {
-		// Mux mode: read SESSION_REQ forwarded from the serve control loop.
-		// SenderAddr is pre-set from the PUSH_REQ clientAddr captured by serve.
-		senderAddr = r.cfg.SenderAddr
-		timeout := time.NewTimer(15 * time.Second)
-		defer timeout.Stop()
-		waitDone := false
-		for !waitDone {
-			select {
-			case raw, ok := <-r.cfg.RecvChan:
-				if !ok {
-					return fmt.Errorf("channel closed waiting for SESSION_REQ")
-				}
-				pkt, err := protocol.UnmarshalPacket(raw)
-				if err != nil || pkt.Header.Type != protocol.PacketSessionReq {
-					continue
-				}
-				encryptedReq := pkt.Header.Flags&protocol.FlagEncrypted != 0
-				req, err := protocol.UnmarshalSessionReq(pkt.Payload, encryptedReq)
-				if err != nil {
-					continue
-				}
-				sessionID = pkt.Header.SessionID
-				reqPayload = req
-				waitDone = true
-			case <-timeout.C:
-				return fmt.Errorf("timeout waiting for SESSION_REQ")
-			}
-		}
-		dbgLog.Printf("[receiver] SESSION_REQ via channel: sessionID=0x%08X file=%q size=%d",
-			sessionID, reqPayload.FileName, reqPayload.FileSize)
-	} else {
-		dbgLog.Printf("[receiver] listening on %s", r.conn.LocalAddr())
-
-		for {
-			n, addr, err := r.conn.ReadFromUDP(rawBuf)
-			if err != nil {
-				return fmt.Errorf("read: %w", err)
-			}
-
-			pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
-			if err != nil {
-				dbgLog.Printf("[receiver] malformed packet from %s: %v", addr, err)
-				continue
-			}
-
-			if pkt.Header.Type != protocol.PacketSessionReq {
-				continue
-			}
-
-			encryptedReq2 := pkt.Header.Flags&protocol.FlagEncrypted != 0
-			req, err := protocol.UnmarshalSessionReq(pkt.Payload, encryptedReq2)
-			if err != nil {
-				dbgLog.Printf("[receiver] malformed SESSION_REQ: %v", err)
-				continue
-			}
-
-			senderAddr = addr
-			sessionID = pkt.Header.SessionID
-			reqPayload = req
-
-			dbgLog.Printf("[receiver] SESSION_REQ from %s: sessionID=0x%08X file=%q size=%d checksum=0x%016X",
-				addr, sessionID, req.FileName, req.FileSize, req.Checksum)
-			break
-		}
+	// --- v6: EncKey and IVBase are mandatory (pre-derived via HELLO/WELCOME) ---
+	if r.cfg.EncKey == nil || r.cfg.IVBase == nil {
+		return fmt.Errorf("v6 receiver requires pre-derived EncKey and IVBase")
 	}
+
+	// --- Phase 1: Unpack IncomingSession (only entry path in v6) ---
+	if r.cfg.IncomingSession == nil {
+		return fmt.Errorf("v6 receiver requires IncomingSession to be set")
+	}
+	rawBuf := make([]byte, protocol.MTUHardCap)
+	senderAddr := r.cfg.IncomingSession.SenderAddr
+	sessionID := r.cfg.IncomingSession.ConnectionID
+	meta := r.cfg.IncomingSession.Meta
+	dbgLog.Printf("[receiver] session handed off: connectionID=0x%08X file=%q size=%d",
+		sessionID, meta.FileName, meta.FileSize)
 
 	// Publish session info for external disconnect signaling (e.g. Ctrl+C).
 	r.senderAddr.Store(senderAddr)
 	r.sessionID.Store(sessionID)
 
-	// --- Encryption setup ---
-	var aead cipher.AEAD
-	var ivBase [8]byte
-	if r.cfg.Encrypt {
-		if r.cfg.EncKey != nil {
-			// Pre-derived key: push flow (PUSH_REQ/PUSH_ACCEPT) or get flow.
-			c, err := protocol.NewSessionCipher(*r.cfg.EncKey)
-			if err != nil {
-				return fmt.Errorf("init session cipher: %w", err)
-			}
-			aead = c
-			if r.cfg.IVBase != nil {
-				ivBase = *r.cfg.IVBase
-			}
-		} else if reqPayload.Encrypted {
-			// Direct recv mode: sender embedded its PubKey in SESSION_REQ.
-			// Generate our ephemeral key, derive session key, send SESSION_ACCEPT.
-			ephemPriv, err := protocol.GenerateEphemeralKey()
-			if err != nil {
-				return fmt.Errorf("generate ephemeral key: %w", err)
-			}
-			key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, reqPayload.PubKey[:], sessionID)
-			if err != nil {
-				return fmt.Errorf("derive session key: %w", err)
-			}
-			c, err := protocol.NewSessionCipher(key)
-			if err != nil {
-				return fmt.Errorf("init cipher: %w", err)
-			}
-			aead = c
-			ivBase = derivedIVBase
-
-			// Send SESSION_ACCEPT with our public key.
-			pubKeyBytes := ephemPriv.PublicKey().Bytes()
-			var pubKeyArr [32]byte
-			copy(pubKeyArr[:], pubKeyBytes)
-			acceptPkt := protocol.Packet{
-				Header: protocol.Header{
-					Type:      protocol.PacketSessionAccept,
-					SessionID: sessionID,
-					Flags:     protocol.FlagEncrypted,
-				},
-				Payload: protocol.MarshalSessionAccept(&protocol.SessionAcceptPayload{
-					PubKey: pubKeyArr,
-				}),
-			}
-			acceptRaw, err := protocol.MarshalPacket(&acceptPkt)
-			if err != nil {
-				return fmt.Errorf("marshal SESSION_ACCEPT: %w", err)
-			}
-			r.conn.WriteToUDP(acceptRaw, senderAddr)
-			dbgLog.Printf("[receiver] sent SESSION_ACCEPT, session key derived")
-		}
+	// --- Encryption setup (v6: always pre-derived via HELLO/WELCOME handshake) ---
+	aead, err := protocol.NewSessionCipher(*r.cfg.EncKey)
+	if err != nil {
+		return fmt.Errorf("init session cipher: %w", err)
 	}
+	ivBase := *r.cfg.IVBase
 
 	// --- Phase 2: Validate and allocate buffer ---
 	chunkSize := protocol.MaxPayload
-	if aead != nil {
-		chunkSize = protocol.MaxEncryptedPayload
-	}
 
 	// Guard against corrupted SESSION_REQ (e.g., from proxy packet loss)
 	const maxFileSize = 1 << 40 // 1 TB sanity limit
-	if reqPayload.FileSize == 0 || reqPayload.FileSize > maxFileSize {
-		return fmt.Errorf("invalid file size in SESSION_REQ: %d bytes (max %d)", reqPayload.FileSize, maxFileSize)
+	if meta.FileSize == 0 || meta.FileSize > maxFileSize {
+		return fmt.Errorf("invalid file size in SESSION_REQ: %d bytes (max %d)", meta.FileSize, maxFileSize)
 	}
-	if len(reqPayload.FileName) == 0 {
+	if len(meta.FileName) == 0 {
 		return fmt.Errorf("empty filename in SESSION_REQ")
 	}
 
 	outputPath := r.cfg.OutputPath
 	if outputPath == "" {
-		outputPath = filepath.Join(r.cfg.OutputDir, filepath.Base(reqPayload.FileName))
+		outputPath = filepath.Join(r.cfg.OutputDir, filepath.Base(meta.FileName))
 	}
 
 	// --- Resume detection (v5.2: transparent, receiver-side only) ---
@@ -344,11 +230,11 @@ func (r *Receiver) Run() error {
 	var resumeOffset uint64
 	resumed := false
 
-	cp, cpTmpPath := FindCheckpoint(r.cfg.OutputDir, reqPayload.FileName, reqPayload.FileSize, reqPayload.Checksum)
+	cp, cpTmpPath := FindCheckpoint(r.cfg.OutputDir, meta.FileName, meta.FileSize, meta.FileHash)
 	if r.cfg.OutputPath != "" {
 		// serve/push mode: check using the explicit output path
 		cp2, err2 := ReadCheckpoint(CheckpointPath(r.cfg.OutputPath))
-		if err2 == nil && cp2.FileSize == reqPayload.FileSize && cp2.FileHash == reqPayload.Checksum {
+		if err2 == nil && cp2.FileSize == meta.FileSize && cp2.FileHash == meta.FileHash {
 			cp = cp2
 			cpTmpPath = r.cfg.OutputPath
 		}
@@ -377,9 +263,9 @@ func (r *Receiver) Run() error {
 	var recvBuf *ReceiveBuffer
 	var writer *DiskWriter
 	if resumed {
-		recvBuf = NewReceiveBufferWithOffset(reqPayload.FileSize, chunkSize, resumeSeqNum)
+		recvBuf = NewReceiveBufferWithOffset(meta.FileSize, chunkSize, resumeSeqNum)
 		var dwErr error
-		writer, dwErr = NewDiskWriterForResume(recvBuf, outputPath, reqPayload.FileSize, chunkSize, resumeOffset)
+		writer, dwErr = NewDiskWriterForResume(recvBuf, outputPath, meta.FileSize, chunkSize, resumeOffset)
 		if dwErr != nil {
 			return fmt.Errorf("create resume disk writer: %w", dwErr)
 		}
@@ -388,9 +274,9 @@ func (r *Receiver) Run() error {
 		// Pre-seed bytesReceived so progress bar starts from the resumed offset.
 		r.bytesReceived.Store(int64(resumeOffset))
 	} else {
-		recvBuf = NewReceiveBuffer(reqPayload.FileSize, chunkSize)
+		recvBuf = NewReceiveBuffer(meta.FileSize, chunkSize)
 		var dwErr error
-		writer, dwErr = NewDiskWriter(recvBuf, outputPath, reqPayload.FileSize, chunkSize)
+		writer, dwErr = NewDiskWriter(recvBuf, outputPath, meta.FileSize, chunkSize)
 		if dwErr != nil {
 			return fmt.Errorf("create disk writer: %w", dwErr)
 		}
@@ -401,9 +287,9 @@ func (r *Receiver) Run() error {
 	defer writer.Close()
 
 	// Enable checkpoint writing for future resume.
-	writer.SetCheckpointConfig(outputPath, reqPayload.Checksum, filepath.Base(reqPayload.FileName), chunkSize)
+	writer.SetCheckpointConfig(outputPath, meta.FileHash, filepath.Base(meta.FileName), chunkSize)
 
-	r.totalBytes.Store(int64(reqPayload.FileSize))
+	r.totalBytes.Store(int64(meta.FileSize))
 	r.startNs.Store(time.Now().UnixNano())
 
 	// --- Phase 3: Start heartbeat generator ---
@@ -489,7 +375,7 @@ func (r *Receiver) Run() error {
 			continue
 		}
 
-		if pkt.Header.SessionID != sessionID {
+		if pkt.Header.ConnectionID != sessionID {
 			continue
 		}
 
@@ -510,7 +396,7 @@ func (r *Receiver) Run() error {
 
 				// Debug progress milestones
 				if nextMilestone <= 3 {
-					threshold := int64(reqPayload.FileSize) * int64(nextMilestone) / 4
+					threshold := int64(meta.FileSize) * int64(nextMilestone) / 4
 					if r.bytesReceived.Load() >= threshold {
 						elapsed := time.Since(transferStart).Seconds()
 						pct := nextMilestone * 25
@@ -542,7 +428,7 @@ func (r *Receiver) Run() error {
 				payloadSize := chunkSize
 				lastSeq := recvBuf.Stats().TotalChunks - 1
 				if rs.SeqNum == lastSeq {
-					remainder := int(reqPayload.FileSize % uint64(chunkSize))
+					remainder := int(meta.FileSize % uint64(chunkSize))
 					if remainder > 0 {
 						payloadSize = remainder
 					}
@@ -569,7 +455,7 @@ func (r *Receiver) Run() error {
 				payloadSize := chunkSize
 				lastSeq := recvBuf.Stats().TotalChunks - 1
 				if rs.SeqNum == lastSeq {
-					remainder := int(reqPayload.FileSize % uint64(chunkSize))
+					remainder := int(meta.FileSize % uint64(chunkSize))
 					if remainder > 0 {
 						payloadSize = remainder
 					}
@@ -582,7 +468,7 @@ func (r *Receiver) Run() error {
 				}
 			}
 
-		case protocol.PacketSessionReq:
+		case protocol.PacketHello:
 			continue // duplicate
 
 		default:
@@ -618,14 +504,14 @@ func (r *Receiver) Run() error {
 	dbgLog.Printf("[receiver] transfer stats: received=%d duplicates=%d | FEC: blocks_recovered=%d shards_recovered=%d",
 		stats.PacketsReceived, stats.Duplicates, fecStats.BlocksRecovered, fecStats.ShardsRecovered)
 
-	if computedHash != reqPayload.Checksum {
+	if computedHash != meta.FileHash {
 		// Re-hash the file from disk to determine if corruption is in the
 		// DiskWriter's incremental hash or in the actual received data.
 		diskDiag := ""
 		if diskHash, err := HashFile(outputPath); err == nil {
 			if diskHash == computedHash {
 				diskDiag = fmt.Sprintf(" | disk re-hash matches writer (data corruption in transfer)")
-			} else if diskHash == reqPayload.Checksum {
+			} else if diskHash == meta.FileHash {
 				diskDiag = fmt.Sprintf(" | disk OK but writer hash wrong (DiskWriter bug)")
 			} else {
 				diskDiag = fmt.Sprintf(" | disk=0x%016X (neither match)", diskHash)
@@ -634,10 +520,10 @@ func (r *Receiver) Run() error {
 
 		rejectPkt := protocol.Packet{
 			Header: protocol.Header{
-				Type:      protocol.PacketSessionReject,
-				SessionID: sessionID,
+				Type:      protocol.PacketReject,
+				ConnectionID: sessionID,
 			},
-			Payload: []byte{byte(protocol.RejectHashMismatch)},
+			Payload: []byte{byte(protocol.ReasonHashMismatch)},
 		}
 		raw, _ := protocol.MarshalPacket(&rejectPkt)
 		r.conn.WriteToUDP(raw, senderAddr)
@@ -645,7 +531,7 @@ func (r *Receiver) Run() error {
 		os.Remove(outputPath)
 		DeleteCheckpoint(outputPath)
 		return fmt.Errorf("hash mismatch: computed 0x%016X, expected 0x%016X | received=%d dups=%d written=%d%s",
-			computedHash, reqPayload.Checksum,
+			computedHash, meta.FileHash,
 			stats.PacketsReceived, stats.Duplicates, writer.BytesWritten(), diskDiag)
 	}
 
@@ -657,8 +543,8 @@ func (r *Receiver) Run() error {
 	// --- Phase 6: Graceful Teardown ---
 	completePkt := protocol.Packet{
 		Header: protocol.Header{
-			Type:      protocol.PacketTransferComplete,
-			SessionID: sessionID,
+			Type:      protocol.PacketComplete,
+			ConnectionID: sessionID,
 		},
 	}
 	completeRaw, _ := protocol.MarshalPacket(&completePkt)
@@ -680,7 +566,7 @@ teardownLoop:
 					break teardownLoop
 				}
 				pkt, err := protocol.UnmarshalPacket(raw)
-				if err == nil && pkt.Header.Type == protocol.PacketACKClose && pkt.Header.SessionID == sessionID {
+				if err == nil && pkt.Header.Type == protocol.PacketAckClose && pkt.Header.ConnectionID == sessionID {
 					ackReceived = true
 					break teardownLoop
 				}
@@ -701,7 +587,7 @@ teardownLoop:
 				continue
 			}
 
-			if pkt.Header.Type == protocol.PacketACKClose && pkt.Header.SessionID == sessionID {
+			if pkt.Header.Type == protocol.PacketAckClose && pkt.Header.ConnectionID == sessionID {
 				ackReceived = true
 				break teardownLoop
 			}
@@ -716,12 +602,12 @@ teardownLoop:
 
 	time.Sleep(r.cfg.Session.LingerDuration)
 
-	dbgLog.Printf("[receiver] transfer complete: %s (%d bytes)", outputPath, reqPayload.FileSize)
+	dbgLog.Printf("[receiver] transfer complete: %s (%d bytes)", outputPath, meta.FileSize)
 	return nil
 }
 
-// decryptAndParse parses a raw packet, decrypting the payload if the
-// Encrypted flag is set and aead is non-nil (DATA and PARITY only).
+// decryptAndParse parses a raw DATA or PARITY packet, decrypting its payload.
+// v6 is always encrypted; non-data packet types are parsed without decryption.
 func decryptAndParse(raw []byte, aead cipher.AEAD, ivBase [8]byte) (protocol.Packet, error) {
 	if len(raw) < protocol.HeaderSize {
 		return protocol.Packet{}, protocol.ErrPacketTooSmall
@@ -731,31 +617,28 @@ func decryptAndParse(raw []byte, aead cipher.AEAD, ivBase [8]byte) (protocol.Pac
 		return protocol.Packet{}, err
 	}
 
-	isDataOrParity := hdr.Type == protocol.PacketData || hdr.Type == protocol.PacketParity
-	isEncrypted := hdr.Flags&protocol.FlagEncrypted != 0
-
-	if isEncrypted && aead != nil && isDataOrParity {
-		// Two PayloadLen conventions exist:
-		//   Go senders (EncryptPacket): PayloadLen = plaintext + GCMTagSize
-		//     → wire len = HeaderSize + PayloadLen (tag is within PayloadLen)
-		//   C senders:                  PayloadLen = plaintext only
-		//     → wire len = HeaderSize + PayloadLen + GCMTagSize (tag appended after)
-		// Auto-detect by checking if the actual packet is GCMTagSize bytes longer
-		// than HeaderSize+PayloadLen; if so, the sender is using the C convention.
-		needed := protocol.HeaderSize + int(hdr.PayloadLen)
-		if len(raw) == needed+protocol.GCMTagSize {
-			needed += protocol.GCMTagSize
-		}
-		if len(raw) < needed {
-			return protocol.Packet{}, fmt.Errorf("encrypted packet too short: %d < %d", len(raw), needed)
-		}
-		nonce := protocol.BuildNonce(ivBase, hdr.SequenceNum)
-		pt, err := protocol.DecryptPacket(aead, raw[:needed], nonce)
-		if err != nil {
-			return protocol.Packet{}, err
-		}
-		return protocol.Packet{Header: hdr, Payload: pt}, nil
+	if hdr.Type != protocol.PacketData && hdr.Type != protocol.PacketParity {
+		return protocol.UnmarshalPacket(raw)
 	}
 
-	return protocol.UnmarshalPacket(raw)
+	// Two PayloadLen conventions exist:
+	//   Go senders (EncryptPacket): PayloadLen = plaintext + GCMTagSize
+	//     → wire len = HeaderSize + PayloadLen (tag is within PayloadLen)
+	//   C senders:                  PayloadLen = plaintext only
+	//     → wire len = HeaderSize + PayloadLen + GCMTagSize (tag appended after)
+	// Auto-detect by checking if the actual packet is GCMTagSize bytes longer
+	// than HeaderSize+PayloadLen; if so, the sender is using the C convention.
+	needed := protocol.HeaderSize + int(hdr.PayloadLen)
+	if len(raw) == needed+protocol.GCMTagSize {
+		needed += protocol.GCMTagSize
+	}
+	if len(raw) < needed {
+		return protocol.Packet{}, fmt.Errorf("encrypted packet too short: %d < %d", len(raw), needed)
+	}
+	nonce := protocol.BuildNonce(ivBase, hdr.SequenceNum, false)
+	pt, err := protocol.DecryptPacket(aead, raw[:needed], nonce)
+	if err != nil {
+		return protocol.Packet{}, err
+	}
+	return protocol.Packet{Header: hdr, Payload: pt}, nil
 }
