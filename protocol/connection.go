@@ -15,8 +15,9 @@ import (
 const (
 	ClientIDSize      = 32
 	ConnIdleTimeout   = 30 * time.Second
-	HelloRetryTimeout = 2 * time.Second
-	HelloMaxRetries   = 3
+	HelloRetryTimeout  = 2 * time.Second
+	HelloMaxRetries    = 3
+	HelloMaxCollisions = 8 // max ID regenerations on ReasonConnectionIDCollision
 
 	RequestRetryTimeout = 2 * time.Second
 	RequestMaxRetries   = 3
@@ -61,86 +62,101 @@ func (c *Connection) NextRequestID() uint64 { return c.nextRequestID.Add(1) }
 
 // DialConnection performs the v6 HELLO/WELCOME handshake on an already-bound
 // UDP socket. The caller retains socket ownership.
+//
+// On ReasonConnectionIDCollision the connection ID is regenerated and the
+// attempt is retried transparently up to HelloMaxCollisions times. All other
+// REJECT reasons are returned as errors immediately.
 func DialConnection(conn *net.UDPConn, serverAddr *net.UDPAddr, clientID string) (*Connection, error) {
 	if len(clientID) > ClientIDSize {
 		return nil, fmt.Errorf("clientID too long: %d > %d", len(clientID), ClientIDSize)
 	}
 
-	var idBytes [4]byte
-	if _, err := rand.Read(idBytes[:]); err != nil {
-		return nil, fmt.Errorf("gen connection id: %w", err)
-	}
-	connectionID := binary.BigEndian.Uint32(idBytes[:])
-
-	priv, err := GenerateEphemeralKey()
-	if err != nil {
-		return nil, fmt.Errorf("ephemeral key: %w", err)
-	}
-
-	payload := make([]byte, PubKeySize+ClientIDSize)
-	copy(payload[:PubKeySize], priv.PublicKey().Bytes())
-	copy(payload[PubKeySize:], []byte(clientID)) // remainder is zero-padded
-
-	hdr := Header{
-		Type:         PacketHello,
-		ConnectionID: connectionID,
-		PayloadLen:   uint16(len(payload)),
-	}
-	raw, err := MarshalPacket(&Packet{Header: hdr, Payload: payload})
-	if err != nil {
-		return nil, fmt.Errorf("marshal HELLO: %w", err)
-	}
-
 	buf := make([]byte, MTUHardCap)
-	for attempt := 0; attempt < HelloMaxRetries; attempt++ {
-		if _, err := conn.WriteToUDP(raw, serverAddr); err != nil {
-			return nil, fmt.Errorf("send HELLO: %w", err)
+
+outer:
+	for collide := 0; collide < HelloMaxCollisions; collide++ {
+		var idBytes [4]byte
+		if _, err := rand.Read(idBytes[:]); err != nil {
+			return nil, fmt.Errorf("gen connection id: %w", err)
 		}
-		conn.SetReadDeadline(time.Now().Add(HelloRetryTimeout))
-		for {
-			n, from, err := conn.ReadFromUDP(buf)
-			if err != nil {
-				if isTimeout(err) {
-					break // retry HELLO
+		connectionID := binary.BigEndian.Uint32(idBytes[:])
+
+		priv, err := GenerateEphemeralKey()
+		if err != nil {
+			return nil, fmt.Errorf("ephemeral key: %w", err)
+		}
+
+		payload := make([]byte, PubKeySize+ClientIDSize)
+		copy(payload[:PubKeySize], priv.PublicKey().Bytes())
+		copy(payload[PubKeySize:], []byte(clientID)) // remainder is zero-padded
+
+		hdr := Header{
+			Type:         PacketHello,
+			ConnectionID: connectionID,
+			PayloadLen:   uint16(len(payload)),
+		}
+		raw, err := MarshalPacket(&Packet{Header: hdr, Payload: payload})
+		if err != nil {
+			return nil, fmt.Errorf("marshal HELLO: %w", err)
+		}
+
+		for attempt := 0; attempt < HelloMaxRetries; attempt++ {
+			if _, err := conn.WriteToUDP(raw, serverAddr); err != nil {
+				return nil, fmt.Errorf("send HELLO: %w", err)
+			}
+			conn.SetReadDeadline(time.Now().Add(HelloRetryTimeout))
+			for {
+				n, from, err := conn.ReadFromUDP(buf)
+				if err != nil {
+					if isTimeout(err) {
+						break // retry HELLO
+					}
+					conn.SetReadDeadline(time.Time{})
+					return nil, fmt.Errorf("read WELCOME: %w", err)
 				}
-				conn.SetReadDeadline(time.Time{})
-				return nil, fmt.Errorf("read WELCOME: %w", err)
-			}
-			p, perr := UnmarshalPacket(buf[:n])
-			if perr != nil || p.Header.ConnectionID != connectionID {
-				continue
-			}
-			switch p.Header.Type {
-			case PacketReject:
-				conn.SetReadDeadline(time.Time{})
-				return nil, rejectError(p.Payload)
-			case PacketWelcome:
-				if len(p.Payload) < PubKeySize {
+				p, perr := UnmarshalPacket(buf[:n])
+				if perr != nil || p.Header.ConnectionID != connectionID {
 					continue
 				}
-				conn.SetReadDeadline(time.Time{})
-				key, iv, err := DeriveSessionKey(priv, p.Payload[:PubKeySize], connectionID)
-				if err != nil {
-					return nil, fmt.Errorf("derive session key: %w", err)
+				switch p.Header.Type {
+				case PacketReject:
+					conn.SetReadDeadline(time.Time{})
+					// ID collision is transient — regenerate and retry.
+					if len(p.Payload) > 0 && Reason(p.Payload[0]) == ReasonConnectionIDCollision {
+						continue outer
+					}
+					return nil, rejectError(p.Payload)
+				case PacketWelcome:
+					if len(p.Payload) < PubKeySize {
+						continue
+					}
+					conn.SetReadDeadline(time.Time{})
+					key, iv, err := DeriveSessionKey(priv, p.Payload[:PubKeySize], connectionID)
+					if err != nil {
+						return nil, fmt.Errorf("derive session key: %w", err)
+					}
+					aead, err := NewSessionCipher(key)
+					if err != nil {
+						return nil, fmt.Errorf("init cipher: %w", err)
+					}
+					c := &Connection{
+						ID:         connectionID,
+						RemoteAddr: from, // server may respond from different src if NATted
+						Conn:       conn,
+						SessionKey: key,
+						IVBase:     iv,
+						AEAD:       aead,
+					}
+					c.SetState(ConnIdle)
+					return c, nil
 				}
-				aead, err := NewSessionCipher(key)
-				if err != nil {
-					return nil, fmt.Errorf("init cipher: %w", err)
-				}
-				c := &Connection{
-					ID:         connectionID,
-					RemoteAddr: from, // server may respond from different src if NATted
-					Conn:       conn,
-					SessionKey: key,
-					IVBase:     iv,
-					AEAD:       aead,
-				}
-				c.SetState(ConnIdle)
-				return c, nil
 			}
 		}
+		// HelloMaxRetries exhausted without a response for this ID (not a
+		// collision). Stop trying new IDs — this is a connectivity problem.
+		return nil, errors.New("HELLO timeout: no WELCOME after retries")
 	}
-	return nil, errors.New("HELLO timeout: no WELCOME after retries")
+	return nil, errors.New("HELLO: exceeded collision retry limit")
 }
 
 // --- Server-side accept ---
