@@ -2,14 +2,15 @@
 //
 // Usage:
 //
-//	hpuft send   -file <path> [-addr host:port] [-rate MB/s] [-nodelay] [-nocc]
-//	hpuft recv   [-listen :9000] [-out ./output]
-//	hpuft serve  [-listen :9001] [-data :9002] [-dir .]
-//	hpuft get    -file <name> [-addr host:9001] [-out .]
-//	hpuft push   -file <path> [-addr host:9001]
-//	hpuft list   [-addr host:9001]
-//	hpuft proxy  [-listen :9500] [-target host:9000] [-loss pct] [-seed n]
-//	hpuft test   [-files f1,f2] [-loss 0,1,5,10,15] [-timeout 120]
+//	hpuft serve    [-listen :9001] [-dir .] [-master host:port]
+//	hpuft put      -file <path> [-addr host:9001] [-rate MB/s] [-id clientID]
+//	hpuft get      -file <name> [-addr host:9001] [-out .] [-id clientID]
+//	hpuft ls       [-addr host:9001] [-id clientID]
+//	hpuft rm       -file <name> [-addr host:9001] [-id clientID]
+//	hpuft connect  [-addr host:9001] [-id clientID]
+//	hpuft servers  [-master host:port]
+//	hpuft proxy    [-listen :9500] [-target host:9000] [-loss pct] [-seed n]
+//	hpuft test     [-files f1,f2] [-loss 0,1,5,10,15] [-timeout 120]
 package main
 
 import (
@@ -26,18 +27,18 @@ func main() {
 	cmd, args := os.Args[1], os.Args[2:]
 
 	switch cmd {
-	case "send":
-		runSend(args)
-	case "recv":
-		runRecv(args)
 	case "serve":
 		runServe(args)
+	case "put":
+		runPut(args)
 	case "get":
 		runGet(args)
-	case "push":
-		runPush(args)
-	case "list":
-		runList(args)
+	case "ls":
+		runLs(args)
+	case "rm":
+		runRm(args)
+	case "connect":
+		runConnect(args)
 	case "servers":
 		runServers(args)
 	case "proxy":
@@ -55,15 +56,15 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage: hpuft <command> [flags]
 
 Commands:
-  send   Push a file to a waiting receiver
-  recv   Listen for an incoming push transfer
-  serve  Persistent daemon: serve files on request (single-lane)
-  get    Pull a file from a serve daemon (NAT-traversal friendly)
-  push   Push a file to a serve daemon (bidirectional hub)
-  list     List files available on a serve daemon
+  serve    Persistent daemon: accept connections and serve files (single-lane)
+  put      Upload a file to a serve daemon
+  get      Download a file from a serve daemon
+  ls       List files available on a serve daemon
+  rm       Delete a file on a serve daemon
+  connect  Interactive shell session with a serve daemon
   servers  Query master tracker for active daemons
-  proxy  Lossy UDP proxy for testing
-  test   Run end-to-end integration tests
+  proxy    Lossy UDP proxy for testing
+  test     Run end-to-end integration tests
 
 Run 'hpuft <command> -help' for per-command flags.
 `)

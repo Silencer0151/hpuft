@@ -18,11 +18,6 @@ const (
 
 	// PubKeySize is the length of an X25519 public key on the wire.
 	PubKeySize = 32
-
-	// MaxEncryptedPayload is the maximum plaintext payload size for DATA and
-	// PARITY packets when encryption is active. The 16-byte GCM tag is appended
-	// after the ciphertext, so the total wire size remains ≤ MTUHardCap.
-	MaxEncryptedPayload = MaxPayload - GCMTagSize // 1352 bytes
 )
 
 // GenerateEphemeralKey generates a fresh X25519 keypair for one session.
@@ -40,7 +35,7 @@ func GenerateEphemeralKey() (*ecdh.PrivateKey, error) {
 //	hash  = SHA-256
 //	ikm   = X25519 shared secret (32 bytes)
 //	salt  = sessionID (4 bytes big-endian)
-//	info  = "hp-udp-aes128-v5"
+//	info  = "hp-udp-aes128-v6"
 //	L     = 24 bytes  (bytes 0-15 = AES-128 key, bytes 16-23 = iv_base)
 func DeriveSessionKey(priv *ecdh.PrivateKey, theirPubBytes []byte, sessionID uint32) ([16]byte, [8]byte, error) {
 	peerPub, err := ecdh.X25519().NewPublicKey(theirPubBytes)
@@ -55,7 +50,7 @@ func DeriveSessionKey(priv *ecdh.PrivateKey, theirPubBytes []byte, sessionID uin
 	var salt [4]byte
 	binary.BigEndian.PutUint32(salt[:], sessionID)
 
-	okm, err := hkdf.Key(sha256.New, shared, salt[:], "hp-udp-aes128-v5", 24)
+	okm, err := hkdf.Key(sha256.New, shared, salt[:], "hp-udp-aes128-v6", 24)
 	if err != nil {
 		return [16]byte{}, [8]byte{}, fmt.Errorf("hkdf: %w", err)
 	}
@@ -80,11 +75,20 @@ func NewSessionCipher(key [16]byte) (cipher.AEAD, error) {
 // BuildNonce constructs the 12-byte packet nonce per spec §4.5C.
 //
 //	Bytes 0–7:  iv_base (8 bytes, HKDF-derived, session-scoped)
-//	Bytes 8–11: low 32 bits of SequenceNum, big-endian
-func BuildNonce(ivBase [8]byte, seq uint64) [12]byte {
+//	Bytes 8–11: low 31 bits of counter, big-endian; bit 31 set iff requestLayer
+//
+// The top bit separates the request/response control plane (requestLayer=true)
+// from the data plane (requestLayer=false), giving each domain 2³¹ (~2.1B)
+// unique nonces. A single transfer of more than ~2.9 TB at 1352-byte payloads
+// would exhaust the data-layer nonce space; rekey mid-stream if needed.
+func BuildNonce(ivBase [8]byte, counter uint64, requestLayer bool) [12]byte {
 	var nonce [12]byte
 	copy(nonce[:8], ivBase[:])
-	binary.BigEndian.PutUint32(nonce[8:], uint32(seq))
+	low31 := uint32(counter & 0x7FFFFFFF)
+	if requestLayer {
+		low31 |= 0x80000000
+	}
+	binary.BigEndian.PutUint32(nonce[8:], low31)
 	return nonce
 }
 

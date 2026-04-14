@@ -26,19 +26,17 @@ type manifestEntry struct {
 
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	listenAddr := fs.String("listen", ":9001", "address to listen on for PULL_REQ / PUSH_REQ")
-	dir := fs.String("dir", ".", "directory of files available to serve")
+	listenAddr := fs.String("listen", ":9001", "address to listen on")
+	dir := fs.String("dir", ".", "directory of files to serve")
 	debug := fs.Bool("debug", false, "enable CC/protocol debug logging for transfers")
-	masterAddr := fs.String("master", "", "master tracker address (host:port); if set, register this daemon over TCP")
+	masterAddr := fs.String("master", "", "master tracker address (host:port)")
 	fs.Parse(args)
 
-	// Serve uses structured event logging on stderr with timestamps.
-	// No progress bar — it runs as a daemon and may have no terminal.
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	log.SetOutput(os.Stderr)
 
 	var manifestMu sync.RWMutex
-	manifest := buildManifest(*dir) // map[name]manifestEntry
+	manifest := buildManifest(*dir)
 
 	addr, err := net.ResolveUDPAddr("udp", *listenAddr)
 	if err != nil {
@@ -53,26 +51,30 @@ func runServe(args []string) {
 	conn.SetWriteBuffer(16 * 1024 * 1024)
 
 	fmt.Fprintf(os.Stderr, "[serve] Online. Listening on %s\n", conn.LocalAddr())
-	fmt.Fprintf(os.Stderr, "[serve] Manifest loaded: %d authorized files found in %s\n", len(manifest), *dir)
+	fmt.Fprintf(os.Stderr, "[serve] Manifest loaded: %d files found in %s\n", len(manifest), *dir)
 
 	if *masterAddr != "" {
 		udpPort := uint16(conn.LocalAddr().(*net.UDPAddr).Port)
 		go runMasterRegistration(*masterAddr, udpPort, &manifestMu, manifest)
 	}
 
-	// busy is 0 when idle, 1 when a transfer is in progress.
-	var busy int32
-	var busyClient string
+	conns := newConnTable()
 
-	// activeChan is the forwarding channel for the active transfer goroutine.
-	// The main loop copies every non-control packet here when busy==1.
-	// Protected by activeMu for safe set/clear across goroutines.
-	var activeMu sync.Mutex
-	var activeChan chan []byte
-	var activeChanDrops atomic.Int64
+	// Busy model: single-lane — one transfer at a time preserves CC correctness.
+	// Multiple connections may coexist idle; only one may be ConnTransferring.
+	var busy atomic.Int32
+	var busyClient string // written/read only in the main loop goroutine; no extra sync needed
+
+	// Background idle-connection reaper.
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			conns.reapIdle(time.Now())
+		}
+	}()
 
 	rawBuf := make([]byte, protocol.MTUHardCap)
-
 	for {
 		n, clientAddr, err := conn.ReadFromUDP(rawBuf)
 		if err != nil {
@@ -80,315 +82,230 @@ func runServe(args []string) {
 			continue
 		}
 
-		// LIST_REQ is always handled immediately, regardless of busy state.
-		// Parse speculatively; if it fails or isn't a LIST_REQ, fall through.
-		if earlyPkt, err := protocol.UnmarshalPacket(rawBuf[:n]); err == nil {
-			if earlyPkt.Header.Type == protocol.PacketListReq {
-				handleListReq(conn, clientAddr, &earlyPkt, manifest, &manifestMu)
-				continue
-			}
+		hdr, herr := protocol.UnmarshalHeader(rawBuf[:n])
+		if herr != nil {
+			continue
 		}
 
-		// If a transfer is in progress, new PULL_REQ/PUSH_REQ get a SERVER_BUSY
-		// rejection immediately. All other packets are forwarded to the active
-		// goroutine for it to decode. Drop on channel full; sender/receiver retransmit.
-		if atomic.LoadInt32(&busy) == 1 {
-			pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
-			if err == nil {
-				switch pkt.Header.Type {
-				case protocol.PacketPullReq, protocol.PacketPushReq:
-					sendReject(conn, clientAddr, pkt.Header.SessionID, protocol.RejectServerBusy)
-					log.Printf("[serve] REJECTED %s: SERVER_BUSY (Transferring to %s)", clientAddr, busyClient)
-					continue
-				}
+		// ── Level 1: connection-establishment packets ──────────────────────
+		switch hdr.Type {
+		case protocol.PacketHello:
+			handleHello(conn, clientAddr, hdr, rawBuf[:n], conns)
+			continue
+		case protocol.PacketPing:
+			if sc := conns.get(clientAddr, hdr.ConnectionID); sc != nil {
+				sc.SendPong()
+				sc.touch()
+			}
+			continue
+		}
+
+		// ── Level 2: per-connection dispatch ──────────────────────────────
+		sc := conns.get(clientAddr, hdr.ConnectionID)
+		if sc == nil {
+			continue // drop packets from unknown connections
+		}
+		sc.touch()
+
+		switch hdr.Type {
+		case protocol.PacketRequest:
+			handleRequest(sc, rawBuf[:n], conn, *dir, manifest, &manifestMu, &busy, &busyClient, *debug)
+
+		case protocol.PacketReject:
+			// Client is disconnecting; remove and free state.
+			conns.remove(clientAddr, hdr.ConnectionID)
+			log.Printf("[serve] DISCONNECTED %s (ID=0x%08x)", clientAddr, hdr.ConnectionID)
+
+		case protocol.PacketData, protocol.PacketParity,
+			protocol.PacketHeartbeat, protocol.PacketComplete,
+			protocol.PacketAckClose:
+			ch := sc.getTransferChan()
+			if ch == nil {
+				continue
 			}
 			raw := make([]byte, n)
 			copy(raw, rawBuf[:n])
-			activeMu.Lock()
-			ch := activeChan
-			activeMu.Unlock()
-			if ch != nil {
-				select {
-				case ch <- raw:
-				default:
-					activeChanDrops.Add(1)
-				}
+			select {
+			case ch <- raw:
+			default: // drop; sender/receiver will retransmit
 			}
-			continue
-		}
-
-		pkt, err := protocol.UnmarshalPacket(rawBuf[:n])
-		if err != nil {
-			continue
-		}
-
-		switch pkt.Header.Type {
-		case protocol.PacketPullReq:
-			handlePullReq(conn, clientAddr, &pkt, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan, *debug)
-		case protocol.PacketPushReq:
-			handlePushReq(conn, clientAddr, &pkt, *dir, manifest, &manifestMu, &busy, &busyClient, &activeMu, &activeChan, &activeChanDrops, *debug)
-		case protocol.PacketListReq:
-			handleListReq(conn, clientAddr, &pkt, manifest, &manifestMu)
 		}
 	}
 }
 
-func handlePullReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
+// ── HELLO handler ─────────────────────────────────────────────────────────────
+
+func handleHello(conn *net.UDPConn, addr *net.UDPAddr, hdr protocol.Header, raw []byte, conns *connTable) {
+	// Reject if the ConnectionID is already in use (collision).
+	if existing := conns.get(addr, hdr.ConnectionID); existing != nil {
+		sendReject(conn, addr, hdr.ConnectionID, protocol.ReasonConnectionIDCollision)
+		log.Printf("[serve] REJECTED %s: HELLO ConnectionID collision (0x%08x)", addr, hdr.ConnectionID)
+		return
+	}
+
+	// Extract the HELLO payload (everything after the fixed header).
+	if len(raw) < protocol.HeaderSize {
+		return
+	}
+	helloPayload := raw[protocol.HeaderSize:]
+
+	c, welcomeRaw, err := protocol.AcceptConnection(conn, addr, hdr.ConnectionID, helloPayload)
+	if err != nil {
+		log.Printf("[serve] AcceptConnection from %s: %v", addr, err)
+		return
+	}
+
+	sc := &serverConn{Connection: c}
+	sc.touch()
+	conns.put(sc)
+
+	if _, err := conn.WriteToUDP(welcomeRaw, addr); err != nil {
+		log.Printf("[serve] send WELCOME to %s: %v", addr, err)
+		conns.remove(addr, hdr.ConnectionID)
+		return
+	}
+	log.Printf("[serve] CONNECTED %s (ID=0x%08x)", addr, hdr.ConnectionID)
+}
+
+// ── REQUEST dispatcher ────────────────────────────────────────────────────────
+
+func handleRequest(sc *serverConn, raw []byte, conn *net.UDPConn, dir string,
 	manifest map[string]manifestEntry, manifestMu *sync.RWMutex,
-	busy *int32, busyClient *string,
-	activeMu *sync.Mutex, activeChan *chan []byte, debug bool) {
+	busy *atomic.Int32, busyClient *string, debug bool) {
 
-	req, err := protocol.UnmarshalPullReq(pkt.Payload, pkt.Header.Flags&protocol.FlagEncrypted != 0)
-	if err != nil || req.FileName == "" {
-		log.Printf("[serve] malformed PULL_REQ from %s", clientAddr)
+	plaintext, err := sc.DecryptRequest(raw)
+	if err != nil {
+		log.Printf("[serve] decrypt REQUEST from %s: %v", sc.RemoteAddr, err)
 		return
 	}
 
-	// --- Busy check ---
-	if !atomic.CompareAndSwapInt32(busy, 0, 1) {
-		sendReject(conn, clientAddr, pkt.Header.SessionID, protocol.RejectServerBusy)
-		log.Printf("[serve] REJECTED %s: SERVER_BUSY (Transferring to %s)", clientAddr, *busyClient)
+	op, body, err := protocol.ParseRequest(plaintext)
+	if err != nil {
+		hdr, _ := protocol.UnmarshalHeader(raw)
+		sendEncryptedResponse(sc, hdr.SequenceNum,
+			protocol.BuildResponseError(protocol.ReasonInvalidRequest, err.Error()))
 		return
 	}
-	*busyClient = clientAddr.String()
 
-	// --- Manifest check (allowlist) ---
-	manifestMu.RLock()
-	entry, ok := manifest[req.FileName]
-	manifestMu.RUnlock()
-	if !ok {
-		sendReject(conn, clientAddr, pkt.Header.SessionID, protocol.RejectFileNotFound)
-		atomic.StoreInt32(busy, 0)
-		log.Printf("[serve] REJECTED %s: PULL_REQ for %q (Not in manifest)", clientAddr, req.FileName)
-		return
+	hdr, _ := protocol.UnmarshalHeader(raw)
+	reqID := hdr.SequenceNum
+
+	switch op {
+	case protocol.OpPut:
+		handleOpPut(sc, reqID, body, conn, dir, manifest, manifestMu, busy, busyClient, debug)
+	case protocol.OpGet:
+		handleOpGet(sc, reqID, body, conn, manifest, manifestMu, busy, busyClient, debug)
+	case protocol.OpList:
+		handleOpList(sc, reqID, manifest, manifestMu)
+	case protocol.OpDelete:
+		handleOpDelete(sc, reqID, body, dir, manifest, manifestMu)
+	default:
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonInvalidRequest, fmt.Sprintf("unknown op 0x%02x", op)))
 	}
-	filePath := entry.path
-
-	// Create the forwarding channel before the goroutine starts.
-	// The main loop won't forward packets until busy==1, which was set above
-	// in this same goroutine (the main read loop), so no race.
-	ch := make(chan []byte, 4096)
-	activeMu.Lock()
-	*activeChan = ch
-	activeMu.Unlock()
-
-	log.Printf("[serve] ACCEPTED %s: PULL_REQ for %q", clientAddr, req.FileName)
-
-	go func(filePath, fileName string, sessionID uint32, clientAddr *net.UDPAddr, peerPubKey []byte, isEncrypted bool) {
-		defer func() {
-			atomic.StoreInt32(busy, 0)
-			activeMu.Lock()
-			*activeChan = nil
-			activeMu.Unlock()
-		}()
-
-		cfg := sender.DefaultConfig()
-		cfg.FilePath = filePath
-		cfg.RemoteAddr = clientAddr.String() // for logging
-		cfg.SessionID = sessionID
-		cfg.MuxConn = conn
-		cfg.MuxAddr = clientAddr
-		cfg.RecvChan = ch
-		cfg.Quiet = !debug
-		cfg.Debug = debug
-		cfg.Encrypt = isEncrypted
-		if isEncrypted && len(peerPubKey) > 0 {
-			cfg.PeerPubKey = peerPubKey
-		}
-
-		start := time.Now()
-		s := sender.New(cfg)
-		if err := s.Send(); err != nil {
-			log.Printf("[serve] TRANSFER FAILED: %q to %s — %v", fileName, clientAddr, err)
-			return
-		}
-		elapsed := time.Since(start)
-		p := s.Progress()
-		dataElapsed := elapsed
-		repairDur := time.Duration(0)
-		if p.RepairStartNs > 0 && p.StartNs > 0 {
-			dataElapsed = time.Duration(p.RepairStartNs - p.StartNs)
-			repairDur = elapsed - dataElapsed
-		}
-		mbps := float64(p.TotalBytes) / dataElapsed.Seconds() / 1e6
-		if repairDur > 0 {
-			log.Printf("[serve] TRANSFER COMPLETE: %q to %s in %s (%.1f MB/s data, +%s repair)",
-				fileName, clientAddr, elapsed.Round(time.Millisecond), mbps, repairDur.Round(time.Millisecond))
-		} else {
-			log.Printf("[serve] TRANSFER COMPLETE: %q to %s in %s (%.1f MB/s)",
-				fileName, clientAddr, elapsed.Round(time.Millisecond), mbps)
-		}
-	}(filePath, req.FileName, pkt.Header.SessionID, clientAddr, req.PubKey[:], req.Encrypted)
 }
 
-func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
-	dir string, manifest map[string]manifestEntry, manifestMu *sync.RWMutex,
-	busy *int32, busyClient *string,
-	activeMu *sync.Mutex, activeChan *chan []byte,
-	activeChanDrops *atomic.Int64, debug bool) {
+// ── OpPut ─────────────────────────────────────────────────────────────────────
 
-	req, err := protocol.UnmarshalPushReq(pkt.Payload, pkt.Header.Flags&protocol.FlagEncrypted != 0)
-	if err != nil || req.FileName == "" {
-		log.Printf("[serve] malformed PUSH_REQ from %s", clientAddr)
+func handleOpPut(sc *serverConn, reqID uint64, body []byte, conn *net.UDPConn, dir string,
+	manifest map[string]manifestEntry, manifestMu *sync.RWMutex,
+	busy *atomic.Int32, busyClient *string, debug bool) {
+
+	// PUT body: FileSize(8) | FileHash(8) | InitialRate(4) | FileName(null-term)
+	if len(body) < 21 {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonInvalidRequest, "PUT body too short"))
+		return
+	}
+	fileSize := binary.BigEndian.Uint64(body[0:8])
+	fileHash := binary.BigEndian.Uint64(body[8:16])
+	initialRate := binary.BigEndian.Uint32(body[16:20])
+	fileName := nullTermStr(body[20:])
+
+	safeName := filepath.Base(fileName)
+	if safeName == "." || safeName == ".." || safeName == "" {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonInvalidRequest, "invalid filename"))
+		log.Printf("[serve] REJECTED %s: PUT invalid filename %q", sc.RemoteAddr, fileName)
 		return
 	}
 
-	// --- Base-name sanitization ---
-	safeName := filepath.Base(req.FileName)
-	if safeName == "." || safeName == "/" {
-		sendReject(conn, clientAddr, pkt.Header.SessionID, protocol.RejectFileNotFound)
-		log.Printf("[serve] REJECTED %s: PUSH_REQ for %q (invalid filename)", clientAddr, req.FileName)
+	// Busy check.
+	if !busy.CompareAndSwap(0, 1) {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonServerBusy, ""))
+		log.Printf("[serve] REJECTED %s: SERVER_BUSY (transferring to %s)", sc.RemoteAddr, *busyClient)
 		return
 	}
+	*busyClient = sc.RemoteAddr.String()
 
-	// --- Busy check ---
-	if !atomic.CompareAndSwapInt32(busy, 0, 1) {
-		sendReject(conn, clientAddr, pkt.Header.SessionID, protocol.RejectServerBusy)
-		log.Printf("[serve] REJECTED %s: SERVER_BUSY (Transferring to %s)", clientAddr, *busyClient)
-		return
-	}
-	*busyClient = clientAddr.String()
-
-	// --- No-overwrite check ---
+	// No-overwrite check.
 	finalPath := filepath.Join(dir, safeName)
 	if _, err := os.Stat(finalPath); err == nil {
-		sendReject(conn, clientAddr, pkt.Header.SessionID, protocol.RejectFileExists)
-		atomic.StoreInt32(busy, 0)
-		log.Printf("[serve] REJECTED %s: PUSH_REQ for %q (file already exists)", clientAddr, safeName)
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonFileExists, ""))
+		busy.Store(0)
+		log.Printf("[serve] REJECTED %s: PUT %q already exists", sc.RemoteAddr, safeName)
 		return
 	}
 
-	// --- Reply PUSH_ACCEPT ---
-	// v5.2: single-socket model — no port field in PUSH_ACCEPT.
-	// Data flows on the same address:port that received the PUSH_REQ.
-
-	// If the push client wants encryption, generate our ephemeral key and
-	// derive the session key; include our public key in PUSH_ACCEPT.
-	var pushEncKey *[16]byte
-	var pushIVBase *[8]byte
-	acceptPayload := &protocol.PushAcceptPayload{}
-	acceptHdrFlags := protocol.Flag(0)
-
-	if req.Encrypted {
-		ephemPriv, err := protocol.GenerateEphemeralKey()
-		if err != nil {
-			log.Printf("[serve] generate key for PUSH: %v", err)
-			atomic.StoreInt32(busy, 0)
-			return
-		}
-		key, derivedIVBase, err := protocol.DeriveSessionKey(ephemPriv, req.PubKey[:], pkt.Header.SessionID)
-		if err != nil {
-			log.Printf("[serve] derive key for PUSH: %v", err)
-			atomic.StoreInt32(busy, 0)
-			return
-		}
-		pushEncKey = &key
-		pushIVBase = &derivedIVBase
-		copy(acceptPayload.PubKey[:], ephemPriv.PublicKey().Bytes())
-		acceptPayload.Encrypted = true
-		acceptHdrFlags |= protocol.FlagEncrypted
-	}
-
-	acceptPkt := protocol.Packet{
-		Header: protocol.Header{
-			Type:      protocol.PacketPushAccept,
-			SessionID: pkt.Header.SessionID,
-			Flags:     acceptHdrFlags,
-		},
-		Payload: protocol.MarshalPushAccept(acceptPayload),
-	}
-	raw, err := protocol.MarshalPacket(&acceptPkt)
-	if err != nil {
-		atomic.StoreInt32(busy, 0)
-		return
-	}
+	// Accept: send RESPONSE OK, wire up the transfer channel, spawn goroutine.
+	sendEncryptedResponse(sc, reqID, protocol.BuildPutResponseOK())
 
 	ch := make(chan []byte, 4096)
-	activeMu.Lock()
-	*activeChan = ch
-	activeMu.Unlock()
+	sc.setTransferChan(ch)
+	sc.SetState(protocol.ConnTransferring)
 
-	conn.WriteToUDP(raw, clientAddr)
+	log.Printf("[serve] ACCEPTED %s: PUT %q", sc.RemoteAddr, safeName)
 
-	log.Printf("[serve] ACCEPTED %s: PUSH_REQ for %q", clientAddr, safeName)
-
-	go func(safeName, finalPath string, sessionID uint32, clientAddr *net.UDPAddr, encKey *[16]byte, ivBase *[8]byte, isEncrypted bool) {
-		// Log activeChan drop count every second for diagnostics.
-		dropDone := make(chan struct{})
+	go func() {
 		defer func() {
-			close(dropDone)
-			atomic.StoreInt32(busy, 0)
-			activeMu.Lock()
-			*activeChan = nil
-			activeMu.Unlock()
-		}()
-
-		go func() {
-			t := time.NewTicker(time.Second)
-			defer t.Stop()
-			for {
-				select {
-				case <-dropDone:
-					return
-				case <-t.C:
-					d := activeChanDrops.Swap(0)
-					if d > 0 {
-						log.Printf("[serve/diag] activeChan drops: %d/s (cap=%d)", d, cap(ch))
-					}
-				}
-			}
+			sc.setTransferChan(nil)
+			sc.SetState(protocol.ConnIdle)
+			busy.Store(0)
 		}()
 
 		tmpPath := finalPath + ".tmp"
 
 		cfg := receiver.DefaultConfig()
 		cfg.Conn = conn
-		cfg.SenderAddr = clientAddr
+		cfg.SenderAddr = sc.RemoteAddr
 		cfg.RecvChan = ch
 		cfg.OutputPath = tmpPath
-		cfg.Encrypt = isEncrypted
-		cfg.EncKey = encKey
-		cfg.IVBase = ivBase
+		cfg.EncKey = &sc.SessionKey
+		cfg.IVBase = &sc.IVBase
 		cfg.Debug = debug
-		// PushFlow senders skip SESSION_REQ and go straight to data.
-		// Pre-populate IncomingSession from the PUSH_REQ so the receiver
-		// skips Phase 1 (waiting for SESSION_REQ on the channel).
 		cfg.IncomingSession = &receiver.IncomingSession{
-			SenderAddr: clientAddr,
-			SessionID:  sessionID,
-			Req: protocol.SessionReqPayload{
-				FileSize:    req.FileSize,
-				Checksum:    req.FileHash,
+			SenderAddr:   sc.RemoteAddr,
+			ConnectionID: sc.ID,
+			Meta: receiver.TransferMeta{
 				FileName:    safeName,
-				Encrypted:   isEncrypted,
-				InitialRate: req.InitialRate,
+				FileSize:    fileSize,
+				FileHash:    fileHash,
+				InitialRate: initialRate,
 			},
 		}
 
 		r, err := receiver.New(cfg)
 		if err != nil {
-			log.Printf("[serve] PUSH init error for %q: %v", safeName, err)
+			log.Printf("[serve] PUT init error for %q: %v", safeName, err)
 			return
 		}
 
 		start := time.Now()
 		if err := r.Run(); err != nil {
-			log.Printf("[serve] PUSH FAILED: %q from %s — %v", safeName, clientAddr, err)
-			// Leave .tmp and sidecar for potential resume (unless hash mismatch,
-			// which receiver.Run already cleans up).
+			log.Printf("[serve] PUT FAILED: %q from %s — %v", safeName, sc.RemoteAddr, err)
 			return
 		}
 		elapsed := time.Since(start)
 
-		// Promote .tmp → final and clean up sidecar.
 		receiver.DeleteCheckpoint(tmpPath)
 		if err := os.Rename(tmpPath, finalPath); err != nil {
-			log.Printf("[serve] PUSH promote failed for %q: %v", safeName, err)
+			log.Printf("[serve] PUT promote failed for %q: %v", safeName, err)
 			os.Remove(tmpPath)
 			return
 		}
 
-		// Add to manifest
 		absPath, _ := filepath.Abs(finalPath)
 		fi, _ := os.Stat(absPath)
 		var addedSize int64
@@ -401,12 +318,112 @@ func handlePushReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 
 		p := r.Progress()
 		mbps := float64(p.TotalBytes) / elapsed.Seconds() / 1e6
-		log.Printf("[serve] PUSH COMPLETE: %q from %s in %s (%.1f MB/s) — added to manifest",
-			safeName, clientAddr, elapsed.Round(time.Millisecond), mbps)
-	}(safeName, finalPath, pkt.Header.SessionID, clientAddr, pushEncKey, pushIVBase, req.Encrypted)
+		log.Printf("[serve] PUT COMPLETE: %q from %s in %s (%.1f MB/s) — added to manifest",
+			safeName, sc.RemoteAddr, elapsed.Round(time.Millisecond), mbps)
+	}()
 }
 
-func handleListReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Packet,
+// ── OpGet ─────────────────────────────────────────────────────────────────────
+
+func handleOpGet(sc *serverConn, reqID uint64, body []byte, conn *net.UDPConn,
+	manifest map[string]manifestEntry, manifestMu *sync.RWMutex,
+	busy *atomic.Int32, busyClient *string, debug bool) {
+
+	// GET body: FileName(null-term)
+	fileName := nullTermStr(body)
+	if fileName == "" {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonInvalidRequest, "missing filename"))
+		return
+	}
+
+	// Manifest lookup.
+	manifestMu.RLock()
+	entry, ok := manifest[fileName]
+	manifestMu.RUnlock()
+	if !ok {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonFileNotFound, ""))
+		log.Printf("[serve] REJECTED %s: GET %q (not in manifest)", sc.RemoteAddr, fileName)
+		return
+	}
+
+	// Busy check.
+	if !busy.CompareAndSwap(0, 1) {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonServerBusy, ""))
+		log.Printf("[serve] REJECTED %s: SERVER_BUSY (transferring to %s)", sc.RemoteAddr, *busyClient)
+		return
+	}
+	*busyClient = sc.RemoteAddr.String()
+
+	// Hash the file for the response metadata.
+	fileHash, err := receiver.HashFile(entry.path)
+	if err != nil {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonFileNotFound, ""))
+		busy.Store(0)
+		log.Printf("[serve] GET hash failed for %q: %v", fileName, err)
+		return
+	}
+
+	// Accept: send RESPONSE OK with transfer metadata, wire up channel.
+	sendEncryptedResponse(sc, reqID,
+		protocol.BuildGetResponseOK(uint64(entry.size), fileHash, 0))
+
+	ch := make(chan []byte, 4096)
+	sc.setTransferChan(ch)
+	sc.SetState(protocol.ConnTransferring)
+
+	log.Printf("[serve] ACCEPTED %s: GET %q", sc.RemoteAddr, fileName)
+
+	go func(filePath, fileName string) {
+		defer func() {
+			sc.setTransferChan(nil)
+			sc.SetState(protocol.ConnIdle)
+			busy.Store(0)
+		}()
+
+		cfg := sender.DefaultConfig()
+		cfg.FilePath = filePath
+		cfg.RemoteAddr = sc.RemoteAddr.String()
+		cfg.ConnectionID = sc.ID
+		cfg.MuxConn = conn
+		cfg.MuxAddr = sc.RemoteAddr
+		cfg.RecvChan = ch
+		cfg.EncKey = &sc.SessionKey
+		cfg.IVBase = &sc.IVBase
+		cfg.Quiet = !debug
+		cfg.Debug = debug
+
+		start := time.Now()
+		s := sender.New(cfg)
+		if err := s.Send(); err != nil {
+			log.Printf("[serve] GET FAILED: %q to %s — %v", fileName, sc.RemoteAddr, err)
+			return
+		}
+		elapsed := time.Since(start)
+		p := s.Progress()
+		dataElapsed := elapsed
+		repairDur := time.Duration(0)
+		if p.RepairStartNs > 0 && p.StartNs > 0 {
+			dataElapsed = time.Duration(p.RepairStartNs - p.StartNs)
+			repairDur = elapsed - dataElapsed
+		}
+		mbps := float64(p.TotalBytes) / dataElapsed.Seconds() / 1e6
+		if repairDur > 0 {
+			log.Printf("[serve] GET COMPLETE: %q to %s in %s (%.1f MB/s data, +%s repair)",
+				fileName, sc.RemoteAddr, elapsed.Round(time.Millisecond), mbps, repairDur.Round(time.Millisecond))
+		} else {
+			log.Printf("[serve] GET COMPLETE: %q to %s in %s (%.1f MB/s)",
+				fileName, sc.RemoteAddr, elapsed.Round(time.Millisecond), mbps)
+		}
+	}(entry.path, fileName)
+}
+
+// ── OpList ────────────────────────────────────────────────────────────────────
+
+func handleOpList(sc *serverConn, reqID uint64,
 	manifest map[string]manifestEntry, manifestMu *sync.RWMutex) {
 
 	manifestMu.RLock()
@@ -416,23 +433,99 @@ func handleListReq(conn *net.UDPConn, clientAddr *net.UDPAddr, pkt *protocol.Pac
 	}
 	manifestMu.RUnlock()
 
-	respPkt := protocol.Packet{
-		Header: protocol.Header{
-			Type:      protocol.PacketListResp,
-			SessionID: pkt.Header.SessionID,
-		},
-		Payload: protocol.MarshalListResp(entries),
+	body := protocol.MarshalListBody(entries)
+	sendEncryptedResponse(sc, reqID, protocol.BuildListResponseOK(body))
+	log.Printf("[serve] LIST for %s (%d entries)", sc.RemoteAddr, len(entries))
+}
+
+// ── OpDelete ──────────────────────────────────────────────────────────────────
+
+func handleOpDelete(sc *serverConn, reqID uint64, body []byte, dir string,
+	manifest map[string]manifestEntry, manifestMu *sync.RWMutex) {
+
+	// DELETE body: FileName(null-term)
+	fileName := nullTermStr(body)
+	safeName := filepath.Base(fileName)
+	if safeName == "." || safeName == ".." || safeName == "" {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonInvalidRequest, "invalid filename"))
+		return
 	}
-	raw, err := protocol.MarshalPacket(&respPkt)
+
+	// Must be in manifest (authorization check).
+	manifestMu.RLock()
+	_, ok := manifest[safeName]
+	manifestMu.RUnlock()
+	if !ok {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonFileNotFound, ""))
+		log.Printf("[serve] REJECTED %s: DELETE %q (not in manifest)", sc.RemoteAddr, safeName)
+		return
+	}
+
+	finalPath := filepath.Join(dir, safeName)
+	if err := os.Remove(finalPath); err != nil {
+		sendEncryptedResponse(sc, reqID,
+			protocol.BuildResponseError(protocol.ReasonDeleteDenied, err.Error()))
+		log.Printf("[serve] DELETE failed for %q: %v", safeName, err)
+		return
+	}
+
+	manifestMu.Lock()
+	delete(manifest, safeName)
+	manifestMu.Unlock()
+
+	sendEncryptedResponse(sc, reqID, protocol.BuildDeleteResponseOK())
+	log.Printf("[serve] DELETE COMPLETE: %q by %s", safeName, sc.RemoteAddr)
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// sendEncryptedResponse encrypts plaintext as a RESPONSE and writes it to the
+// client. It is the counterpart to SendRequest on the client side.
+func sendEncryptedResponse(sc *serverConn, reqID uint64, plaintext []byte) {
+	raw, err := sc.EncryptResponse(reqID, plaintext)
+	if err != nil {
+		log.Printf("[serve] encrypt response to %s: %v", sc.RemoteAddr, err)
+		return
+	}
+	if _, err := sc.Conn.WriteToUDP(raw, sc.RemoteAddr); err != nil {
+		log.Printf("[serve] write response to %s: %v", sc.RemoteAddr, err)
+	}
+}
+
+// sendReject sends a plain (unencrypted) REJECT packet. Used during HELLO
+// before a session key has been established.
+func sendReject(conn *net.UDPConn, addr *net.UDPAddr, connectionID uint32, reason protocol.Reason) {
+	pkt := protocol.Packet{
+		Header: protocol.Header{
+			Type:         protocol.PacketReject,
+			ConnectionID: connectionID,
+		},
+		Payload: []byte{byte(reason)},
+	}
+	raw, err := protocol.MarshalPacket(&pkt)
 	if err != nil {
 		return
 	}
-	conn.WriteToUDP(raw, clientAddr)
+	conn.WriteToUDP(raw, addr)
 }
 
-// buildManifest scans dir (non-recursively) and returns an allowlist map of
-// filename → manifestEntry{path, size}. Only regular files are included;
-// directories and symlinks are skipped.
+// nullTermStr reads a null-terminated C-style string from data, returning
+// everything before the first zero byte (or all bytes if none found).
+func nullTermStr(data []byte) string {
+	for i, b := range data {
+		if b == 0 {
+			return string(data[:i])
+		}
+	}
+	return string(data)
+}
+
+// ── Manifest ──────────────────────────────────────────────────────────────────
+
+// buildManifest scans dir non-recursively and returns an allowlist map of
+// filename → manifestEntry{path, size}. Only regular files are included.
 func buildManifest(dir string) map[string]manifestEntry {
 	manifest := make(map[string]manifestEntry)
 
@@ -462,9 +555,11 @@ func buildManifest(dir string) map[string]manifestEntry {
 	return manifest
 }
 
-// runMasterRegistration dials masterAddr over TCP, sends a Burst (0x01) with the
-// current manifest state, then keeps the connection alive with Heartbeat (0x00)
-// frames every 50 seconds. On any error it reconnects with exponential backoff.
+// ── Master tracker registration ───────────────────────────────────────────────
+
+// runMasterRegistration dials masterAddr over TCP, sends a Burst (0x01) with
+// the current manifest, then keeps the connection alive with Heartbeat (0x00)
+// frames every 50 seconds. Reconnects with exponential backoff on any error.
 func runMasterRegistration(masterAddr string, udpPort uint16, manifestMu *sync.RWMutex, manifest map[string]manifestEntry) {
 	backoff := time.Second
 	for {
@@ -527,12 +622,11 @@ func sendMasterBurst(conn net.Conn, udpPort uint16, manifestMu *sync.RWMutex, ma
 	entries := make([]entry, 0, len(manifest))
 	for name, me := range manifest {
 		entries = append(entries, entry{size: uint64(me.size), name: name})
-		// capture path for hashing after unlock
 		entries[len(entries)-1].hash = sha256File(me.path)
 	}
 	manifestMu.RUnlock()
 
-	// Compute payload size: port(2) + count(4) + per-file(32+8+2+namelen)
+	// Payload size: port(2) + count(4) + per-file(32+8+2+namelen)
 	payloadSize := 2 + 4
 	for i := range entries {
 		payloadSize += 32 + 8 + 2 + len(entries[i].name)
@@ -570,7 +664,6 @@ func sendMasterBurst(conn net.Conn, udpPort uint16, manifestMu *sync.RWMutex, ma
 // sendMasterHeartbeat writes a 0x00 Heartbeat frame to conn.
 //
 // Wire layout: [4] length=1  [1] type=0x00
-// Length counts the type byte, matching the burst framing convention.
 func sendMasterHeartbeat(conn net.Conn) error {
 	var frame [5]byte
 	binary.BigEndian.PutUint32(frame[0:4], 1)
@@ -580,7 +673,7 @@ func sendMasterHeartbeat(conn net.Conn) error {
 }
 
 // sha256File computes the SHA-256 hash of the file at path.
-// Returns a zero hash on error (logged by caller).
+// Returns a zero hash on error.
 func sha256File(path string) [32]byte {
 	f, err := os.Open(path)
 	if err != nil {
@@ -592,20 +685,4 @@ func sha256File(path string) [32]byte {
 	var out [32]byte
 	h.Sum(out[:0])
 	return out
-}
-
-// sendReject sends a SESSION_REJECT packet to addr with the given reason code.
-func sendReject(conn *net.UDPConn, addr *net.UDPAddr, sessionID uint32, reason protocol.RejectReason) {
-	pkt := protocol.Packet{
-		Header: protocol.Header{
-			Type:      protocol.PacketSessionReject,
-			SessionID: sessionID,
-		},
-		Payload: []byte{byte(reason)},
-	}
-	raw, err := protocol.MarshalPacket(&pkt)
-	if err != nil {
-		return
-	}
-	conn.WriteToUDP(raw, addr)
 }
