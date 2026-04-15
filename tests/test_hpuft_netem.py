@@ -118,16 +118,56 @@ def _last_line(text: str, max_chars: int = 120) -> str:
 
 
 def human_rate(mb: float, seconds: float) -> str:
-    if seconds <= 0:
+    if seconds is None or seconds <= 0:
         return "—"
     rate = mb / seconds
     return f"{rate:7.2f} MB/s"
 
 
-def human_time(seconds: float) -> str:
+def human_time(seconds) -> str:
+    if seconds is None:
+        return "—"
     if seconds < 60:
         return f"{seconds:6.2f}s"
     return f"{int(seconds // 60):2d}m{seconds % 60:05.2f}s"
+
+
+def ls_filenames(exe: str, serve_addr: str) -> tuple:
+    """
+    Run `ls` against the daemon and return (filenames, raw_output).
+    Filenames are the first whitespace-separated token per line, skipping any
+    lines that begin with '(' (e.g. '(no files available)').
+    Returns (None, err) on failure.
+    """
+    rc, out, err = run_cmd([exe, "ls", "-addr", serve_addr], timeout=15)
+    if rc != 0:
+        return None, (err or out).strip()
+    names = set()
+    for line in out.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("("):
+            continue
+        toks = stripped.split()
+        if toks:
+            names.add(toks[0])
+    return names, out
+
+
+def wait_for_finalization(exe: str, serve_addr: str, fname: str,
+                          timeout: float = 120.0,
+                          interval: float = 1.0) -> tuple:
+    """
+    Poll `ls` until `fname` appears as a promoted file (not the `.tmp`
+    staging name). Returns (found, elapsed_seconds).
+    """
+    start    = time.monotonic()
+    deadline = start + timeout
+    while time.monotonic() < deadline:
+        names, _ = ls_filenames(exe, serve_addr)
+        if names is not None and fname in names:
+            return True, time.monotonic() - start
+        time.sleep(interval)
+    return False, time.monotonic() - start
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -216,19 +256,20 @@ def run_cycle(exe: str, test_dir: Path, serve_addr: str,
     get_dir.mkdir(exist_ok=True)
 
     result = {
-        "profile":   profile_name,
-        "size_mb":   size_mb,
-        "size_label": size_label,
-        "put_ok":    False,
-        "ls_ok":     False,
-        "get_ok":    False,
-        "rm_ok":     False,
-        "put_sec":   None,
-        "get_sec":   None,
-        "put_mbps":  None,
-        "get_mbps":  None,
-        "hash_match": False,
-        "error":     "",
+        "profile":      profile_name,
+        "size_mb":      size_mb,
+        "size_label":   size_label,
+        "put_ok":       False,
+        "ls_ok":        False,
+        "get_ok":       False,
+        "rm_ok":        False,
+        "put_sec":      None,
+        "get_sec":      None,
+        "finalize_sec": None,
+        "put_mbps":     None,
+        "get_mbps":     None,
+        "hash_match":   False,
+        "error":        "",
     }
 
     print(f"  generating {size_label} file ({size_mb} MB) …", end=" ", flush=True)
@@ -255,13 +296,25 @@ def run_cycle(exe: str, test_dir: Path, serve_addr: str,
         return result
 
     # ls ----------------------------------------------------------------------
-    rc, out, err = run_cmd([exe, "ls", "-addr", serve_addr], timeout=15)
-    if rc == 0 and src.name in out:
+    # The client-side `put` returns when the sender finishes transmitting.
+    # The server still has to drain its receive channel, verify the hash,
+    # rename the .tmp to its final name, add it to the manifest, and release
+    # its busy lock. Under loss + high RTT that wall-clock lag is visible,
+    # so poll ls until the *promoted* filename appears.
+    print(f"  {YELLOW}[...]{RESET}  waiting for server-side finalization "
+          f"(hash verify + promote) …", flush=True)
+    found, wait_sec = wait_for_finalization(
+        exe, serve_addr, src.name, timeout=180.0, interval=1.0,
+    )
+    result["finalize_sec"] = wait_sec
+    if found:
         result["ls_ok"] = True
-        print(f"  {GREEN}[PASS]{RESET} ls     — found '{src.name}'")
+        print(f"  {GREEN}[PASS]{RESET} ls     — promoted in "
+              f"{wait_sec:5.2f}s after put")
     else:
-        result["error"] = f"ls: {_last_line(err or out)}"
+        result["error"] = f"ls: file never appeared within {wait_sec:.0f}s"
         print(f"  {RED}[FAIL]{RESET} ls     — {result['error']}")
+        return result
 
     # get ---------------------------------------------------------------------
     t0 = time.monotonic()
@@ -415,6 +468,11 @@ def main() -> None:
                   f"  ({rtt_ms}ms RTT, ±{jitter_ms}ms jitter, {loss_pct}% loss)"
                   f" {'─' * max(0, 24 - len(pname))}{RESET}")
 
+            # Wipe any stragglers from the previous profile so the daemon's
+            # rebuilt manifest starts empty.
+            shutil.rmtree(serve_dir, ignore_errors=True)
+            serve_dir.mkdir(exist_ok=True)
+
             # Apply netem before starting the daemon so the daemon's socket
             # binds to the already-impaired loopback.
             try:
@@ -456,21 +514,23 @@ def main() -> None:
     print(f"  {BOLD}Summary{RESET}")
     print("=" * 70)
     print(f"  {'profile':<16} {'size':>7} {'put time':>12} {'put rate':>12} "
-          f"{'get time':>12} {'get rate':>12}  result")
-    print(f"  {'-'*16} {'-'*7} {'-'*12} {'-'*12} {'-'*12} {'-'*12}  {'-'*6}")
+          f"{'finalize':>10} {'get time':>12} {'get rate':>12}  result")
+    print(f"  {'-'*16} {'-'*7} {'-'*12} {'-'*12} {'-'*10} {'-'*12} {'-'*12}  {'-'*6}")
 
     failed = 0
     for r in all_results:
         ok = r["put_ok"] and r["ls_ok"] and r["get_ok"] and r["hash_match"]
         if not ok:
             failed += 1
-        tag = f"{GREEN}PASS{RESET}" if ok else f"{RED}FAIL{RESET}"
-        put_t  = human_time(r["put_sec"])  if r["put_sec"]  is not None else "—"
-        put_r  = human_rate(r["size_mb"], r["put_sec"])  if r["put_sec"]  else "—"
-        get_t  = human_time(r["get_sec"])  if r["get_sec"]  is not None else "—"
-        get_r  = human_rate(r["size_mb"], r["get_sec"])  if r["get_sec"]  else "—"
+        tag   = f"{GREEN}PASS{RESET}" if ok else f"{RED}FAIL{RESET}"
+        put_t = human_time(r["put_sec"])
+        put_r = human_rate(r["size_mb"], r["put_sec"])
+        fin_t = human_time(r["finalize_sec"])
+        get_t = human_time(r["get_sec"])
+        get_r = human_rate(r["size_mb"], r["get_sec"])
         print(f"  {r['profile']:<16} {r['size_label']:>7} "
-              f"{put_t:>12} {put_r:>12} {get_t:>12} {get_r:>12}  {tag}")
+              f"{put_t:>12} {put_r:>12} {fin_t:>10} "
+              f"{get_t:>12} {get_r:>12}  {tag}")
 
     total = len(all_results)
     colour = GREEN if failed == 0 else RED
