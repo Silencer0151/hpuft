@@ -1,6 +1,19 @@
 package protocol
 
-import "time"
+import (
+	"net"
+	"time"
+)
+
+// RawPacket carries a wire packet plus the address it arrived from. Used by
+// dispatchers (e.g. the connect REPL, the serve daemon) that own the socket
+// and forward packets into a transfer goroutine: the receiver/sender needs
+// the source address to lock its heartbeat destination onto the peer's
+// data-plane ephemeral port (see receiver/receiver.go UpdatePeerAddr).
+type RawPacket struct {
+	Data []byte
+	Src  *net.UDPAddr
+}
 
 // --- Packet Types ---
 

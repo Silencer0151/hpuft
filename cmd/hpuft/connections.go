@@ -33,7 +33,7 @@ type serverConn struct {
 	lastActivityNs atomic.Int64
 
 	mu         sync.Mutex
-	transferCh chan []byte // non-nil while a transfer goroutine is running
+	transferCh chan protocol.RawPacket // non-nil while a transfer goroutine is running
 }
 
 // touch records the current time as the last activity timestamp.
@@ -47,14 +47,14 @@ func (sc *serverConn) lastActivity() time.Time {
 }
 
 // getTransferChan returns the active transfer channel (nil when idle).
-func (sc *serverConn) getTransferChan() chan []byte {
+func (sc *serverConn) getTransferChan() chan protocol.RawPacket {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	return sc.transferCh
 }
 
 // setTransferChan atomically sets the active transfer channel.
-func (sc *serverConn) setTransferChan(ch chan []byte) {
+func (sc *serverConn) setTransferChan(ch chan protocol.RawPacket) {
 	sc.mu.Lock()
 	sc.transferCh = ch
 	sc.mu.Unlock()

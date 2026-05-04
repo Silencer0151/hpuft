@@ -63,8 +63,9 @@ type Config struct {
 
 	// RecvChan, if non-nil, supplies incoming packets instead of reading from
 	// the socket. The serve daemon's control loop forwards packets here so the
-	// sender goroutine never needs its own socket read path.
-	RecvChan <-chan []byte
+	// sender goroutine never needs its own socket read path. The sender only
+	// uses RawPacket.Data; the source address field is unused on this side.
+	RecvChan <-chan protocol.RawPacket
 
 	// EncKey is a pre-derived 16-byte AES-128 session key (mandatory in v6).
 	// Set by the CLI after the HELLO/WELCOME handshake via protocol.DialConnection.
@@ -295,11 +296,11 @@ func (s *Sender) Send() error {
 				select {
 				case <-doneCh:
 					return
-				case raw, ok := <-recvChan:
+				case rp, ok := <-recvChan:
 					if !ok {
 						return
 					}
-					n = copy(hbBuf, raw)
+					n = copy(hbBuf, rp.Data)
 				case <-time.After(200 * time.Millisecond):
 					continue
 				}
@@ -630,11 +631,11 @@ func (s *Sender) Send() error {
 
 		if recvChan != nil {
 			select {
-			case raw, ok := <-recvChan:
+			case rp, ok := <-recvChan:
 				if !ok {
 					return fmt.Errorf("channel closed waiting for TRANSFER_COMPLETE")
 				}
-				pkt, parseErr = protocol.UnmarshalPacket(raw)
+				pkt, parseErr = protocol.UnmarshalPacket(rp.Data)
 			case <-probeDeadline.C:
 				return fmt.Errorf("timeout waiting for TRANSFER_COMPLETE")
 			}
@@ -761,7 +762,7 @@ func (s *Sender) Send() error {
 func (s *Sender) handleTeardown(
 	conn *net.UDPConn,
 	writeFn func([]byte),
-	recvChan <-chan []byte,
+	recvChan <-chan protocol.RawPacket,
 	sessionID uint32,
 	pktType protocol.PacketType,
 	payload []byte,
@@ -792,11 +793,11 @@ func (s *Sender) handleTeardown(
 
 			if recvChan != nil {
 				select {
-				case raw, ok := <-recvChan:
+				case rp, ok := <-recvChan:
 					if !ok {
 						goto lingerDone
 					}
-					pkt, err = protocol.UnmarshalPacket(raw)
+					pkt, err = protocol.UnmarshalPacket(rp.Data)
 				case <-lingerTimer.C:
 					goto lingerDone
 				}
