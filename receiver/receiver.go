@@ -57,8 +57,11 @@ type Config struct {
 	// RecvChan, if non-nil, supplies incoming packets instead of reading from
 	// the socket. The serve daemon's control loop forwards packets here so the
 	// receiver goroutine never needs its own socket read path.
+	// Each RawPacket carries the source address so the receiver can lock its
+	// heartbeat destination onto the C sender's data-plane ephemeral port the
+	// same way socket-mode does (see updateSenderAddr).
 	// SenderAddr must also be set when RecvChan is set.
-	RecvChan <-chan []byte
+	RecvChan <-chan protocol.RawPacket
 
 	// Debug enables verbose protocol logging to stderr.
 	// When false noisy internal logs are suppressed and the caller shows a
@@ -321,18 +324,38 @@ func (r *Receiver) Run() error {
 	transferStart := time.Now()
 	nextMilestone := uint64(1) // 1=25%, 2=50%, 3=75%
 
+	// trackPeer locks the heartbeat destination onto the sender's data-plane
+	// source address. The C server spawns a fresh ephemeral socket per GET, so
+	// the address that initiated the session (control port) is not where DATA
+	// originates and not where heartbeats must be sent. The first DATA/PARITY
+	// arrival reveals the real peer; we update senderAddr and the hb generator
+	// once per change so both socket-mode and mux-mode behave identically.
+	trackPeer := func(src *net.UDPAddr, t protocol.PacketType) {
+		if src == nil || (t != protocol.PacketData && t != protocol.PacketParity) {
+			return
+		}
+		cur := r.senderAddr.Load()
+		if cur == nil || cur.Port != src.Port || cur.IP.String() != src.IP.String() {
+			r.senderAddr.Store(src)
+			hbGen.UpdatePeerAddr(src)
+			senderAddr = src
+		}
+	}
+
 	for !recvBuf.IsComplete() {
 		var pkt protocol.Packet
 		var pktErr error
+		var pktSrcAddr *net.UDPAddr
 
 		if r.cfg.RecvChan != nil {
 			select {
-			case raw, ok := <-r.cfg.RecvChan:
+			case rp, ok := <-r.cfg.RecvChan:
 				if !ok {
 					return fmt.Errorf("channel closed during transfer")
 				}
 				lastPacketTime = time.Now()
-				pkt, pktErr = decryptAndParse(raw, aead, ivBase)
+				pkt, pktErr = decryptAndParse(rp.Data, aead, ivBase)
+				pktSrcAddr = rp.Src
 			case <-time.After(50 * time.Millisecond):
 				if time.Since(lastPacketTime) > inactivityTimeout {
 					hbGen.Stop()
@@ -343,7 +366,7 @@ func (r *Receiver) Run() error {
 			}
 		} else {
 			r.conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
-			n, pktSrcAddr, err := r.conn.ReadFromUDP(rawBuf)
+			n, src, err := r.conn.ReadFromUDP(rawBuf)
 			if err != nil {
 				if os.IsTimeout(err) {
 					if time.Since(lastPacketTime) > inactivityTimeout {
@@ -357,18 +380,11 @@ func (r *Receiver) Run() error {
 			}
 			lastPacketTime = time.Now()
 			pkt, pktErr = decryptAndParse(rawBuf[:n], aead, ivBase)
-			// In pull mode the C server spawns a new sender thread on a fresh
-			// ephemeral socket. Update the heartbeat destination to that socket's
-			// source address so the C sender actually receives our heartbeats.
-			if pktErr == nil && pktSrcAddr != nil &&
-				(pkt.Header.Type == protocol.PacketData || pkt.Header.Type == protocol.PacketParity) {
-				cur := r.senderAddr.Load()
-				if cur == nil || cur.Port != pktSrcAddr.Port || cur.IP.String() != pktSrcAddr.IP.String() {
-					r.senderAddr.Store(pktSrcAddr)
-					hbGen.UpdatePeerAddr(pktSrcAddr)
-					senderAddr = pktSrcAddr
-				}
-			}
+			pktSrcAddr = src
+		}
+
+		if pktErr == nil {
+			trackPeer(pktSrcAddr, pkt.Header.Type)
 		}
 
 		if pktErr != nil {
@@ -561,11 +577,11 @@ teardownLoop:
 
 		if r.cfg.RecvChan != nil {
 			select {
-			case raw, ok := <-r.cfg.RecvChan:
+			case rp, ok := <-r.cfg.RecvChan:
 				if !ok {
 					break teardownLoop
 				}
-				pkt, err := protocol.UnmarshalPacket(raw)
+				pkt, err := protocol.UnmarshalPacket(rp.Data)
 				if err == nil && pkt.Header.Type == protocol.PacketAckClose && pkt.Header.ConnectionID == sessionID {
 					ackReceived = true
 					break teardownLoop

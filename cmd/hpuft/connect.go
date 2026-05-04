@@ -109,8 +109,8 @@ type replDispatch struct {
 	stopCh chan struct{}
 
 	mu       sync.Mutex
-	transCh  chan<- []byte // set while a transfer is running
-	rpcCh    chan<- []byte // set while a shell RPC is in flight
+	transCh  chan<- protocol.RawPacket // set while a transfer is running
+	rpcCh    chan<- []byte             // set while a shell RPC is in flight
 }
 
 func newReplDispatch(conn *net.UDPConn, pc *protocol.Connection) *replDispatch {
@@ -129,7 +129,7 @@ func (d *replDispatch) stop() {
 	}
 }
 
-func (d *replDispatch) setTransferChan(ch chan<- []byte) {
+func (d *replDispatch) setTransferChan(ch chan<- protocol.RawPacket) {
 	d.mu.Lock()
 	d.transCh = ch
 	d.mu.Unlock()
@@ -151,7 +151,7 @@ func (d *replDispatch) run() {
 		}
 
 		d.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		n, _, err := d.conn.ReadFromUDP(buf)
+		n, from, err := d.conn.ReadFromUDP(buf)
 		if err != nil {
 			var ne net.Error
 			if errors.As(err, &ne) && ne.Timeout() {
@@ -189,8 +189,11 @@ func (d *replDispatch) run() {
 			protocol.PacketHeartbeat, protocol.PacketComplete,
 			protocol.PacketAckClose:
 			if transCh != nil {
+				// Forward source addr alongside the bytes so the receiver can
+				// lock its heartbeat destination onto the C sender's data-plane
+				// ephemeral port (the C daemon socket drops HEARTBEATs).
 				select {
-				case transCh <- raw:
+				case transCh <- protocol.RawPacket{Data: raw, Src: from}:
 				default: // drop; sender/receiver will retransmit
 				}
 			}
@@ -322,7 +325,7 @@ func shellGet(pc *protocol.Connection, d *replDispatch, conn *net.UDPConn, rAddr
 
 	fmt.Fprintf(os.Stdout, "get: receiving %s (%s)...\n", fileName, humanBytes(int64(fileSize)))
 
-	transCh := make(chan []byte, 4096)
+	transCh := make(chan protocol.RawPacket, 4096)
 	d.setTransferChan(transCh)
 	pc.SetState(protocol.ConnTransferring)
 
@@ -402,7 +405,7 @@ func shellPut(pc *protocol.Connection, d *replDispatch, conn *net.UDPConn, rAddr
 		return
 	}
 
-	transCh := make(chan []byte, 4096)
+	transCh := make(chan protocol.RawPacket, 4096)
 	d.setTransferChan(transCh)
 	pc.SetState(protocol.ConnTransferring)
 

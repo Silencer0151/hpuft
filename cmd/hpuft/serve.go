@@ -126,7 +126,7 @@ func runServe(args []string) {
 			raw := make([]byte, n)
 			copy(raw, rawBuf[:n])
 			select {
-			case ch <- raw:
+			case ch <- protocol.RawPacket{Data: raw, Src: clientAddr}:
 			default: // drop; sender/receiver will retransmit
 			}
 		}
@@ -267,7 +267,7 @@ func handleOpPut(sc *serverConn, reqID uint64, body []byte, conn *net.UDPConn, d
 	// Accept: send RESPONSE OK, wire up the transfer channel, spawn goroutine.
 	sendEncryptedResponse(sc, reqID, protocol.BuildPutResponseOK())
 
-	ch := make(chan []byte, 4096)
+	ch := make(chan protocol.RawPacket, 4096)
 	sc.setTransferChan(ch)
 	sc.SetState(protocol.ConnTransferring)
 
@@ -386,7 +386,7 @@ func handleOpGet(sc *serverConn, reqID uint64, body []byte, conn *net.UDPConn,
 	sendEncryptedResponse(sc, reqID,
 		protocol.BuildGetResponseOK(uint64(entry.size), fileHash, 0))
 
-	ch := make(chan []byte, 4096)
+	ch := make(chan protocol.RawPacket, 4096)
 	sc.setTransferChan(ch)
 	sc.SetState(protocol.ConnTransferring)
 
